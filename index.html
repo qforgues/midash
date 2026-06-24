@@ -152,7 +152,7 @@
 
   /* agenda + notes row (notes gets the bigger share), stretched so heights match */
   .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
-  .split.live { grid-template-columns:2fr 3fr; }
+  .split.live { grid-template-columns:3fr 2fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
   .split > * { min-width:0; }        /* let the fr tracks win — don't let long URLs blow out a column */
   #notes { display:flex; flex-direction:column; }
@@ -301,7 +301,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.6.1",
+  version: "1.6.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -393,7 +393,7 @@ function render() {
 
   // menu side preference (left default, switchable to right)
   const layout=document.getElementById("layout");
-  if(localStorage.getItem("midash_menu_side")==="right") layout.classList.add("right");
+  if(localStorage.getItem("midash_menu_side")!=="left") layout.classList.add("right");  // default right; ⇄ toggles
   document.getElementById("side-flip").onclick=()=>{
     layout.classList.toggle("right");
     try{ localStorage.setItem("midash_menu_side", layout.classList.contains("right")?"right":"left"); }catch(e){}
