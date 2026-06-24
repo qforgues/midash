@@ -37,6 +37,26 @@
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
           padding:20px 22px 22px; box-shadow:var(--shadow); }
   .card.wide { grid-column:1/-1; }
+
+  /* sidebar + main layout */
+  .layout { display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; }
+  .layout.right { grid-template-columns:1fr 300px; }
+  .layout.right .sidebar { order:2; } .layout.right .main { order:1; }
+  @media (max-width:880px){ .layout, .layout.right { grid-template-columns:1fr; } .layout.right .sidebar { order:0; } }
+  .sidebar { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+             box-shadow:var(--shadow); padding:6px 18px 14px; position:sticky; top:16px; align-self:start; }
+  .side-head { display:flex; align-items:center; justify-content:space-between; padding:12px 0 6px;
+               font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .side-flip { border:1px solid var(--border); background:var(--surface); color:var(--muted);
+               border-radius:8px; width:28px; height:26px; cursor:pointer; font-size:14px; line-height:1; }
+  .side-flip:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
+  .side-sec { padding:12px 0; border-top:1px solid var(--border); }
+  .side-sec h2 { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+                 color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .side-sec h2 .dot { font-size:15px; }
+  .side-sec h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; }
+  .side-sec h2 .refresh:hover { color:var(--accent); }
+  .side-sec .links a { font-size:14px; padding:7px 10px; }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
   .card h2 .dot { font-size:16px; }
@@ -80,7 +100,6 @@
   /* account chips */
   .chip { display:inline-flex; align-items:center; gap:7px; font-size:13px; padding:5px 11px;
           border-radius:20px; background:var(--surface); border:1px solid var(--border); color:var(--text); }
-  .chip .cdot { width:9px; height:9px; border-radius:50%; background:var(--p,var(--accent)); flex:0 0 auto; }
   .chip b { font-weight:600; }
   .chip .email { color:var(--muted); font-size:12px; }
   .chip .x { cursor:pointer; opacity:.5; font-size:12px; } .chip .x:hover { opacity:1; }
@@ -128,20 +147,22 @@
   .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
   @media (max-width:560px){ .agrow { grid-template-columns:74px 12px 1fr; } .agrow .agtime { grid-column:3; } }
 
-  /* agenda + notes 70/30 row */
-  .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:start; }
-  .split.live { grid-template-columns:7fr 3fr; }
+  /* agenda + notes 60/40 row, stretched so heights match */
+  .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
+  .split.live { grid-template-columns:6fr 4fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
+  #notes { display:flex; flex-direction:column; }
+  #notes-area { flex:1; }
 
   /* editable account color swatch (native color input styled as a dot) */
-  input.cdot { -webkit-appearance:none; appearance:none; width:13px; height:13px; padding:0;
-    border:none; border-radius:50%; background:var(--p,var(--accent)); cursor:pointer; flex:0 0 auto; }
+  input.cdot { -webkit-appearance:none; -moz-appearance:none; appearance:none; width:16px; height:16px; padding:0;
+    border:1px solid rgba(0,0,0,.15); border-radius:50%; background:var(--p,var(--accent)); cursor:pointer; flex:0 0 auto; }
   input.cdot::-webkit-color-swatch-wrapper { padding:0; }
   input.cdot::-webkit-color-swatch { border:none; border-radius:50%; }
   input.cdot::-moz-color-swatch { border:none; border-radius:50%; }
 
   /* version stamp */
-  .ver { font-weight:700; }
+  .ver { font-weight:700; color:var(--text); }
   .ver .vchg { color:var(--accent); }
 
   /* pager */
@@ -196,42 +217,53 @@
     <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
 
-  <!-- Live Today panel -->
-  <div class="card wide" style="margin-bottom:20px">
-    <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
-    <div class="today">
-      <div class="col">
-        <h3>📅 Next 3 days</h3>
-        <div id="agenda"><div class="empty">—</div></div>
+  <div class="layout" id="layout">
+    <!-- Side menu: quick-links grouped by category -->
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <span>Menu</span>
+        <button class="side-flip" id="side-flip" title="Switch menu side">⇄</button>
       </div>
-      <div class="col">
-        <h3>✉️ Unread in inbox</h3>
-        <div id="mail"><div class="empty">—</div></div>
-        <div id="mail-pager" class="pager" style="display:none"></div>
-        <div id="unsub" class="unsub" style="margin-top:14px"></div>
+      <div id="side-sections"></div>
+    </aside>
+
+    <main class="main">
+      <!-- Live Today panel -->
+      <div class="card" style="margin-bottom:20px">
+        <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
+        <div class="today">
+          <div class="col">
+            <h3>📅 Next 3 days</h3>
+            <div id="agenda"><div class="empty">—</div></div>
+          </div>
+          <div class="col">
+            <h3>✉️ Unread in inbox</h3>
+            <div id="mail"><div class="empty">—</div></div>
+            <div id="mail-pager" class="pager" style="display:none"></div>
+            <div id="unsub" class="unsub" style="margin-top:14px"></div>
+          </div>
+        </div>
+        <div id="auth-note" class="needsauth" style="display:none"></div>
       </div>
-    </div>
-    <div id="auth-note" class="needsauth" style="display:none"></div>
-  </div>
 
-  <!-- Agenda (70%) + Notes (30%) -->
-  <div class="split" id="agenda-notes-row" style="margin-bottom:20px">
-    <div class="card" id="agenda-view-card" style="display:none">
-      <h2><span class="dot">🗓️</span>Agenda
-        <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
-      <div id="agenda-view"><div class="empty">—</div></div>
-      <div id="agenda-pager" class="pager" style="display:none"></div>
-    </div>
-    <!-- Notes — your scratchpad; the agent can read this on request -->
-    <div class="card" id="notes">
-      <h2><span class="dot">📝</span>Notes
-        <span class="refresh" id="notes-sync" style="display:none">🔑 sync</span>
-        <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
-      <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
-    </div>
+      <!-- Agenda (60%) + Notes (40%) -->
+      <div class="split" id="agenda-notes-row" style="margin-bottom:20px">
+        <div class="card" id="agenda-view-card" style="display:none">
+          <h2><span class="dot">🗓️</span>Agenda
+            <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="agenda-view"><div class="empty">—</div></div>
+          <div id="agenda-pager" class="pager" style="display:none"></div>
+        </div>
+        <!-- Notes — your scratchpad; the agent can read this on request -->
+        <div class="card" id="notes">
+          <h2><span class="dot">📝</span>Notes
+            <span class="refresh" id="notes-sync" style="display:none">🔑 sync</span>
+            <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
+          <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
+        </div>
+      </div>
+    </main>
   </div>
-
-  <div class="grid" id="grid"></div>
 
   <footer>miDash <span class="ver">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
@@ -257,7 +289,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.5.0",
+  version: "1.5.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -323,15 +355,10 @@ const G = {
 };
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
-/* ---------- Render link sections + live projects ---------- */
+/* ---------- Render the side menu (categories as headers) + live projects ---------- */
 function render() {
-  const projectsCard = `
-    <div class="card">
-      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h2>
-      <div class="links" id="projects"><div class="empty">loading repos…</div></div>
-    </div>`;
-  const cards = CONFIG.sections.map(s => `
-    <div class="card">
+  const sections = CONFIG.sections.map(s => `
+    <div class="side-sec">
       <h2><span class="dot">${s.icon}</span>${s.title}</h2>
       <div class="links">
         ${s.links.map(l => {
@@ -344,8 +371,22 @@ function render() {
         }).join("")}
       </div>
     </div>`).join("");
-  document.getElementById("grid").innerHTML = cards + projectsCard;
+  const projects = `
+    <div class="side-sec">
+      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h2>
+      <div class="links" id="projects"><div class="empty">loading repos…</div></div>
+    </div>`;
+  document.getElementById("side-sections").innerHTML = sections + projects;
   document.getElementById("proj-refresh").onclick = loadProjects;
+
+  // menu side preference (left default, switchable to right)
+  const layout=document.getElementById("layout");
+  if(localStorage.getItem("midash_menu_side")==="right") layout.classList.add("right");
+  document.getElementById("side-flip").onclick=()=>{
+    layout.classList.toggle("right");
+    try{ localStorage.setItem("midash_menu_side", layout.classList.contains("right")?"right":"left"); }catch(e){}
+  };
+
   loadProjects();
   pingLinks();
 }
@@ -424,9 +465,17 @@ function editAlias(email){
   const v=prompt("Short label to identify "+email+":", aliasOf(email));
   if(v===null) return;
   aliases[email]=v.trim()||shortAcct(email); saveAliases();
-  renderAccountBar(); loadLive();
+  renderAccountBar(); rerenderLive();
 }
-function setAcctColor(email, hex){ acctColors[email]=hex; saveAcctColors(); renderAccountBar(); loadLive(); }
+function setAcctColor(email, hex){ acctColors[email]=hex; saveAcctColors(); renderAccountBar(); rerenderLive(); }
+/* Re-paint live panels after an alias/color change (agenda from cache, mail re-fetched). */
+function rerenderLive(){
+  if(typeof agendaEvents!=="undefined" && agendaEvents.length){
+    renderAgendaView();
+    const ab=document.getElementById("agenda"); if(ab) renderAgenda(ab,3,"Nothing scheduled — clear runway 🎉");
+  }
+  if(accounts.length) loadMail();
+}
 /* Drive the dashboard's highlight color from the primary account's color. */
 function applyTheme(){
   const root=document.documentElement.style;
