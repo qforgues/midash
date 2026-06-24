@@ -23,7 +23,7 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
          background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; padding:0 24px 120px; }
-  .wrap { max-width:1080px; margin:0 auto; }
+  .wrap { max-width:1320px; margin:0 auto; }
 
   header { padding:48px 0 28px; display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; }
   .greeting { font-size:32px; font-weight:600; letter-spacing:-.02em; }
@@ -173,7 +173,7 @@
   .pager button:disabled { opacity:.4; cursor:default; }
 
   /* Notes */
-  #notes-area { width:100%; min-height:160px; resize:vertical; border:1px solid var(--border);
+  #notes-area { width:100%; min-height:360px; resize:vertical; border:1px solid var(--border);
     background:var(--bg); color:var(--text); border-radius:12px; padding:14px 16px; font-size:14.5px;
     line-height:1.6; font-family:inherit; outline:none; }
   #notes-area:focus { border-color:var(--accent); }
@@ -222,7 +222,10 @@
     <aside class="sidebar" id="sidebar">
       <div class="side-head">
         <span>Menu</span>
-        <button class="side-flip" id="side-flip" title="Switch menu side">⇄</button>
+        <span style="display:flex;gap:8px;align-items:center">
+          <input type="color" id="theme-pick" class="cdot" title="Highlight color">
+          <button class="side-flip" id="side-flip" title="Switch menu side">⇄</button>
+        </span>
       </div>
       <div id="side-sections"></div>
     </aside>
@@ -289,7 +292,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.5.1",
+  version: "1.5.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -387,6 +390,14 @@ function render() {
     try{ localStorage.setItem("midash_menu_side", layout.classList.contains("right")?"right":"left"); }catch(e){}
   };
 
+  // theme (highlight) color picker
+  const tp=document.getElementById("theme-pick");
+  if(tp){
+    tp.value = themeColor() || "#2d6a4f";
+    tp.oninput=tp.onchange=()=>{ try{ localStorage.setItem("midash_theme", tp.value); }catch(e){} applyTheme(); };
+  }
+  applyTheme();
+
   loadProjects();
   pingLinks();
 }
@@ -399,6 +410,11 @@ function pingLinks(){
   document.querySelectorAll(".ldot[data-url]").forEach(dot=>{
     const u=dot.dataset.url;
     if(!u || u==="#"){ dot.className="ldot set"; dot.title="No URL set"; return; }
+    // Google app links are auth-gated and always reject cross-origin probes — skip the
+    // fetch (it just spams the console with 403s); they're known-good when signed in.
+    if(/^https:\/\/(mail|calendar|drive|docs|photos|accounts)\.google\.com/.test(u) || /googleapis\.com/.test(u)){
+      dot.className="ldot up"; dot.title="Signed-in Google link"; return;
+    }
     const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),5000);
     fetch(u,{mode:"no-cors",signal:ctrl.signal})
       .then(()=>{ dot.className="ldot up"; dot.title="Responds"; })
@@ -476,12 +492,14 @@ function rerenderLive(){
   }
   if(accounts.length) loadMail();
 }
-/* Drive the dashboard's highlight color from the primary account's color. */
+/* Highlight color: an explicit theme color if set, else the primary account's color. */
+function themeColor(){ try{ return localStorage.getItem("midash_theme")||""; }catch(e){ return ""; } }
 function applyTheme(){
   const root=document.documentElement.style;
-  const c = accounts[0] ? acctColor(accounts[0].email) : null;
-  if(c){ root.setProperty("--accent", c); root.setProperty("--accent-soft", `color-mix(in srgb, ${c} 15%, var(--surface))`); }
+  const c = themeColor() || (accounts[0] ? acctColor(accounts[0].email) : null);
+  if(c){ root.setProperty("--accent", c); root.setProperty("--accent-soft", `color-mix(in srgb, ${c} 16%, var(--surface))`); }
   else { root.removeProperty("--accent"); root.removeProperty("--accent-soft"); }
+  const tp=document.getElementById("theme-pick"); if(tp && c) tp.value=c;
 }
 
 function googleBoot() {
@@ -533,7 +551,7 @@ function renderAccountBar(){
     </span>`).join("")
     + `<button class="gbtn" id="g-add">＋ account</button>`;
   document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"});
-  bar.querySelectorAll(".chip input.cdot").forEach(inp=>inp.onchange=()=>setAcctColor(inp.dataset.e, inp.value));
+  bar.querySelectorAll(".chip input.cdot").forEach(inp=>inp.oninput=inp.onchange=()=>setAcctColor(inp.dataset.e, inp.value));
   bar.querySelectorAll(".chip .edit").forEach(x=>x.onclick=()=>editAlias(x.dataset.e));
   bar.querySelectorAll(".chip .rm").forEach(x=>x.onclick=()=>{
     accounts=accounts.filter(a=>a.email!==x.dataset.e);
