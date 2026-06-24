@@ -24,7 +24,33 @@ GitHub Pages redeploys automatically on every push (usually live in ~30s).
 ## Customize
 
 All your links live in the `CONFIG` object at the bottom of `index.html`. Add,
-remove, or rename sections and links freely — no other code to touch.
+remove, or rename sections and links freely — no other code to touch. Google links
+auto-pin to `CONFIG.account` so they always open your personal account, not work.
+
+## Live data (today's events + important mail)
+
+The "Today" panel can show your real calendar and Gmail by signing you in *in your
+browser* — no server, your data never leaves your machine. One-time setup:
+
+1. Go to <https://console.cloud.google.com> → create a project (e.g. "miDash").
+2. **APIs & Services → Library** → enable **Google Calendar API** and **Gmail API**.
+3. **APIs & Services → OAuth consent screen** → choose *External*, fill the app name,
+   and under *Test users* add your personal Gmail. (Testing mode is fine — no
+   verification needed for your own account.)
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID** →
+   *Web application*. Under **Authorized JavaScript origins** add:
+   - `https://qforgues.github.io`
+   - `http://localhost:8000` (for local preview)
+5. Copy the **Client ID** and paste it into `CONFIG.googleClientId` in `index.html`.
+6. Commit & push. Click **Connect Google** on the dashboard once — done.
+
+Scopes used are read-only (`calendar.readonly`, `gmail.readonly`). The access token is
+cached in your browser only.
+
+## Projects
+
+The Projects card auto-lists your most recently updated GitHub repos
+(`CONFIG.githubUser`). No setup needed for public repos.
 
 ## The chat agent
 

@@ -4,154 +4,133 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>miDash</title>
-<meta name="description" content="Q's personal command center — calendar, mail, work, projects, kids, and play in one place." />
+<meta name="description" content="Q's personal command center — calendar, mail, projects, and play in one place." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>" />
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
-    --bg: #fafaf9;
-    --surface: #ffffff;
-    --border: #ececea;
-    --text: #1a1a18;
-    --muted: #76746e;
-    --accent: #2d6a4f;
-    --accent-soft: #e7f0eb;
-    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
-    --radius: 16px;
+    --bg:#fafaf9; --surface:#fff; --border:#ececea; --text:#1a1a18; --muted:#76746e;
+    --accent:#2d6a4f; --accent-soft:#e7f0eb; --warn:#b4541f;
+    --shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.04); --radius:16px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #141413;
-      --surface: #1e1e1c;
-      --border: #2c2c29;
-      --text: #f0efec;
-      --muted: #9a978f;
-      --accent: #74c69d;
-      --accent-soft: #1f2e27;
-      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+      --bg:#141413; --surface:#1e1e1c; --border:#2c2c29; --text:#f0efec; --muted:#9a978f;
+      --accent:#74c69d; --accent-soft:#1f2e27; --warn:#e0915f;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.25);
     }
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-    padding: 0 24px 120px;
-  }
-  .wrap { max-width: 1080px; margin: 0 auto; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+         background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; padding:0 24px 120px; }
+  .wrap { max-width:1080px; margin:0 auto; }
 
-  header { padding: 56px 0 40px; }
-  .greeting { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; }
-  .sub { color: var(--muted); font-size: 15px; margin-top: 6px; }
-  #clock { font-variant-numeric: tabular-nums; }
+  header { padding:48px 0 28px; display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .greeting { font-size:32px; font-weight:600; letter-spacing:-.02em; }
+  .sub { color:var(--muted); font-size:15px; margin-top:6px; }
+  #clock { font-variant-numeric:tabular-nums; }
+  .gbtn { border:1px solid var(--border); background:var(--surface); color:var(--text);
+          border-radius:10px; padding:9px 14px; font-size:14px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; }
+  .gbtn:hover { background:var(--accent-soft); }
 
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 20px;
-  }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px 22px 22px;
-    box-shadow: var(--shadow);
-  }
-  .card h2 {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--muted);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  .card h2 .dot { font-size: 16px; }
-  .links { display: flex; flex-direction: column; gap: 2px; }
-  .links a {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 9px 12px;
-    margin: 0 -12px;
-    border-radius: 10px;
-    color: var(--text);
-    text-decoration: none;
-    font-size: 15px;
-    transition: background .12s ease;
-  }
-  .links a:hover { background: var(--accent-soft); }
-  .links a .meta { color: var(--muted); font-size: 13px; }
-  .links a .arrow { color: var(--muted); opacity: 0; transition: opacity .12s; }
-  .links a:hover .arrow { opacity: 1; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+          padding:20px 22px 22px; box-shadow:var(--shadow); }
+  .card.wide { grid-column:1/-1; }
+  .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .card h2 .dot { font-size:16px; }
+  .card h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
+  .card h2 .refresh:hover { color:var(--accent); }
 
-  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 48px; }
+  .links { display:flex; flex-direction:column; gap:2px; }
+  .links a { display:flex; align-items:center; justify-content:space-between; padding:9px 12px; margin:0 -12px;
+             border-radius:10px; color:var(--text); text-decoration:none; font-size:15px; transition:background .12s; }
+  .links a:hover { background:var(--accent-soft); }
+  .links a .meta { color:var(--muted); font-size:13px; }
+  .links a .arrow { color:var(--muted); opacity:0; transition:opacity .12s; }
+  .links a:hover .arrow { opacity:1; }
 
-  /* ---------- Chat agent ---------- */
-  #chat-toggle {
-    position: fixed; right: 24px; bottom: 24px;
-    width: 56px; height: 56px; border-radius: 50%;
-    background: var(--accent); color: #fff; border: none;
-    font-size: 24px; cursor: pointer; box-shadow: var(--shadow);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 50; transition: transform .15s ease;
-  }
-  #chat-toggle:hover { transform: scale(1.06); }
-  #chat-panel {
-    position: fixed; right: 24px; bottom: 92px;
-    width: 380px; max-width: calc(100vw - 48px);
-    height: 520px; max-height: calc(100vh - 140px);
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow);
-    display: none; flex-direction: column; overflow: hidden; z-index: 50;
-  }
-  #chat-panel.open { display: flex; }
-  .chat-head {
-    padding: 14px 18px; border-bottom: 1px solid var(--border);
-    font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px;
-  }
-  .chat-head .status { width: 8px; height: 8px; border-radius: 50%; background: #c0bfb9; margin-left: auto; }
-  .chat-head .status.on { background: var(--accent); }
-  #chat-log { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
-  .msg { font-size: 14px; padding: 10px 13px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word; }
-  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
-  .msg.bot { background: var(--accent-soft); color: var(--text); align-self: flex-start; border-bottom-left-radius: 4px; }
-  .msg.sys { color: var(--muted); font-size: 12.5px; text-align: center; align-self: center; max-width: 100%; }
-  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
-  .chat-input input {
-    flex: 1; border: 1px solid var(--border); background: var(--bg);
-    color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none;
-  }
-  .chat-input input:focus { border-color: var(--accent); }
-  .chat-input button {
-    border: none; background: var(--accent); color: #fff; border-radius: 10px;
-    padding: 0 16px; font-size: 14px; font-weight: 600; cursor: pointer;
-  }
-  .chat-input button:disabled { opacity: .5; cursor: default; }
+  /* Today panel */
+  .today { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+  @media (max-width:640px){ .today { grid-template-columns:1fr; } }
+  .col h3 { font-size:13px; font-weight:600; color:var(--muted); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
+  .item { padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
+  .item:last-child { border-bottom:none; }
+  .item .t { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; font-size:13px; }
+  .item .s { display:block; }
+  .item .from { color:var(--muted); font-size:12.5px; }
+  .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--accent-soft); color:var(--accent); margin-left:6px; }
+  .empty { color:var(--muted); font-size:14px; padding:6px 0; }
+  .unsub a { color:var(--warn); text-decoration:none; }
+  .unsub a:hover { text-decoration:underline; }
+  .needsauth { color:var(--muted); font-size:14px; }
+  .needsauth button { margin-top:10px; }
+
+  footer { text-align:center; color:var(--muted); font-size:13px; margin-top:48px; }
+  footer code { background:var(--accent-soft); padding:1px 6px; border-radius:6px; }
+
+  /* Chat */
+  #chat-toggle { position:fixed; right:24px; bottom:24px; width:56px; height:56px; border-radius:50%;
+    background:var(--accent); color:#fff; border:none; font-size:24px; cursor:pointer; box-shadow:var(--shadow);
+    display:flex; align-items:center; justify-content:center; z-index:50; transition:transform .15s; }
+  #chat-toggle:hover { transform:scale(1.06); }
+  #chat-panel { position:fixed; right:24px; bottom:92px; width:380px; max-width:calc(100vw - 48px);
+    height:520px; max-height:calc(100vh - 140px); background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); box-shadow:var(--shadow); display:none; flex-direction:column; overflow:hidden; z-index:50; }
+  #chat-panel.open { display:flex; }
+  .chat-head { padding:14px 18px; border-bottom:1px solid var(--border); font-weight:600; font-size:15px; display:flex; align-items:center; gap:8px; }
+  .chat-head .status { width:8px; height:8px; border-radius:50%; background:#c0bfb9; margin-left:auto; }
+  .chat-head .status.on { background:var(--accent); }
+  #chat-log { flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px; }
+  .msg { font-size:14px; padding:10px 13px; border-radius:12px; max-width:85%; white-space:pre-wrap; word-wrap:break-word; }
+  .msg.user { background:var(--accent); color:#fff; align-self:flex-end; border-bottom-right-radius:4px; }
+  .msg.bot { background:var(--accent-soft); color:var(--text); align-self:flex-start; border-bottom-left-radius:4px; }
+  .msg.sys { color:var(--muted); font-size:12.5px; text-align:center; align-self:center; max-width:100%; }
+  .chat-input { display:flex; gap:8px; padding:12px; border-top:1px solid var(--border); }
+  .chat-input input { flex:1; border:1px solid var(--border); background:var(--bg); color:var(--text);
+    border-radius:10px; padding:10px 12px; font-size:14px; outline:none; }
+  .chat-input input:focus { border-color:var(--accent); }
+  .chat-input button { border:none; background:var(--accent); color:#fff; border-radius:10px; padding:0 16px; font-size:14px; font-weight:600; cursor:pointer; }
+  .chat-input button:disabled { opacity:.5; cursor:default; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="greeting" id="greeting">Hello</div>
-    <div class="sub"><span id="clock"></span> · <span id="datestr"></span></div>
+    <div>
+      <div class="greeting" id="greeting">Hello</div>
+      <div class="sub"><span id="clock"></span> · <span id="datestr"></span></div>
+    </div>
+    <button class="gbtn" id="g-connect" style="display:none">🔓 Connect Google</button>
   </header>
+
+  <!-- Live Today panel -->
+  <div class="card wide" style="margin-bottom:20px">
+    <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none">↻ refresh</span></h2>
+    <div class="today">
+      <div class="col">
+        <h3>📅 Agenda</h3>
+        <div id="agenda"><div class="empty">—</div></div>
+      </div>
+      <div class="col">
+        <h3>✉️ Needs attention</h3>
+        <div id="mail"><div class="empty">—</div></div>
+        <div id="unsub" class="unsub" style="margin-top:14px"></div>
+      </div>
+    </div>
+    <div id="auth-note" class="needsauth" style="display:none"></div>
+  </div>
 
   <div class="grid" id="grid"></div>
 
-  <footer>miDash · edit your links in the <code>CONFIG</code> block of index.html</footer>
+  <footer>miDash · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
-  <div class="chat-head">
-    <span>Agent</span>
-    <span class="status" id="chat-status" title="Backend status"></span>
-  </div>
+  <div class="chat-head"><span>Agent</span><span class="status" id="chat-status"></span></div>
   <div id="chat-log"></div>
   <form class="chat-input" id="chat-form">
     <input id="chat-text" placeholder="Ask for anything…" autocomplete="off" />
@@ -162,163 +141,242 @@
 <script>
 /* ============================================================
    CONFIG — everything you edit lives here.
-   Add / remove links freely. Each section is a card.
    ============================================================ */
 const CONFIG = {
   name: "Q",
 
-  // The chat agent sends messages here. This MUST be a backend you control
-  // that holds your Anthropic API key (your Raspberry Pi or a Cloudflare Worker).
-  // NEVER put the API key in this file — it is public on GitHub Pages.
-  // Leave "" to disable the agent until your backend is ready.
-  chatEndpoint: "",   // e.g. "https://your-pi.example.com/chat" or your Worker URL
+  // Your PERSONAL Google address — pins every Google link to the right account.
+  account: "quentin.forgues@gmail.com",
 
+  // Your GitHub username — Projects auto-populate from your recent repos.
+  githubUser: "qforgues",
+
+  // ---- Live data (today's events + important mail) ----
+  // One-time setup: create a Google OAuth "Web" client ID (see README),
+  // authorize https://qforgues.github.io as an origin, then paste the ID here.
+  // Leave "" and the Today panel just shows a Connect prompt.
+  googleClientId: "",
+
+  // ---- Chat agent backend (holds your Anthropic key; never in this file) ----
+  chatEndpoint: "",
+
+  // Static quick-links. {label,url,meta}. Google links auto-pin to your account.
   sections: [
-    {
-      title: "Calendar", icon: "📅",
-      links: [
-        { label: "Google Calendar", url: "https://calendar.google.com", meta: "today" },
-        { label: "Add an event", url: "https://calendar.google.com/calendar/u/0/r/eventedit" },
-        { label: "Schedule view", url: "https://calendar.google.com/calendar/u/0/r/agenda" },
-      ],
-    },
-    {
-      title: "Mail", icon: "✉️",
-      links: [
-        { label: "Gmail — Inbox", url: "https://mail.google.com/mail/u/0/#inbox" },
-        { label: "Starred", url: "https://mail.google.com/mail/u/0/#starred" },
-        { label: "Compose", url: "https://mail.google.com/mail/u/0/#inbox?compose=new" },
-      ],
-    },
-    {
-      title: "Work", icon: "💼",
-      links: [
-        { label: "Google Drive", url: "https://drive.google.com" },
-        { label: "QuickBooks", url: "https://qbo.intuit.com" },
-        { label: "Docs", url: "https://docs.google.com" },
-      ],
-    },
-    {
-      title: "Projects", icon: "🛠️",
-      links: [
-        { label: "GitHub", url: "https://github.com" },
-        { label: "miDash repo", url: "#", meta: "this site" },
-        { label: "Notes", url: "https://keep.google.com" },
-      ],
-    },
-    {
-      title: "Kids", icon: "🧒",
-      links: [
-        { label: "Family calendar", url: "https://calendar.google.com" },
-        { label: "Photos", url: "https://photos.google.com" },
-        { label: "School portal", url: "#" },
-      ],
-    },
-    {
-      title: "Fun & Play", icon: "🎮",
-      links: [
-        { label: "YouTube", url: "https://youtube.com" },
-        { label: "Spotify", url: "https://open.spotify.com" },
-        { label: "Maps — explore", url: "https://maps.google.com" },
-      ],
-    },
+    { title:"Mail", icon:"✉️", links:[
+      { g:"mail", path:"#inbox", label:"Gmail — Inbox" },
+      { g:"mail", path:"#starred", label:"Starred" },
+      { g:"mail", path:"#inbox?compose=new", label:"Compose" },
+    ]},
+    { title:"Calendar", icon:"📅", links:[
+      { g:"cal", path:"r", label:"Google Calendar" },
+      { g:"cal", path:"r/eventedit", label:"Add an event" },
+      { g:"cal", path:"r/agenda", label:"Agenda view" },
+    ]},
+    { title:"Work", icon:"💼", links:[
+      { g:"drive", path:"", label:"Google Drive" },
+      { url:"https://qbo.intuit.com", label:"QuickBooks" },
+      { g:"docs", path:"", label:"Docs" },
+    ]},
+    { title:"Kids", icon:"🧒", links:[
+      { g:"photos", path:"", label:"Photos" },
+      { g:"cal", path:"r", label:"Family calendar" },
+      { url:"#", label:"School portal", meta:"set me" },
+    ]},
+    { title:"Fun & Play", icon:"🎮", links:[
+      { url:"https://youtube.com", label:"YouTube" },
+      { url:"https://open.spotify.com", label:"Spotify" },
+      { url:"https://maps.google.com", label:"Maps" },
+    ]},
   ],
 };
 
-/* ---------- Render ---------- */
+/* ---------- Build account-pinned Google URLs ---------- */
+const A = encodeURIComponent(CONFIG.account);
+const G = {
+  mail:  p => `https://mail.google.com/mail/u/${A}/${p}`,
+  cal:   p => `https://calendar.google.com/calendar/u/${A}/${p}`,
+  drive: p => `https://drive.google.com/drive/u/${A}/${p}`,
+  docs:  p => `https://docs.google.com/document/u/${A}/`,
+  photos:p => `https://photos.google.com/u/${A}/`,
+};
+function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
+
+/* ---------- Render link sections + live projects ---------- */
 function render() {
-  const grid = document.getElementById("grid");
-  grid.innerHTML = CONFIG.sections.map(s => `
+  const projectsCard = `
+    <div class="card">
+      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh">↻</span></h2>
+      <div class="links" id="projects"><div class="empty">loading repos…</div></div>
+    </div>`;
+  const cards = CONFIG.sections.map(s => `
     <div class="card">
       <h2><span class="dot">${s.icon}</span>${s.title}</h2>
       <div class="links">
-        ${s.links.map(l => `
-          <a href="${l.url}" ${l.url.startsWith("http") ? 'target="_blank" rel="noopener"' : ""}>
+        ${s.links.map(l => {
+          const u = urlFor(l);
+          return `<a href="${u}" ${u.startsWith("http")?'target="_blank" rel="noopener"':""}>
             <span>${l.label}</span>
-            <span>${l.meta ? `<span class="meta">${l.meta}</span> ` : ""}<span class="arrow">↗</span></span>
-          </a>`).join("")}
+            <span>${l.meta?`<span class="meta">${l.meta}</span> `:""}<span class="arrow">↗</span></span>
+          </a>`;
+        }).join("")}
       </div>
     </div>`).join("");
+  document.getElementById("grid").innerHTML = cards + projectsCard;
+  document.getElementById("proj-refresh").onclick = loadProjects;
+  loadProjects();
 }
+
+/* ---------- GitHub projects (public API, no auth) ---------- */
+async function loadProjects() {
+  const box = document.getElementById("projects");
+  try {
+    const r = await fetch(`https://api.github.com/users/${CONFIG.githubUser}/repos?sort=updated&per_page=6`);
+    const repos = await r.json();
+    if (!Array.isArray(repos) || !repos.length) { box.innerHTML = `<div class="empty">No public repos.</div>`; return; }
+    box.innerHTML = repos.map(r => `
+      <a href="${r.html_url}" target="_blank" rel="noopener">
+        <span>${r.name}</span>
+        <span><span class="meta">${rel(r.pushed_at)}</span> <span class="arrow">↗</span></span>
+      </a>`).join("");
+  } catch { box.innerHTML = `<div class="empty">Couldn't load GitHub.</div>`; }
+}
+function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
+  return d<1?"today":d<2?"yesterday":d<30?Math.floor(d)+"d ago":Math.floor(d/30)+"mo ago"; }
 
 /* ---------- Clock & greeting ---------- */
 function tick() {
-  const now = new Date();
-  const h = now.getHours();
-  const part = h < 5 ? "Still up" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  const now=new Date(), h=now.getHours();
+  const part = h<5?"Still up":h<12?"Good morning":h<18?"Good afternoon":"Good evening";
   document.getElementById("greeting").textContent = `${part}, ${CONFIG.name}`;
-  document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  document.getElementById("datestr").textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  document.getElementById("clock").textContent = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+  document.getElementById("datestr").textContent = now.toLocaleDateString([], {weekday:"long",month:"long",day:"numeric"});
 }
+
+/* ============================================================
+   GOOGLE LIVE DATA  (client-side OAuth, no backend)
+   ============================================================ */
+const SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly";
+let tokenClient = null, accessToken = null;
+
+function saveToken(t){ try{ localStorage.setItem("midash_tok", JSON.stringify({t:t.access_token, exp:Date.now()+(t.expires_in*1000)})); }catch(e){} }
+function loadToken(){ try{ const s=JSON.parse(localStorage.getItem("midash_tok")||"null"); if(s&&s.exp>Date.now()+60000){ accessToken=s.t; return true; } }catch(e){} return false; }
+
+function googleBoot() {
+  const note = document.getElementById("auth-note");
+  if (!CONFIG.googleClientId) {
+    note.style.display="block";
+    note.innerHTML = "Live calendar &amp; mail are off. Add a Google client ID to <code>CONFIG.googleClientId</code> to switch them on — see README.";
+    return;
+  }
+  const start = () => {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.googleClientId, scope: SCOPES,
+      callback: (resp) => { if(resp.access_token){ accessToken=resp.access_token; saveToken(resp); afterAuth(); } },
+    });
+    if (loadToken()) afterAuth();
+    else showConnect();
+  };
+  // GIS script may still be loading
+  if (window.google && google.accounts) start();
+  else { const i=setInterval(()=>{ if(window.google&&google.accounts){ clearInterval(i); start(); } }, 200); }
+}
+function showConnect(){
+  const btn=document.getElementById("g-connect"); btn.style.display="flex";
+  btn.onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
+  document.getElementById("auth-note").style.display="none";
+}
+function afterAuth(){
+  document.getElementById("g-connect").style.display="none";
+  document.getElementById("auth-note").style.display="none";
+  const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=loadLive;
+  loadLive();
+}
+async function gfetch(url){
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
+  if(r.status===401){ localStorage.removeItem("midash_tok"); accessToken=null; showConnect(); throw new Error("expired"); }
+  return r.json();
+}
+function loadLive(){ loadAgenda(); loadMail(); }
+
+async function loadAgenda(){
+  const box=document.getElementById("agenda");
+  try{
+    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(); e.setHours(23,59,59,999);
+    const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`);
+    const ev=data.items||[];
+    if(!ev.length){ box.innerHTML=`<div class="empty">Nothing scheduled today 🎉</div>`; return; }
+    box.innerHTML=ev.map(x=>{
+      const t=x.start.dateTime?new Date(x.start.dateTime).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
+      return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(x.summary||"(no title)")}</span></div>`;
+    }).join("");
+  }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
+}
+
+async function loadMail(){
+  const box=document.getElementById("mail"), unsub=document.getElementById("unsub");
+  try{
+    const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=5&q="+encodeURIComponent("is:unread is:important"));
+    const ids=(list.messages||[]).map(m=>m.id);
+    if(!ids.length){ box.innerHTML=`<div class="empty">Inbox is calm — no important unread.</div>`; }
+    else {
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`)));
+      box.innerHTML=msgs.map(m=>{
+        const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
+        return `<div class="item"><span class="s">${esc(h.Subject||"(no subject)")}</span><span class="from">${esc(cleanFrom(h.From||""))}</span></div>`;
+      }).join("");
+    }
+    loadUnsub(unsub);
+  }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load mail.</div>`; }
+}
+
+async function loadUnsub(box){
+  try{
+    const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=40&q="+encodeURIComponent("category:promotions newer_than:14d"));
+    const ids=(list.messages||[]).map(m=>m.id).slice(0,40);
+    if(!ids.length){ box.innerHTML=""; return; }
+    const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`)));
+    const tally={};
+    msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f) tally[f]=(tally[f]||0)+1; });
+    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    if(!top.length){ box.innerHTML=""; return; }
+    box.innerHTML = `<div class="from" style="margin-bottom:4px">Frequent senders (last 14d) — unsubscribe candidates:</div>` +
+      top.map(([f,c])=>`<div class="item"><span class="s">${esc(f)} <span class="pill">${c}</span></span>
+        <a href="${G.mail("#search/"+encodeURIComponent("from:"+f))}" target="_blank" rel="noopener">view & unsubscribe ↗</a></div>`).join("");
+  }catch(e){ box.innerHTML=""; }
+}
+
+function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 
 /* ---------- Chat agent ---------- */
-const log = document.getElementById("chat-log");
-function addMsg(text, cls) {
-  const d = document.createElement("div");
-  d.className = "msg " + cls;
-  d.textContent = text;
-  log.appendChild(d);
-  log.scrollTop = log.scrollHeight;
-  return d;
+const log=document.getElementById("chat-log");
+function addMsg(text,cls){ const d=document.createElement("div"); d.className="msg "+cls; d.textContent=text; log.appendChild(d); log.scrollTop=log.scrollHeight; return d; }
+document.getElementById("chat-toggle").addEventListener("click",()=>{ const p=document.getElementById("chat-panel"); p.classList.toggle("open"); if(p.classList.contains("open")) document.getElementById("chat-text").focus(); });
+function initChat(){
+  const on=!!CONFIG.chatEndpoint;
+  document.getElementById("chat-status").classList.toggle("on",on);
+  if(on) addMsg("Hi! Ask me to pull something, draft a note, or look something up.","bot");
+  else addMsg("Agent is offline. Set CONFIG.chatEndpoint to your backend (Pi or Cloudflare Worker) — see README.","sys");
 }
-
-document.getElementById("chat-toggle").addEventListener("click", () => {
-  const p = document.getElementById("chat-panel");
-  p.classList.toggle("open");
-  if (p.classList.contains("open")) document.getElementById("chat-text").focus();
-});
-
-function initChat() {
-  const on = !!CONFIG.chatEndpoint;
-  document.getElementById("chat-status").classList.toggle("on", on);
-  if (on) {
-    addMsg("Hi! Ask me to pull something, draft a note, or look something up.", "bot");
-  } else {
-    addMsg("Agent is offline. Set CONFIG.chatEndpoint to your backend (Pi or Cloudflare Worker) to switch it on — see README.", "sys");
-  }
-}
-
-const history = [];
-document.getElementById("chat-form").addEventListener("submit", async (e) => {
+const history=[];
+document.getElementById("chat-form").addEventListener("submit",async(e)=>{
   e.preventDefault();
-  const input = document.getElementById("chat-text");
-  const text = input.value.trim();
-  if (!text) return;
-  if (!CONFIG.chatEndpoint) { addMsg("No backend configured yet.", "sys"); return; }
-
-  addMsg(text, "user");
-  history.push({ role: "user", content: text });
-  input.value = "";
-  const sendBtn = document.getElementById("chat-send");
-  sendBtn.disabled = true;
-  const thinking = addMsg("…", "bot");
-
-  try {
-    const res = await fetch(CONFIG.chatEndpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history }),
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    // Accepts { reply: "..." } or Anthropic-style { content: [{text}] }
-    const reply = data.reply || (data.content && data.content[0] && data.content[0].text) || "(no reply)";
-    thinking.textContent = reply;
-    history.push({ role: "assistant", content: reply });
-  } catch (err) {
-    thinking.className = "msg sys";
-    thinking.textContent = "Couldn't reach the agent backend (" + err.message + ").";
-  } finally {
-    sendBtn.disabled = false;
-    document.getElementById("chat-text").focus();
-  }
+  const input=document.getElementById("chat-text"); const text=input.value.trim(); if(!text) return;
+  if(!CONFIG.chatEndpoint){ addMsg("No backend configured yet.","sys"); return; }
+  addMsg(text,"user"); history.push({role:"user",content:text}); input.value="";
+  const sendBtn=document.getElementById("chat-send"); sendBtn.disabled=true; const thinking=addMsg("…","bot");
+  try{
+    const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:history})});
+    if(!res.ok) throw new Error("HTTP "+res.status);
+    const data=await res.json();
+    const reply=data.reply||(data.content&&data.content[0]&&data.content[0].text)||"(no reply)";
+    thinking.textContent=reply; history.push({role:"assistant",content:reply});
+  }catch(err){ thinking.className="msg sys"; thinking.textContent="Couldn't reach the agent backend ("+err.message+")."; }
+  finally{ sendBtn.disabled=false; document.getElementById("chat-text").focus(); }
 });
 
 /* ---------- Boot ---------- */
-render();
-tick();
-setInterval(tick, 1000 * 10);
-initChat();
+render(); tick(); setInterval(tick,10000); initChat(); googleBoot();
 </script>
 </body>
 </html>
