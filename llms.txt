@@ -1,0 +1,46 @@
+# miDash
+
+> Q's personal command center — a single-page dashboard linking calendar, mail, work,
+> projects, kids, and play, plus an embedded AI chat agent. This file tells AI agents
+> and crawlers what the site is and how to interact with it.
+
+## About
+
+miDash is a static, single-file dashboard (`index.html`) hosted on GitHub Pages.
+It is a personal launchpad: curated quick-links grouped into sections, a live clock,
+and a chat widget that talks to a private backend (owner's Raspberry Pi or a
+Cloudflare Worker) holding the Anthropic API key. No secrets live in the public page.
+
+## Sections
+
+- Calendar: Google Calendar links (today, agenda, new event)
+- Mail: Gmail (inbox, starred, compose)
+- Work: Google Drive, QuickBooks, Docs
+- Projects: GitHub, this repo, notes
+- Kids: family calendar, photos, school portal
+- Fun & Play: YouTube, Spotify, Maps
+
+## Agent interface
+
+The dashboard includes a chat agent. Agents and integrations can interact with it via
+the configured backend endpoint (see `CONFIG.chatEndpoint` in `index.html`).
+
+- Method: POST
+- Body: `{ "messages": [ { "role": "user", "content": "..." } ] }`
+- Response: `{ "reply": "..." }` (Anthropic-style `{ "content": [{ "text": "..." }] }` is also accepted)
+
+The same endpoint can be reached by other clients the owner runs (e.g. a Raspberry Pi
+service exposed to Discord), enabling one shared agent across surfaces.
+
+## Files
+
+- [index.html](index.html): the dashboard itself
+- [worker.js](worker.js): Cloudflare Worker proxy that holds the API key
+- [server.js](server.js): Node/Raspberry Pi proxy alternative
+- [README.md](README.md): setup and deployment
+
+## Notes for crawlers
+
+This is a personal site. It contains no tracking and no private data in the markup —
+all personal data stays behind the owner's authenticated services and the private
+chat backend.

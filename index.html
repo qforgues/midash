@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>miDash</title>
+<meta name="description" content="Q's personal command center — calendar, mail, work, projects, kids, and play in one place." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>" />
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #ececea;
+    --text: #1a1a18;
+    --muted: #76746e;
+    --accent: #2d6a4f;
+    --accent-soft: #e7f0eb;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.04);
+    --radius: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413;
+      --surface: #1e1e1c;
+      --border: #2c2c29;
+      --text: #f0efec;
+      --muted: #9a978f;
+      --accent: #74c69d;
+      --accent-soft: #1f2e27;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 120px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header { padding: 56px 0 40px; }
+  .greeting { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 15px; margin-top: 6px; }
+  #clock { font-variant-numeric: tabular-nums; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px 22px;
+    box-shadow: var(--shadow);
+  }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .card h2 .dot { font-size: 16px; }
+  .links { display: flex; flex-direction: column; gap: 2px; }
+  .links a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 12px;
+    margin: 0 -12px;
+    border-radius: 10px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 15px;
+    transition: background .12s ease;
+  }
+  .links a:hover { background: var(--accent-soft); }
+  .links a .meta { color: var(--muted); font-size: 13px; }
+  .links a .arrow { color: var(--muted); opacity: 0; transition: opacity .12s; }
+  .links a:hover .arrow { opacity: 1; }
+
+  footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 48px; }
+
+  /* ---------- Chat agent ---------- */
+  #chat-toggle {
+    position: fixed; right: 24px; bottom: 24px;
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: none;
+    font-size: 24px; cursor: pointer; box-shadow: var(--shadow);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 50; transition: transform .15s ease;
+  }
+  #chat-toggle:hover { transform: scale(1.06); }
+  #chat-panel {
+    position: fixed; right: 24px; bottom: 92px;
+    width: 380px; max-width: calc(100vw - 48px);
+    height: 520px; max-height: calc(100vh - 140px);
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    display: none; flex-direction: column; overflow: hidden; z-index: 50;
+  }
+  #chat-panel.open { display: flex; }
+  .chat-head {
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px;
+  }
+  .chat-head .status { width: 8px; height: 8px; border-radius: 50%; background: #c0bfb9; margin-left: auto; }
+  .chat-head .status.on { background: var(--accent); }
+  #chat-log { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { font-size: 14px; padding: 10px 13px; border-radius: 12px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+  .msg.bot { background: var(--accent-soft); color: var(--text); align-self: flex-start; border-bottom-left-radius: 4px; }
+  .msg.sys { color: var(--muted); font-size: 12.5px; text-align: center; align-self: center; max-width: 100%; }
+  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+  .chat-input input {
+    flex: 1; border: 1px solid var(--border); background: var(--bg);
+    color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none;
+  }
+  .chat-input input:focus { border-color: var(--accent); }
+  .chat-input button {
+    border: none; background: var(--accent); color: #fff; border-radius: 10px;
+    padding: 0 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .chat-input button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="greeting" id="greeting">Hello</div>
+    <div class="sub"><span id="clock"></span> · <span id="datestr"></span></div>
+  </header>
+
+  <div class="grid" id="grid"></div>
+
+  <footer>miDash · edit your links in the <code>CONFIG</code> block of index.html</footer>
+</div>
+
+<!-- Chat agent -->
+<button id="chat-toggle" title="Ask your agent">💬</button>
+<div id="chat-panel">
+  <div class="chat-head">
+    <span>Agent</span>
+    <span class="status" id="chat-status" title="Backend status"></span>
+  </div>
+  <div id="chat-log"></div>
+  <form class="chat-input" id="chat-form">
+    <input id="chat-text" placeholder="Ask for anything…" autocomplete="off" />
+    <button type="submit" id="chat-send">Send</button>
+  </form>
+</div>
+
+<script>
+/* ============================================================
+   CONFIG — everything you edit lives here.
+   Add / remove links freely. Each section is a card.
+   ============================================================ */
+const CONFIG = {
+  name: "Q",
+
+  // The chat agent sends messages here. This MUST be a backend you control
+  // that holds your Anthropic API key (your Raspberry Pi or a Cloudflare Worker).
+  // NEVER put the API key in this file — it is public on GitHub Pages.
+  // Leave "" to disable the agent until your backend is ready.
+  chatEndpoint: "",   // e.g. "https://your-pi.example.com/chat" or your Worker URL
+
+  sections: [
+    {
+      title: "Calendar", icon: "📅",
+      links: [
+        { label: "Google Calendar", url: "https://calendar.google.com", meta: "today" },
+        { label: "Add an event", url: "https://calendar.google.com/calendar/u/0/r/eventedit" },
+        { label: "Schedule view", url: "https://calendar.google.com/calendar/u/0/r/agenda" },
+      ],
+    },
+    {
+      title: "Mail", icon: "✉️",
+      links: [
+        { label: "Gmail — Inbox", url: "https://mail.google.com/mail/u/0/#inbox" },
+        { label: "Starred", url: "https://mail.google.com/mail/u/0/#starred" },
+        { label: "Compose", url: "https://mail.google.com/mail/u/0/#inbox?compose=new" },
+      ],
+    },
+    {
+      title: "Work", icon: "💼",
+      links: [
+        { label: "Google Drive", url: "https://drive.google.com" },
+        { label: "QuickBooks", url: "https://qbo.intuit.com" },
+        { label: "Docs", url: "https://docs.google.com" },
+      ],
+    },
+    {
+      title: "Projects", icon: "🛠️",
+      links: [
+        { label: "GitHub", url: "https://github.com" },
+        { label: "miDash repo", url: "#", meta: "this site" },
+        { label: "Notes", url: "https://keep.google.com" },
+      ],
+    },
+    {
+      title: "Kids", icon: "🧒",
+      links: [
+        { label: "Family calendar", url: "https://calendar.google.com" },
+        { label: "Photos", url: "https://photos.google.com" },
+        { label: "School portal", url: "#" },
+      ],
+    },
+    {
+      title: "Fun & Play", icon: "🎮",
+      links: [
+        { label: "YouTube", url: "https://youtube.com" },
+        { label: "Spotify", url: "https://open.spotify.com" },
+        { label: "Maps — explore", url: "https://maps.google.com" },
+      ],
+    },
+  ],
+};
+
+/* ---------- Render ---------- */
+function render() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = CONFIG.sections.map(s => `
+    <div class="card">
+      <h2><span class="dot">${s.icon}</span>${s.title}</h2>
+      <div class="links">
+        ${s.links.map(l => `
+          <a href="${l.url}" ${l.url.startsWith("http") ? 'target="_blank" rel="noopener"' : ""}>
+            <span>${l.label}</span>
+            <span>${l.meta ? `<span class="meta">${l.meta}</span> ` : ""}<span class="arrow">↗</span></span>
+          </a>`).join("")}
+      </div>
+    </div>`).join("");
+}
+
+/* ---------- Clock & greeting ---------- */
+function tick() {
+  const now = new Date();
+  const h = now.getHours();
+  const part = h < 5 ? "Still up" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  document.getElementById("greeting").textContent = `${part}, ${CONFIG.name}`;
+  document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  document.getElementById("datestr").textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+}
+
+/* ---------- Chat agent ---------- */
+const log = document.getElementById("chat-log");
+function addMsg(text, cls) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+document.getElementById("chat-toggle").addEventListener("click", () => {
+  const p = document.getElementById("chat-panel");
+  p.classList.toggle("open");
+  if (p.classList.contains("open")) document.getElementById("chat-text").focus();
+});
+
+function initChat() {
+  const on = !!CONFIG.chatEndpoint;
+  document.getElementById("chat-status").classList.toggle("on", on);
+  if (on) {
+    addMsg("Hi! Ask me to pull something, draft a note, or look something up.", "bot");
+  } else {
+    addMsg("Agent is offline. Set CONFIG.chatEndpoint to your backend (Pi or Cloudflare Worker) to switch it on — see README.", "sys");
+  }
+}
+
+const history = [];
+document.getElementById("chat-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("chat-text");
+  const text = input.value.trim();
+  if (!text) return;
+  if (!CONFIG.chatEndpoint) { addMsg("No backend configured yet.", "sys"); return; }
+
+  addMsg(text, "user");
+  history.push({ role: "user", content: text });
+  input.value = "";
+  const sendBtn = document.getElementById("chat-send");
+  sendBtn.disabled = true;
+  const thinking = addMsg("…", "bot");
+
+  try {
+    const res = await fetch(CONFIG.chatEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    // Accepts { reply: "..." } or Anthropic-style { content: [{text}] }
+    const reply = data.reply || (data.content && data.content[0] && data.content[0].text) || "(no reply)";
+    thinking.textContent = reply;
+    history.push({ role: "assistant", content: reply });
+  } catch (err) {
+    thinking.className = "msg sys";
+    thinking.textContent = "Couldn't reach the agent backend (" + err.message + ").";
+  } finally {
+    sendBtn.disabled = false;
+    document.getElementById("chat-text").focus();
+  }
+});
+
+/* ---------- Boot ---------- */
+render();
+tick();
+setInterval(tick, 1000 * 10);
+initChat();
+</script>
+</body>
+</html>
