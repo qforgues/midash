@@ -67,6 +67,23 @@
   .needsauth { color:var(--muted); font-size:14px; }
   .needsauth button { margin-top:10px; }
 
+  /* refresh spin */
+  .refresh .ricon { display:inline-block; }
+  .refresh.spin .ricon { animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  /* link health dots */
+  .ldot { width:7px; height:7px; border-radius:50%; background:#c9c7c1; flex:0 0 auto; margin-right:9px; }
+  .ldot.up { background:#3aa66f; } .ldot.down { background:#d1453b; } .ldot.set { background:#c9c7c1; }
+  .links a .lhs { display:flex; align-items:center; min-width:0; }
+
+  /* account chips */
+  .chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:5px 10px;
+          border-radius:20px; background:var(--accent-soft); color:var(--accent); }
+  .chip .x { cursor:pointer; opacity:.6; font-size:11px; } .chip .x:hover { opacity:1; }
+  /* mail label pills */
+  .lbl { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:20px; border:1px solid var(--border); color:var(--muted); margin:2px 4px 0 0; }
+
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:48px; }
   footer code { background:var(--accent-soft); padding:1px 6px; border-radius:6px; }
 
@@ -102,19 +119,19 @@
       <div class="greeting" id="greeting">Hello</div>
       <div class="sub"><span id="clock"></span> · <span id="datestr"></span></div>
     </div>
-    <button class="gbtn" id="g-connect" style="display:none">🔓 Connect Google</button>
+    <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
 
   <!-- Live Today panel -->
   <div class="card wide" style="margin-bottom:20px">
-    <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none">↻ refresh</span></h2>
+    <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
     <div class="today">
       <div class="col">
         <h3>📅 Next 3 days</h3>
         <div id="agenda"><div class="empty">—</div></div>
       </div>
       <div class="col">
-        <h3>✉️ Needs attention</h3>
+        <h3>✉️ Unread in inbox</h3>
         <div id="mail"><div class="empty">—</div></div>
         <div id="unsub" class="unsub" style="margin-top:14px"></div>
       </div>
@@ -193,11 +210,13 @@ const CONFIG = {
 /* ---------- Build account-pinned Google URLs ---------- */
 const A = encodeURIComponent(CONFIG.account);
 const G = {
+  // Gmail accepts /u/<email>/. Other Google apps are unreliable with an email in
+  // the /u/ slot, so we use the ?authuser=<email> param, which they all honor.
   mail:  p => `https://mail.google.com/mail/u/${A}/${p}`,
-  cal:   p => `https://calendar.google.com/calendar/u/${A}/${p}`,
-  drive: p => `https://drive.google.com/drive/u/${A}/${p}`,
-  docs:  p => `https://docs.google.com/document/u/${A}/`,
-  photos:p => `https://photos.google.com/u/${A}/`,
+  cal:   p => `https://calendar.google.com/calendar/${p}?authuser=${A}`,
+  drive: p => `https://drive.google.com/drive/u/0/?authuser=${A}`,
+  docs:  p => `https://docs.google.com/document/u/0/?authuser=${A}`,
+  photos:p => `https://photos.google.com/?authuser=${A}`,
 };
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
@@ -205,7 +224,7 @@ function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 function render() {
   const projectsCard = `
     <div class="card">
-      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh">↻</span></h2>
+      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h2>
       <div class="links" id="projects"><div class="empty">loading repos…</div></div>
     </div>`;
   const cards = CONFIG.sections.map(s => `
@@ -214,8 +233,9 @@ function render() {
       <div class="links">
         ${s.links.map(l => {
           const u = urlFor(l);
+          const ph = (!u || u === "#");
           return `<a href="${u}" ${u.startsWith("http")?'target="_blank" rel="noopener"':""}>
-            <span>${l.label}</span>
+            <span class="lhs"><span class="ldot ${ph?"set":""}" data-url="${u}"></span>${l.label}</span>
             <span>${l.meta?`<span class="meta">${l.meta}</span> `:""}<span class="arrow">↗</span></span>
           </a>`;
         }).join("")}
@@ -224,11 +244,29 @@ function render() {
   document.getElementById("grid").innerHTML = cards + projectsCard;
   document.getElementById("proj-refresh").onclick = loadProjects;
   loadProjects();
+  pingLinks();
+}
+
+/* ---------- Best-effort link health (see note below) ----------
+   Browsers hide the real HTTP status of cross-origin sites, so this can only
+   tell "responds" (green) vs "dead domain / blocked" (red) vs "placeholder"
+   (grey). It cannot reliably tell a 404 page from a working one. */
+function pingLinks(){
+  document.querySelectorAll(".ldot[data-url]").forEach(dot=>{
+    const u=dot.dataset.url;
+    if(!u || u==="#"){ dot.className="ldot set"; dot.title="No URL set"; return; }
+    const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),5000);
+    fetch(u,{mode:"no-cors",signal:ctrl.signal})
+      .then(()=>{ dot.className="ldot up"; dot.title="Responds"; })
+      .catch(()=>{ dot.className="ldot down"; dot.title="No response / blocked"; })
+      .finally(()=>clearTimeout(to));
+  });
 }
 
 /* ---------- GitHub projects (public API, no auth) ---------- */
 async function loadProjects() {
   const box = document.getElementById("projects");
+  const rb=document.getElementById("proj-refresh"); if(rb) rb.classList.add("spin");
   try {
     const r = await fetch(`https://api.github.com/users/${CONFIG.githubUser}/repos?sort=updated&per_page=6`);
     const repos = await r.json();
@@ -239,6 +277,7 @@ async function loadProjects() {
         <span><span class="meta">${rel(r.pushed_at)}</span> <span class="arrow">↗</span></span>
       </a>`).join("");
   } catch { box.innerHTML = `<div class="empty">Couldn't load GitHub.</div>`; }
+  finally { if(rb) setTimeout(()=>rb.classList.remove("spin"),400); }
 }
 function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
   return d<1?"today":d<2?"yesterday":d<30?Math.floor(d)+"d ago":Math.floor(d/30)+"mo ago"; }
@@ -255,11 +294,18 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
-let tokenClient = null, accessToken = null;
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
+let tokenClient = null;
+let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
+let accessToken = null;   // primary account token (used by the chat agent)
+const labelCache = {};    // email -> {labelId: name}
 
-function saveToken(t){ try{ localStorage.setItem("midash_tok_v2", JSON.stringify({t:t.access_token, exp:Date.now()+(t.expires_in*1000)})); }catch(e){} }
-function loadToken(){ try{ const s=JSON.parse(localStorage.getItem("midash_tok_v2")||"null"); if(s&&s.exp>Date.now()+60000){ accessToken=s.t; return true; } }catch(e){} return false; }
+function saveAccounts(){ try{ localStorage.setItem("midash_accts", JSON.stringify(accounts)); }catch(e){} }
+function loadAccounts(){
+  try{ accounts=(JSON.parse(localStorage.getItem("midash_accts")||"[]")).filter(a=>a.exp>Date.now()+60000); }catch(e){ accounts=[]; }
+  accessToken = accounts[0] ? accounts[0].token : null;
+}
+function shortAcct(e){ return (e||"").split("@")[0]; }
 
 function googleBoot() {
   const note = document.getElementById("auth-note");
@@ -270,30 +316,64 @@ function googleBoot() {
   }
   const start = () => {
     tokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: CONFIG.googleClientId, scope: SCOPES,
-      callback: (resp) => { if(resp.access_token){ accessToken=resp.access_token; saveToken(resp); afterAuth(); } },
+      client_id: CONFIG.googleClientId, scope: SCOPES, callback: onToken,
     });
-    if (loadToken()) afterAuth();
-    else showConnect();
+    loadAccounts();
+    if (accounts.length) afterAuth(); else showConnect();
   };
   // GIS script may still be loading
   if (window.google && google.accounts) start();
   else { const i=setInterval(()=>{ if(window.google&&google.accounts){ clearInterval(i); start(); } }, 200); }
 }
+
+async function onToken(resp){
+  if(!resp || !resp.access_token) return;
+  let email="account";
+  try{
+    const info=await (await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})).json();
+    email=info.email||email;
+  }catch(e){}
+  const exp=Date.now()+((resp.expires_in||3000)*1000);
+  const found=accounts.find(a=>a.email===email);
+  if(found){ found.token=resp.access_token; found.exp=exp; } else accounts.push({email, token:resp.access_token, exp});
+  accessToken=accounts[0].token; saveAccounts(); afterAuth();
+}
+
+function renderAccountBar(){
+  const bar=document.getElementById("acct-bar");
+  if(!accounts.length){
+    bar.innerHTML=`<button class="gbtn" id="g-connect">🔓 Connect Google</button>`;
+    document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
+    return;
+  }
+  bar.innerHTML = accounts.map(a=>`<span class="chip">${esc(a.email)} <span class="x" data-e="${esc(a.email)}">✕</span></span>`).join("")
+    + `<button class="gbtn" id="g-add">＋ account</button>`;
+  document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"});
+  bar.querySelectorAll(".chip .x").forEach(x=>x.onclick=()=>{
+    accounts=accounts.filter(a=>a.email!==x.dataset.e);
+    accessToken=accounts[0]?accounts[0].token:null; delete labelCache[x.dataset.e]; saveAccounts();
+    if(accounts.length){ renderAccountBar(); loadLive(); } else showConnect();
+  });
+}
+
 function showConnect(){
-  const btn=document.getElementById("g-connect"); btn.style.display="flex";
-  btn.onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
+  renderAccountBar();
+  document.getElementById("today-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
 }
 function afterAuth(){
-  document.getElementById("g-connect").style.display="none";
+  renderAccountBar();
   document.getElementById("auth-note").style.display="none";
-  const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=loadLive;
+  const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
   loadLive();
 }
-async function gfetch(url){
-  const r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
-  if(r.status===401){ localStorage.removeItem("midash_tok_v2"); accessToken=null; showConnect(); throw new Error("expired"); }
+function refreshLive(){
+  const rb=document.getElementById("today-refresh"); rb.classList.add("spin");
+  Promise.allSettled([loadAgenda(), loadMail()]).finally(()=>setTimeout(()=>rb.classList.remove("spin"),500));
+}
+async function gfetch(url, token){
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+(token||accessToken)}});
+  if(r.status===401){ throw new Error("expired"); }
   return r.json();
 }
 function loadLive(){ loadAgenda(); loadMail(); }
@@ -305,54 +385,86 @@ function dayLabel(d){
 }
 async function loadAgenda(){
   const box=document.getElementById("agenda");
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   try{
-    const s=new Date(); s.setHours(0,0,0,0);
-    const e=new Date(s); e.setDate(e.getDate()+3);  // today + next 2 days
-    const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`);
-    const ev=data.items||[];
-    if(!ev.length){ box.innerHTML=`<div class="empty">Nothing scheduled — clear runway 🎉</div>`; return; }
-    const groups={};
-    ev.forEach(x=>{
-      const dt=x.start.dateTime?new Date(x.start.dateTime):new Date(x.start.date+"T00:00:00");
-      const key=dt.toDateString();
-      (groups[key]=groups[key]||[]).push({dt,x});
-    });
-    box.innerHTML=Object.keys(groups).map(key=>{
-      const head=`<div class="from" style="font-weight:600;color:var(--text);margin:10px 0 2px">${dayLabel(new Date(key))}</div>`;
-      const rows=groups[key].map(({dt,x})=>{
-        const t=x.start.dateTime?dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
-        return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(x.summary||"(no title)")}</span></div>`;
+    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+3); // today + next 2 days
+    const multi=accounts.length>1;
+    let all=[];
+    for(const acct of accounts){
+      let cals;
+      try{ cals=await gfetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader", acct.token); }catch(e){ continue; }
+      for(const c of (cals.items||[])){
+        if(c.selected===false) continue;  // honor the calendars you've ticked on in Google
+        try{
+          const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`, acct.token);
+          (data.items||[]).forEach(x=>{
+            const dt=x.start.dateTime?new Date(x.start.dateTime):new Date(x.start.date+"T00:00:00");
+            all.push({dt, x, acct:acct.email});
+          });
+        }catch(e){}
+      }
+    }
+    if(!all.length){ box.innerHTML=`<div class="empty">Nothing scheduled — clear runway 🎉</div>`; return; }
+    all.sort((a,b)=>a.dt-b.dt);
+    const groups={}; all.forEach(o=>{ const k=o.dt.toDateString(); (groups[k]=groups[k]||[]).push(o); });
+    box.innerHTML=Object.keys(groups).map(k=>{
+      const head=`<div class="from" style="font-weight:600;color:var(--text);margin:10px 0 2px">${dayLabel(new Date(k))}</div>`;
+      return head+groups[k].map(o=>{
+        const t=o.x.start.dateTime?o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
+        const tag=multi?` <span class="pill">${esc(shortAcct(o.acct))}</span>`:"";
+        return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(o.x.summary||"(no title)")}${tag}</span></div>`;
       }).join("");
-      return head+rows;
     }).join("");
-  }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
+  }catch(err){ if(err.message==="expired") showConnect(); else box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
+}
+
+/* Gmail system label → friendly name. Anything not here uses its raw user-label name. */
+const SYS_LABELS={CATEGORY_SOCIAL:"Social",CATEGORY_PROMOTIONS:"Promotions",CATEGORY_UPDATES:"Updates",CATEGORY_FORUMS:"Forums",IMPORTANT:"Important",STARRED:"Starred"};
+/* labels we never show as pills (plumbing or redundant) */
+const HIDE_LABELS=new Set(["INBOX","UNREAD","SENT","DRAFT","SPAM","TRASH","CHAT","CATEGORY_PERSONAL"]);
+async function getLabelMap(token){
+  try{ const d=await gfetch("https://www.googleapis.com/gmail/v1/users/me/labels",token);
+    const m={}; (d.labels||[]).forEach(l=>m[l.id]=l.name); return m; }catch(e){ return {}; }
+}
+function labelPills(ids,map){
+  return (ids||[]).filter(id=>!HIDE_LABELS.has(id))
+    .map(id=>SYS_LABELS[id]||map[id]||null).filter(Boolean)
+    .map(n=>`<span class="lbl">${esc(n)}</span>`).join("");
 }
 
 async function loadMail(){
   const box=document.getElementById("mail"), unsub=document.getElementById("unsub");
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   try{
-    const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=5&q="+encodeURIComponent("is:unread is:important"));
-    const ids=(list.messages||[]).map(m=>m.id);
-    if(!ids.length){ box.innerHTML=`<div class="empty">Inbox is calm — no important unread.</div>`; }
-    else {
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`)));
-      box.innerHTML=msgs.map(m=>{
+    const multi=accounts.length>1;
+    let rows=[];
+    for(const acct of accounts){
+      let map={}; try{ map=await getLabelMap(acct.token); }catch(e){}
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=8&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
+      const ids=(list.messages||[]).map(m=>m.id);
+      if(!ids.length) continue;
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, acct.token)));
+      msgs.forEach(m=>{
         const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
-        return `<div class="item"><span class="s">${esc(h.Subject||"(no subject)")}</span><span class="from">${esc(cleanFrom(h.From||""))}</span></div>`;
-      }).join("");
+        const acctTag=multi?`<span class="pill">${esc(shortAcct(acct.email))}</span>`:"";
+        rows.push(`<div class="item"><span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span><span class="from">${esc(cleanFrom(h.From||""))}</span></div>`);
+      });
     }
+    box.innerHTML = rows.length ? rows.join("") : `<div class="empty">Inbox zero — nothing unread 🎉</div>`;
     loadUnsub(unsub);
   }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load mail.</div>`; }
 }
 
 async function loadUnsub(box){
   try{
-    const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=40&q="+encodeURIComponent("category:promotions newer_than:14d"));
-    const ids=(list.messages||[]).map(m=>m.id).slice(0,40);
-    if(!ids.length){ box.innerHTML=""; return; }
-    const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`)));
     const tally={};
-    msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f) tally[f]=(tally[f]||0)+1; });
+    for(const acct of accounts){
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=40&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
+      const ids=(list.messages||[]).map(m=>m.id).slice(0,40);
+      if(!ids.length) continue;
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`, acct.token)));
+      msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f) tally[f]=(tally[f]||0)+1; });
+    }
     const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,3);
     if(!top.length){ box.innerHTML=""; return; }
     box.innerHTML = `<div class="from" style="margin-bottom:4px">Frequent senders (last 14d) — unsubscribe candidates:</div>` +
