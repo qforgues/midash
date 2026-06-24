@@ -175,7 +175,7 @@
   <header>
     <div>
       <div class="greeting" id="greeting">Hello</div>
-      <div class="sub"><span id="clock"></span> · <span id="datestr"></span></div>
+      <div class="sub"><span id="clock"></span> · <span id="datestr"></span> · <span class="ver" id="version">v?</span></div>
     </div>
     <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
@@ -215,7 +215,7 @@
     <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
   </div>
 
-  <footer>miDash <span id="version">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
+  <footer>miDash <span class="ver">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
 <!-- Chat agent -->
@@ -239,7 +239,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.4.0",
+  version: "1.4.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -862,17 +862,16 @@ function initNotes(){
 
 /* ---------- Version / build stamp ---------- */
 async function showVersion(){
-  const el=document.getElementById("version"); if(!el) return;
-  el.textContent="v"+(CONFIG.version||"?");
-  el.title="Dashboard version (baked into index.html)";
+  const els=document.querySelectorAll(".ver"); if(!els.length) return;
+  const set=(txt,title)=>els.forEach(el=>{ el.textContent=txt; el.title=title; });
+  set("v"+(CONFIG.version||"?"), "Dashboard version (baked into index.html)");
   try{
     const r=await fetch(`https://api.github.com/repos/${CONFIG.githubUser}/${CONFIG.repo}/commits?per_page=1`);
     const c=await r.json();
     if(Array.isArray(c)&&c[0]){
       const sha=c[0].sha.slice(0,7);
       const d=new Date(c[0].commit.author.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-      el.textContent=`v${CONFIG.version} · live ${sha} · ${d}`;
-      el.title=`Baked version v${CONFIG.version}. Latest published commit: ${sha} (${d}).`;
+      set(`v${CONFIG.version} · live ${sha} · ${d}`, `Baked version v${CONFIG.version}. Latest published commit: ${sha} (${d}).`);
     }
   }catch(e){}
 }
