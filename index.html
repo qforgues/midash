@@ -203,6 +203,7 @@
     <h2><span class="dot">🗓️</span>Agenda · next 7 days
       <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
     <div id="agenda-view"><div class="empty">—</div></div>
+    <div id="agenda-pager" class="pager" style="display:none"></div>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -239,7 +240,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.4.1",
+  version: "1.4.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -540,32 +541,44 @@ function renderAgenda(box, days, emptyMsg){
   if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
   box.innerHTML=groupByDay(evs);
 }
+const AGENDA_PER=10, AGENDA_MAX=20;
+let agendaPage=0;
+function agendaRowHTML(o, showDate){
+  const now=Date.now(), multi=accounts.length>1;
+  const past = o.timed && o.end && o.end.getTime()<now;
+  const dnum=o.dt.getDate();
+  const dlab=`${o.dt.toLocaleDateString([],{month:"short"})}, ${o.dt.toLocaleDateString([],{weekday:"short"})}`.toUpperCase();
+  const time = o.timed ? `${fmtT(o.dt)}${o.end?` – ${fmtT(o.end)}`:""}` : "All day";
+  const color = multi ? acctColor(o.acct) : "var(--accent)";
+  const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
+  const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
+  const idtag = multi ? acctPill(o.acct) : "";
+  return `<a class="agrow${past?" past":""}"${href}>
+    <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
+    <span class="agdot" style="--p:${color}"></span>
+    <span class="agtime">${time}</span>
+    <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}</span>
+  </a>`;
+}
 function renderAgendaView(){
-  const box=document.getElementById("agenda-view"); if(!box) return;
-  if(!agendaEvents.length){ box.innerHTML=`<div class="empty">Nothing on the calendar in the next ${CONFIG.agendaDays||30} days 🎉</div>`; return; }
-  const now=Date.now(), multi=accounts.length>1; let lastDay="";
-  const rows=agendaEvents.map(o=>{
-    const past = o.timed && o.end && o.end.getTime()<now;
-    const dayKey=o.dt.toDateString();
-    const showDate=dayKey!==lastDay; lastDay=dayKey;
-    const dnum=o.dt.getDate();
-    const dlab=`${o.dt.toLocaleDateString([],{month:"short"})}, ${o.dt.toLocaleDateString([],{weekday:"short"})}`.toUpperCase();
-    const time = o.timed
-      ? `${fmtT(o.dt)}${o.end?` – ${fmtT(o.end)}`:""}`
-      : "All day";
-    const color = multi ? acctColor(o.acct) : "var(--accent)";
-    const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
-    const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
-    const idtag = multi ? acctPill(o.acct) : "";
-    return `<a class="agrow${past?" past":""}"${href}>
-      <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
-      <span class="agdot" style="--p:${color}"></span>
-      <span class="agtime">${time}</span>
-      <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}</span>
-    </a>`;
-  }).join("");
-  const last=agendaEvents[agendaEvents.length-1].dt.toLocaleDateString([],{month:"short",day:"numeric",year:"numeric"});
+  const box=document.getElementById("agenda-view"), pager=document.getElementById("agenda-pager"); if(!box) return;
+  if(!agendaEvents.length){ box.innerHTML=`<div class="empty">Nothing on the calendar in the next ${CONFIG.agendaDays||30} days 🎉</div>`; pager.style.display="none"; return; }
+  const list=agendaEvents.slice(0,AGENDA_MAX);          // never show more than 20
+  const pages=Math.ceil(list.length/AGENDA_PER);
+  agendaPage=Math.max(0,Math.min(agendaPage,pages-1));
+  const start=agendaPage*AGENDA_PER;
+  const slice=list.slice(start,start+AGENDA_PER);
+  let lastDay="";
+  const rows=slice.map(o=>{ const k=o.dt.toDateString(); const show=k!==lastDay; lastDay=k; return agendaRowHTML(o,show); }).join("");
+  const last=list[list.length-1].dt.toLocaleDateString([],{month:"short",day:"numeric",year:"numeric"});
   box.innerHTML=rows+`<div class="agfoot">Showing through ${last} · <a href="${G.cal("r/agenda")}" target="_blank" rel="noopener">Open in Google Calendar ↗</a></div>`;
+  if(pages<=1){ pager.style.display="none"; return; }
+  pager.style.display="flex";
+  pager.innerHTML=`<button id="a-prev"${agendaPage===0?" disabled":""}>‹ prev</button>
+    <span>${start+1}–${start+slice.length} of ${list.length}</span>
+    <button id="a-next"${agendaPage>=pages-1?" disabled":""}>next ›</button>`;
+  document.getElementById("a-prev").onclick=()=>{ agendaPage--; renderAgendaView(); };
+  document.getElementById("a-next").onclick=()=>{ agendaPage++; renderAgendaView(); };
 }
 function fmtT(d){ return d.toLocaleTimeString([],{hour:"numeric",minute:d.getMinutes()?"2-digit":undefined}).toLowerCase().replace(" ",""); }
 function groupByDay(evs){
@@ -814,14 +827,16 @@ function notesHeaders(extra){ const h=extra||{}; const k=notesKey(); if(k) h.Aut
 function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }    // local cache
 function cacheNotes(v){ try{ localStorage.setItem("midash_notes",v); }catch(e){} }
 
-async function fetchNotes(){   // returns synced text, or null if sync unavailable
-  if(!NOTES_URL) return null;
+async function fetchNotes(){   // {notes} on success, else {error, status}
+  if(!NOTES_URL) return {error:"none"};
   try{
     const r=await fetch(NOTES_URL,{headers:notesHeaders()});
-    if(r.status===401) return {error:"key"};
-    if(!r.ok) return null;
-    const d=await r.json(); return {notes:d.notes||""};
-  }catch(e){ return null; }
+    if(r.status===401) return {error:"key", status:401};
+    if(r.status===404||r.status===405) return {error:"route", status:r.status};   // worker not redeployed with /notes
+    if(r.status===501) return {error:"kv", status:501};                            // KV namespace not bound
+    if(!r.ok) return {error:"http", status:r.status};
+    const d=await r.json(); return {notes:typeof d.notes==="string"?d.notes:""};
+  }catch(e){ return {error:"net"}; }
 }
 async function pushNotes(text){
   if(!NOTES_URL) return false;
@@ -840,13 +855,13 @@ function initNotes(){
     try{ if(v.trim()) localStorage.setItem("midash_notes_key",v.trim()); else localStorage.removeItem("midash_notes_key"); }catch(e){}
     loadNotesRemote();
   };
+  const SYNC_MSG={ key:"🔑 wrong/missing sync key", route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
   async function loadNotesRemote(){
     if(!NOTES_URL) return;
     st.textContent="syncing…";
     const res=await fetchNotes();
-    if(res && res.error==="key"){ st.textContent="🔑 set sync key"; return; }
-    if(res && typeof res.notes==="string"){ ta.value=res.notes; cacheNotes(res.notes); st.textContent="synced"; }
-    else { st.textContent="offline (local)"; }
+    if(res.error){ st.textContent=SYNC_MSG[res.error]||"offline (local)"; st.title=res.status?("HTTP "+res.status):""; return; }
+    ta.value=res.notes; cacheNotes(res.notes); st.textContent="synced"; st.title="";
   }
   loadNotesRemote();
 
