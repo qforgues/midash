@@ -78,11 +78,43 @@
   .links a .lhs { display:flex; align-items:center; min-width:0; }
 
   /* account chips */
-  .chip { display:inline-flex; align-items:center; gap:6px; font-size:13px; padding:5px 10px;
-          border-radius:20px; background:var(--accent-soft); color:var(--accent); }
-  .chip .x { cursor:pointer; opacity:.6; font-size:11px; } .chip .x:hover { opacity:1; }
+  .chip { display:inline-flex; align-items:center; gap:7px; font-size:13px; padding:5px 11px;
+          border-radius:20px; background:var(--surface); border:1px solid var(--border); color:var(--text); }
+  .chip .cdot { width:9px; height:9px; border-radius:50%; background:var(--p,var(--accent)); flex:0 0 auto; }
+  .chip b { font-weight:600; }
+  .chip .email { color:var(--muted); font-size:12px; }
+  .chip .x { cursor:pointer; opacity:.5; font-size:12px; } .chip .x:hover { opacity:1; }
   /* mail label pills */
-  .lbl { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:20px; border:1px solid var(--border); color:var(--muted); margin:2px 4px 0 0; }
+  .lbl { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:20px; border:1px solid var(--border); color:var(--muted); margin:2px 4px 0 0; vertical-align:middle; }
+
+  /* account ID pill (used throughout) */
+  .idpill { display:inline-flex; align-items:center; gap:5px; font-size:10.5px; font-weight:600;
+            padding:1px 8px 1px 6px; border-radius:20px; vertical-align:middle; margin-left:6px;
+            color:var(--p,var(--accent)); background:color-mix(in srgb,var(--p,var(--accent)) 14%,transparent); }
+  .idpill::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--p,var(--accent)); }
+
+  /* live data rows — calendar + mail */
+  .row { display:block; padding:9px 10px; margin:0 -10px; border-radius:10px; text-decoration:none; color:var(--text);
+         transition:background .12s; border-bottom:1px solid var(--border); }
+  .row:last-child { border-bottom:none; }
+  a.row:hover { background:var(--accent-soft); }
+  .ev { display:grid; grid-template-columns:70px 1fr; gap:10px; align-items:baseline; }
+  .ev .t { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; font-size:12.5px; }
+  .ev .s, .mailrow .s { font-size:14px; }
+  .mailrow .from { color:var(--muted); font-size:12.5px; margin-top:2px; display:block; }
+  .row.past { opacity:.42; }
+  .row.past .s { text-decoration:line-through; }
+  .dayhead { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+             color:var(--muted); margin:16px 0 6px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+  .dayhead:first-child { margin-top:2px; }
+  .dayhead.today { color:var(--accent); }
+
+  /* pager */
+  .pager { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:13px; color:var(--muted); }
+  .pager button { border:1px solid var(--border); background:var(--surface); color:var(--text);
+                  border-radius:8px; padding:4px 11px; font-size:13px; cursor:pointer; }
+  .pager button:hover:not(:disabled) { background:var(--accent-soft); border-color:var(--accent); }
+  .pager button:disabled { opacity:.4; cursor:default; }
 
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:48px; }
   footer code { background:var(--accent-soft); padding:1px 6px; border-radius:6px; }
@@ -133,10 +165,18 @@
       <div class="col">
         <h3>✉️ Unread in inbox</h3>
         <div id="mail"><div class="empty">—</div></div>
+        <div id="mail-pager" class="pager" style="display:none"></div>
         <div id="unsub" class="unsub" style="margin-top:14px"></div>
       </div>
     </div>
     <div id="auth-note" class="needsauth" style="display:none"></div>
+  </div>
+
+  <!-- Agenda View -->
+  <div class="card wide" id="agenda-view-card" style="margin-bottom:20px;display:none">
+    <h2><span class="dot">🗓️</span>Agenda · next 7 days
+      <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
+    <div id="agenda-view"><div class="empty">—</div></div>
   </div>
 
   <div class="grid" id="grid"></div>
@@ -307,6 +347,21 @@ function loadAccounts(){
 }
 function shortAcct(e){ return (e||"").split("@")[0]; }
 
+/* ---- Account identity: editable alias + stable color, used throughout ---- */
+const ACCT_COLORS=["#2d6a4f","#1f6f8b","#9d4edd","#b4541f","#c2185b","#5e548e"];
+let aliases={};
+function loadAliases(){ try{ aliases=JSON.parse(localStorage.getItem("midash_aliases")||"{}"); }catch(e){ aliases={}; } }
+function saveAliases(){ try{ localStorage.setItem("midash_aliases", JSON.stringify(aliases)); }catch(e){} }
+function aliasOf(email){ return aliases[email] || shortAcct(email); }
+function acctColor(email){ const i=Math.max(0,accounts.findIndex(a=>a.email===email)); return ACCT_COLORS[i%ACCT_COLORS.length]; }
+function acctPill(email){ return `<span class="idpill" style="--p:${acctColor(email)}">${esc(aliasOf(email))}</span>`; }
+function editAlias(email){
+  const v=prompt("Short label to identify "+email+":", aliasOf(email));
+  if(v===null) return;
+  aliases[email]=v.trim()||shortAcct(email); saveAliases();
+  renderAccountBar(); loadLive();
+}
+
 function googleBoot() {
   const note = document.getElementById("auth-note");
   if (!CONFIG.googleClientId) {
@@ -346,10 +401,16 @@ function renderAccountBar(){
     document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
     return;
   }
-  bar.innerHTML = accounts.map(a=>`<span class="chip">${esc(a.email)} <span class="x" data-e="${esc(a.email)}">✕</span></span>`).join("")
+  bar.innerHTML = accounts.map(a=>`<span class="chip" style="--p:${acctColor(a.email)}">
+      <span class="cdot"></span><b>${esc(aliasOf(a.email))}</b>
+      <span class="email">${esc(a.email)}</span>
+      <span class="x edit" data-e="${esc(a.email)}" title="Rename label">✎</span>
+      <span class="x rm" data-e="${esc(a.email)}" title="Remove">✕</span>
+    </span>`).join("")
     + `<button class="gbtn" id="g-add">＋ account</button>`;
   document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"});
-  bar.querySelectorAll(".chip .x").forEach(x=>x.onclick=()=>{
+  bar.querySelectorAll(".chip .edit").forEach(x=>x.onclick=()=>editAlias(x.dataset.e));
+  bar.querySelectorAll(".chip .rm").forEach(x=>x.onclick=()=>{
     accounts=accounts.filter(a=>a.email!==x.dataset.e);
     accessToken=accounts[0]?accounts[0].token:null; delete labelCache[x.dataset.e]; saveAccounts();
     if(accounts.length){ renderAccountBar(); loadLive(); } else showConnect();
@@ -360,16 +421,20 @@ function showConnect(){
   renderAccountBar();
   document.getElementById("today-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
+  document.getElementById("agenda-view-card").style.display="none";
 }
 function afterAuth(){
   renderAccountBar();
   document.getElementById("auth-note").style.display="none";
   const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
+  document.getElementById("agenda-view-card").style.display="block";
+  document.getElementById("agenda-refresh").onclick=refreshLive;
   loadLive();
 }
 function refreshLive(){
-  const rb=document.getElementById("today-refresh"); rb.classList.add("spin");
-  Promise.allSettled([loadAgenda(), loadMail()]).finally(()=>setTimeout(()=>rb.classList.remove("spin"),500));
+  const rb=document.getElementById("today-refresh"), ab=document.getElementById("agenda-refresh");
+  rb.classList.add("spin"); ab.classList.add("spin");
+  Promise.allSettled([loadAgenda(), loadMail()]).finally(()=>setTimeout(()=>{rb.classList.remove("spin");ab.classList.remove("spin");},500));
 }
 async function gfetch(url, token){
   const r=await fetch(url,{headers:{Authorization:"Bearer "+(token||accessToken)}});
@@ -383,12 +448,12 @@ function dayLabel(d){
   const diff=Math.round((new Date(new Date(d).setHours(0,0,0,0))-today)/86400000);
   return diff===0?"Today":diff===1?"Tomorrow":d.toLocaleDateString([],{weekday:"long",month:"short",day:"numeric"});
 }
+let agendaEvents=[];   // shared by the 3-day panel and the 7-day Agenda View
 async function loadAgenda(){
   const box=document.getElementById("agenda");
-  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; agendaEvents=[]; renderAgendaView(); return; }
   try{
-    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+3); // today + next 2 days
-    const multi=accounts.length>1;
+    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+7); // fetch a week
     let all=[];
     for(const acct of accounts){
       let cals;
@@ -398,24 +463,51 @@ async function loadAgenda(){
         try{
           const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`, acct.token);
           (data.items||[]).forEach(x=>{
-            const dt=x.start.dateTime?new Date(x.start.dateTime):new Date(x.start.date+"T00:00:00");
-            all.push({dt, x, acct:acct.email});
+            const timed=!!x.start.dateTime;
+            const dt=timed?new Date(x.start.dateTime):new Date(x.start.date+"T00:00:00");
+            const end=x.end?(x.end.dateTime?new Date(x.end.dateTime):new Date(x.end.date+"T00:00:00")):null;
+            all.push({dt, end, timed, x, acct:acct.email});
           });
         }catch(e){}
       }
     }
-    if(!all.length){ box.innerHTML=`<div class="empty">Nothing scheduled — clear runway 🎉</div>`; return; }
     all.sort((a,b)=>a.dt-b.dt);
-    const groups={}; all.forEach(o=>{ const k=o.dt.toDateString(); (groups[k]=groups[k]||[]).push(o); });
-    box.innerHTML=Object.keys(groups).map(k=>{
-      const head=`<div class="from" style="font-weight:600;color:var(--text);margin:10px 0 2px">${dayLabel(new Date(k))}</div>`;
-      return head+groups[k].map(o=>{
-        const t=o.x.start.dateTime?o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
-        const tag=multi?` <span class="pill">${esc(shortAcct(o.acct))}</span>`:"";
-        return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(o.x.summary||"(no title)")}${tag}</span></div>`;
-      }).join("");
-    }).join("");
+    agendaEvents=all;
+    renderAgenda(box, 3, "Nothing scheduled — clear runway 🎉");
+    renderAgendaView();
   }catch(err){ if(err.message==="expired") showConnect(); else box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
+}
+
+function eventRow(o){
+  const now=Date.now();
+  const past = o.timed && o.end && o.end.getTime()<now;
+  const t = o.timed ? o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "all day";
+  const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
+  const tag = accounts.length>1 ? acctPill(o.acct) : "";
+  return `<a class="row ev${past?" past":""}"${href}>
+    <span class="t">${t}</span>
+    <span class="s">${esc(o.x.summary||"(no title)")}${o.x.location?` <span class="lbl">${esc(o.x.location)}</span>`:""}${tag}</span>
+  </a>`;
+}
+function renderAgenda(box, days, emptyMsg){
+  const cut=new Date(); cut.setHours(0,0,0,0); cut.setDate(cut.getDate()+days);
+  const evs=agendaEvents.filter(o=>o.dt<cut);
+  if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
+  box.innerHTML=groupByDay(evs);
+}
+function renderAgendaView(){
+  const box=document.getElementById("agenda-view"); if(!box) return;
+  if(!agendaEvents.length){ box.innerHTML=`<div class="empty">Nothing on the calendar for the next 7 days 🎉</div>`; return; }
+  box.innerHTML=groupByDay(agendaEvents);
+}
+function groupByDay(evs){
+  const groups={}; evs.forEach(o=>{ const k=o.dt.toDateString(); (groups[k]=groups[k]||[]).push(o); });
+  const todayStr=new Date().toDateString();
+  return Object.keys(groups).map(k=>{
+    const isToday=k===todayStr;
+    return `<div class="dayhead${isToday?" today":""}">${dayLabel(new Date(k))}</div>`
+      + groups[k].map(eventRow).join("");
+  }).join("");
 }
 
 /* Gmail system label → friendly name. Anything not here uses its raw user-label name. */
@@ -432,27 +524,50 @@ function labelPills(ids,map){
     .map(n=>`<span class="lbl">${esc(n)}</span>`).join("");
 }
 
+const MAIL_PER=6;
+let mailRows=[], mailPage=0;
+function gmailMsgUrl(email,id){ return `https://mail.google.com/mail/u/${encodeURIComponent(email)}/#all/${id}`; }
 async function loadMail(){
   const box=document.getElementById("mail"), unsub=document.getElementById("unsub");
-  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; document.getElementById("mail-pager").style.display="none"; return; }
   try{
     const multi=accounts.length>1;
     let rows=[];
     for(const acct of accounts){
       let map={}; try{ map=await getLabelMap(acct.token); }catch(e){}
-      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=8&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
       const ids=(list.messages||[]).map(m=>m.id);
       if(!ids.length) continue;
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From`, acct.token)));
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
       msgs.forEach(m=>{
         const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
-        const acctTag=multi?`<span class="pill">${esc(shortAcct(acct.email))}</span>`:"";
-        rows.push(`<div class="item"><span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span><span class="from">${esc(cleanFrom(h.From||""))}</span></div>`);
+        const acctTag=multi?acctPill(acct.email):"";
+        const when=h.Date?new Date(h.Date):new Date(0);
+        rows.push({when, html:`<a class="row mailrow" href="${gmailMsgUrl(acct.email,m.id)}" target="_blank" rel="noopener">
+          <span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span>
+          <span class="from">${esc(cleanFrom(h.From||""))}</span></a>`});
       });
     }
-    box.innerHTML = rows.length ? rows.join("") : `<div class="empty">Inbox zero — nothing unread 🎉</div>`;
+    rows.sort((a,b)=>b.when-a.when);
+    mailRows=rows.map(r=>r.html); mailPage=0;
+    renderMailPage();
     loadUnsub(unsub);
   }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load mail.</div>`; }
+}
+function renderMailPage(){
+  const box=document.getElementById("mail"), pager=document.getElementById("mail-pager");
+  if(!mailRows.length){ box.innerHTML=`<div class="empty">Inbox zero — nothing unread 🎉</div>`; pager.style.display="none"; return; }
+  const pages=Math.ceil(mailRows.length/MAIL_PER);
+  mailPage=Math.max(0,Math.min(mailPage,pages-1));
+  const start=mailPage*MAIL_PER;
+  box.innerHTML=mailRows.slice(start,start+MAIL_PER).join("");
+  if(pages<=1){ pager.style.display="none"; return; }
+  pager.style.display="flex";
+  pager.innerHTML=`<button id="m-prev"${mailPage===0?" disabled":""}>‹ prev</button>
+    <span>${start+1}–${Math.min(start+MAIL_PER,mailRows.length)} of ${mailRows.length}</span>
+    <button id="m-next"${mailPage>=pages-1?" disabled":""}>next ›</button>`;
+  document.getElementById("m-prev").onclick=()=>{ mailPage--; renderMailPage(); };
+  document.getElementById("m-next").onclick=()=>{ mailPage++; renderMailPage(); };
 }
 
 async function loadUnsub(box){
@@ -582,7 +697,7 @@ async function executeTool(name,a){
 }
 
 /* ---------- Boot ---------- */
-render(); tick(); setInterval(tick,10000); initChat(); googleBoot();
+loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); googleBoot();
 </script>
 </body>
 </html>
