@@ -23,7 +23,7 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
          background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; padding:0 24px 120px; }
-  .wrap { max-width:1320px; margin:0 auto; }
+  .wrap { max-width:1400px; margin:0 auto; }
 
   header { padding:48px 0 28px; display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; }
   .greeting { font-size:32px; font-weight:600; letter-spacing:-.02em; }
@@ -38,13 +38,13 @@
           padding:20px 22px 22px; box-shadow:var(--shadow); }
   .card.wide { grid-column:1/-1; }
 
-  /* sidebar + main layout */
-  .layout { display:grid; grid-template-columns:300px 1fr; gap:20px; align-items:start; }
-  .layout.right { grid-template-columns:1fr 300px; }
+  /* sidebar + main layout — the sidebar is a full-height rail (stretches to match main) */
+  .layout { display:grid; grid-template-columns:260px 1fr; gap:20px; align-items:stretch; }
+  .layout.right { grid-template-columns:1fr 260px; }
   .layout.right .sidebar { order:2; } .layout.right .main { order:1; }
   @media (max-width:880px){ .layout, .layout.right { grid-template-columns:1fr; } .layout.right .sidebar { order:0; } }
   .sidebar { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
-             box-shadow:var(--shadow); padding:6px 18px 14px; position:sticky; top:16px; align-self:start; }
+             box-shadow:var(--shadow); padding:6px 18px 14px; }
   .side-head { display:flex; align-items:center; justify-content:space-between; padding:12px 0 6px;
                font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
   .side-flip { border:1px solid var(--border); background:var(--surface); color:var(--muted);
@@ -116,7 +116,7 @@
   .row { display:block; padding:9px 10px; margin:0 -10px; border-radius:10px; text-decoration:none; color:var(--text);
          transition:background .12s; border-bottom:1px solid var(--border); }
   .row:last-child { border-bottom:none; }
-  a.row:hover { background:var(--accent-soft); }
+  a.row:hover { background:color-mix(in srgb, var(--p,var(--accent)) 14%, var(--surface)); }
   .ev { display:grid; grid-template-columns:70px 1fr; gap:10px; align-items:baseline; }
   .ev .t { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; font-size:12.5px; }
   .ev .s, .mailrow .s { font-size:14px; }
@@ -134,7 +134,7 @@
            padding:11px 8px; margin:0 -8px; border-radius:10px; border-top:1px solid var(--border);
            text-decoration:none; color:var(--text); transition:background .12s; }
   .agrow:first-child { border-top:none; }
-  a.agrow:hover { background:var(--accent-soft); }
+  a.agrow:hover { background:color-mix(in srgb, var(--p,var(--accent)) 14%, var(--surface)); }
   .agdate { display:flex; align-items:baseline; gap:8px; }
   .agdnum { font-size:20px; font-weight:600; letter-spacing:-.02em; }
   .agdlab { font-size:11px; font-weight:600; letter-spacing:.04em; color:var(--muted); }
@@ -147,9 +147,9 @@
   .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
   @media (max-width:560px){ .agrow { grid-template-columns:74px 12px 1fr; } .agrow .agtime { grid-column:3; } }
 
-  /* agenda + notes 60/40 row, stretched so heights match */
+  /* agenda + notes row (notes gets the bigger share), stretched so heights match */
   .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
-  .split.live { grid-template-columns:6fr 4fr; }
+  .split.live { grid-template-columns:2fr 3fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
   #notes { display:flex; flex-direction:column; }
   #notes-area { flex:1; }
@@ -292,7 +292,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.5.2",
+  version: "1.5.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -630,7 +630,8 @@ function eventRow(o){
   const t = o.timed ? o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "all day";
   const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
   const tag = accounts.length>1 ? acctPill(o.acct) : "";
-  return `<a class="row ev${past?" past":""}"${href}>
+  const p = accounts.length>1 ? acctColor(o.acct) : "var(--accent)";
+  return `<a class="row ev${past?" past":""}" style="--p:${p}"${href}>
     <span class="t">${t}</span>
     <span class="s">${esc(o.x.summary||"(no title)")}${o.x.location?` <span class="lbl">${esc(o.x.location)}</span>`:""}${tag}</span>
   </a>`;
@@ -653,9 +654,9 @@ function agendaRowHTML(o, showDate){
   const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
   const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
   const idtag = multi ? acctPill(o.acct) : "";
-  return `<a class="agrow${past?" past":""}"${href}>
+  return `<a class="agrow${past?" past":""}" style="--p:${color}"${href}>
     <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
-    <span class="agdot" style="--p:${color}"></span>
+    <span class="agdot"></span>
     <span class="agtime">${time}</span>
     <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}</span>
   </a>`;
@@ -723,8 +724,9 @@ async function loadMail(){
       msgs.forEach(m=>{
         const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
         const acctTag=multi?acctPill(acct.email):"";
+        const p=multi?acctColor(acct.email):"var(--accent)";
         const when=h.Date?new Date(h.Date):new Date(0);
-        rows.push({when, html:`<a class="row mailrow" href="${gmailMsgUrl(acct.email,m.id)}" target="_blank" rel="noopener">
+        rows.push({when, html:`<a class="row mailrow" style="--p:${p}" href="${gmailMsgUrl(acct.email,m.id)}" target="_blank" rel="noopener">
           <span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span>
           <span class="from">${esc(cleanFrom(h.From||""))}</span></a>`});
       });
