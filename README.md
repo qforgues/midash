@@ -98,16 +98,15 @@ KV, so the same notes show up on every device and the agent can read them with t
 cd ~/miDash
 wrangler kv namespace create NOTES     # prints an id
 # paste that id into wrangler.jsonc → kv_namespaces[0].id (replace REPLACE_WITH_KV_ID)
-wrangler secret put NOTES_KEY          # choose a passphrase — this gates read/write
 wrangler deploy                        # redeploy with KV + the new tools
 ```
 
-Then on the dashboard, click **🔑 sync** in the Notes header once and paste the same
-`NOTES_KEY`. It's stored only in your browser (localStorage), never in the public repo.
-Without the key set, Notes still work locally (per-browser) as a fallback.
+That's it — notes sync automatically, no key required. If the Worker can't be reached,
+Notes fall back to local (per-browser) storage.
 
-> The notes endpoints live at `<chatEndpoint>/notes` (`GET` to read, `PUT` to write),
-> protected by `Authorization: Bearer <NOTES_KEY>`.
+> The notes endpoints live at `<chatEndpoint>/notes` (`GET` to read, `PUT` to write).
+> They're currently **open** (no auth) for simplicity. To lock them later, set a
+> `NOTES_KEY` secret on the Worker and send it as an `Authorization: Bearer` header.
 
 ## Version stamp
 

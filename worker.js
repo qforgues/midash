@@ -87,18 +87,11 @@ function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...cors() } });
 }
 
-// Notes are gated by a shared key you set with `wrangler secret put NOTES_KEY`.
-// The dashboard sends it as "Authorization: Bearer <key>" — it lives only in your
-// browser's localStorage, never in the public site. If NOTES_KEY is unset, access is
-// open (fine for local testing, not recommended once deployed).
-function notesAuthed(request, env) {
-  if (!env.NOTES_KEY) return true;
-  return (request.headers.get("Authorization") || "") === "Bearer " + env.NOTES_KEY;
-}
-
+// Notes are currently open (no auth) for simplicity. To lock them later, gate this on
+// a shared key (e.g. `wrangler secret put NOTES_KEY`) and have the dashboard send it as
+// an Authorization header.
 async function handleNotes(request, env) {
   if (!env.NOTES) return json({ error: { message: "Notes storage not configured — create a KV namespace bound as NOTES (see README)." } }, 501);
-  if (!notesAuthed(request, env)) return json({ error: { message: "unauthorized" } }, 401);
   if (request.method === "GET") {
     const notes = (await env.NOTES.get("notes")) || "";
     return json({ notes });

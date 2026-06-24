@@ -240,7 +240,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.4.2",
+  version: "1.4.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -822,8 +822,7 @@ async function executeTool(name,a){
 
 /* ---------- Notes (synced to the Worker's KV; localStorage is the offline cache) ---------- */
 const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
-function notesKey(){ try{ return localStorage.getItem("midash_notes_key")||""; }catch(e){ return ""; } }
-function notesHeaders(extra){ const h=extra||{}; const k=notesKey(); if(k) h.Authorization="Bearer "+k; return h; }
+function notesHeaders(extra){ return extra||{}; }   // notes are open (no auth) for now
 function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }    // local cache
 function cacheNotes(v){ try{ localStorage.setItem("midash_notes",v); }catch(e){} }
 
@@ -847,15 +846,9 @@ async function pushNotes(text){
 function initNotes(){
   const ta=document.getElementById("notes-area"), st=document.getElementById("notes-status");
   const sync=document.getElementById("notes-sync");
+  if(sync) sync.style.display="none";   // notes are open for now — no key needed
   ta.value=getNotes();   // show cached immediately
-  if(!NOTES_URL){ sync.style.display="none"; }
-  sync.onclick=async()=>{
-    const v=prompt("Notes sync key (the NOTES_KEY secret you set on the Worker). Leave blank to clear:", notesKey());
-    if(v===null) return;
-    try{ if(v.trim()) localStorage.setItem("midash_notes_key",v.trim()); else localStorage.removeItem("midash_notes_key"); }catch(e){}
-    loadNotesRemote();
-  };
-  const SYNC_MSG={ key:"🔑 wrong/missing sync key", route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
+  const SYNC_MSG={ route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
   async function loadNotesRemote(){
     if(!NOTES_URL) return;
     st.textContent="syncing…";
