@@ -128,6 +128,22 @@
   .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
   @media (max-width:560px){ .agrow { grid-template-columns:74px 12px 1fr; } .agrow .agtime { grid-column:3; } }
 
+  /* agenda + notes 70/30 row */
+  .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:start; }
+  .split.live { grid-template-columns:7fr 3fr; }
+  @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
+
+  /* editable account color swatch (native color input styled as a dot) */
+  input.cdot { -webkit-appearance:none; appearance:none; width:13px; height:13px; padding:0;
+    border:none; border-radius:50%; background:var(--p,var(--accent)); cursor:pointer; flex:0 0 auto; }
+  input.cdot::-webkit-color-swatch-wrapper { padding:0; }
+  input.cdot::-webkit-color-swatch { border:none; border-radius:50%; }
+  input.cdot::-moz-color-swatch { border:none; border-radius:50%; }
+
+  /* version stamp */
+  .ver { font-weight:700; }
+  .ver .vchg { color:var(--accent); }
+
   /* pager */
   .pager { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:13px; color:var(--muted); }
   .pager button { border:1px solid var(--border); background:var(--surface); color:var(--text);
@@ -198,23 +214,24 @@
     <div id="auth-note" class="needsauth" style="display:none"></div>
   </div>
 
-  <!-- Agenda View -->
-  <div class="card wide" id="agenda-view-card" style="margin-bottom:20px;display:none">
-    <h2><span class="dot">🗓️</span>Agenda · next 7 days
-      <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
-    <div id="agenda-view"><div class="empty">—</div></div>
-    <div id="agenda-pager" class="pager" style="display:none"></div>
+  <!-- Agenda (70%) + Notes (30%) -->
+  <div class="split" id="agenda-notes-row" style="margin-bottom:20px">
+    <div class="card" id="agenda-view-card" style="display:none">
+      <h2><span class="dot">🗓️</span>Agenda
+        <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
+      <div id="agenda-view"><div class="empty">—</div></div>
+      <div id="agenda-pager" class="pager" style="display:none"></div>
+    </div>
+    <!-- Notes — your scratchpad; the agent can read this on request -->
+    <div class="card" id="notes">
+      <h2><span class="dot">📝</span>Notes
+        <span class="refresh" id="notes-sync" style="display:none">🔑 sync</span>
+        <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
+      <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
+    </div>
   </div>
 
   <div class="grid" id="grid"></div>
-
-  <!-- Notes — your scratchpad; the agent can read this on request -->
-  <div class="card wide" id="notes" style="margin-top:20px">
-    <h2><span class="dot">📝</span>Notes
-      <span class="refresh" id="notes-sync" title="Set the sync key to share notes across devices">🔑 sync</span>
-      <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
-    <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
-  </div>
 
   <footer>miDash <span class="ver">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
@@ -240,7 +257,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.4.3",
+  version: "1.5.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -393,19 +410,29 @@ function loadAccounts(){
 }
 function shortAcct(e){ return (e||"").split("@")[0]; }
 
-/* ---- Account identity: editable alias + stable color, used throughout ---- */
+/* ---- Account identity: editable alias + editable color, used throughout ---- */
 const ACCT_COLORS=["#2d6a4f","#1f6f8b","#9d4edd","#b4541f","#c2185b","#5e548e"];
-let aliases={};
+let aliases={}, acctColors={};
 function loadAliases(){ try{ aliases=JSON.parse(localStorage.getItem("midash_aliases")||"{}"); }catch(e){ aliases={}; } }
 function saveAliases(){ try{ localStorage.setItem("midash_aliases", JSON.stringify(aliases)); }catch(e){} }
+function loadAcctColors(){ try{ acctColors=JSON.parse(localStorage.getItem("midash_acct_colors")||"{}"); }catch(e){ acctColors={}; } }
+function saveAcctColors(){ try{ localStorage.setItem("midash_acct_colors", JSON.stringify(acctColors)); }catch(e){} }
 function aliasOf(email){ return aliases[email] || shortAcct(email); }
-function acctColor(email){ const i=Math.max(0,accounts.findIndex(a=>a.email===email)); return ACCT_COLORS[i%ACCT_COLORS.length]; }
+function acctColor(email){ if(acctColors[email]) return acctColors[email]; const i=Math.max(0,accounts.findIndex(a=>a.email===email)); return ACCT_COLORS[i%ACCT_COLORS.length]; }
 function acctPill(email){ return `<span class="idpill" style="--p:${acctColor(email)}">${esc(aliasOf(email))}</span>`; }
 function editAlias(email){
   const v=prompt("Short label to identify "+email+":", aliasOf(email));
   if(v===null) return;
   aliases[email]=v.trim()||shortAcct(email); saveAliases();
   renderAccountBar(); loadLive();
+}
+function setAcctColor(email, hex){ acctColors[email]=hex; saveAcctColors(); renderAccountBar(); loadLive(); }
+/* Drive the dashboard's highlight color from the primary account's color. */
+function applyTheme(){
+  const root=document.documentElement.style;
+  const c = accounts[0] ? acctColor(accounts[0].email) : null;
+  if(c){ root.setProperty("--accent", c); root.setProperty("--accent-soft", `color-mix(in srgb, ${c} 15%, var(--surface))`); }
+  else { root.removeProperty("--accent"); root.removeProperty("--accent-soft"); }
 }
 
 function googleBoot() {
@@ -445,22 +472,26 @@ function renderAccountBar(){
   if(!accounts.length){
     bar.innerHTML=`<button class="gbtn" id="g-connect">🔓 Connect Google</button>`;
     document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
+    applyTheme();
     return;
   }
   bar.innerHTML = accounts.map(a=>`<span class="chip" style="--p:${acctColor(a.email)}">
-      <span class="cdot"></span><b>${esc(aliasOf(a.email))}</b>
+      <input type="color" class="cdot" data-e="${esc(a.email)}" value="${acctColor(a.email)}" title="Account color — click to change">
+      <b>${esc(aliasOf(a.email))}</b>
       <span class="email">${esc(a.email)}</span>
       <span class="x edit" data-e="${esc(a.email)}" title="Rename label">✎</span>
       <span class="x rm" data-e="${esc(a.email)}" title="Remove">✕</span>
     </span>`).join("")
     + `<button class="gbtn" id="g-add">＋ account</button>`;
   document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"});
+  bar.querySelectorAll(".chip input.cdot").forEach(inp=>inp.onchange=()=>setAcctColor(inp.dataset.e, inp.value));
   bar.querySelectorAll(".chip .edit").forEach(x=>x.onclick=()=>editAlias(x.dataset.e));
   bar.querySelectorAll(".chip .rm").forEach(x=>x.onclick=()=>{
     accounts=accounts.filter(a=>a.email!==x.dataset.e);
     accessToken=accounts[0]?accounts[0].token:null; delete labelCache[x.dataset.e]; saveAccounts();
     if(accounts.length){ renderAccountBar(); loadLive(); } else showConnect();
   });
+  applyTheme();
 }
 
 function showConnect(){
@@ -468,12 +499,14 @@ function showConnect(){
   document.getElementById("today-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
   document.getElementById("agenda-view-card").style.display="none";
+  document.getElementById("agenda-notes-row").classList.remove("live");
 }
 function afterAuth(){
   renderAccountBar();
   document.getElementById("auth-note").style.display="none";
   const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
   document.getElementById("agenda-view-card").style.display="block";
+  document.getElementById("agenda-notes-row").classList.add("live");
   document.getElementById("agenda-refresh").onclick=refreshLive;
   loadLive();
 }
@@ -868,24 +901,27 @@ function initNotes(){
   });
 }
 
-/* ---------- Version / build stamp ---------- */
-async function showVersion(){
-  const els=document.querySelectorAll(".ver"); if(!els.length) return;
-  const set=(txt,title)=>els.forEach(el=>{ el.textContent=txt; el.title=title; });
-  set("v"+(CONFIG.version||"?"), "Dashboard version (baked into index.html)");
+/* ---------- Version stamp ----------
+   Bold version; the segment(s) that changed since you last saw a new build are
+   highlighted in the accent color, so it's obvious what moved. */
+function versionHTML(){
+  const cur=String(CONFIG.version||"?");
+  let prev=null;
   try{
-    const r=await fetch(`https://api.github.com/repos/${CONFIG.githubUser}/${CONFIG.repo}/commits?per_page=1`);
-    const c=await r.json();
-    if(Array.isArray(c)&&c[0]){
-      const sha=c[0].sha.slice(0,7);
-      const d=new Date(c[0].commit.author.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
-      set(`v${CONFIG.version} · live ${sha} · ${d}`, `Baked version v${CONFIG.version}. Latest published commit: ${sha} (${d}).`);
-    }
+    const lastCur=localStorage.getItem("midash_ver_cur");
+    if(lastCur!==cur){ prev=lastCur; localStorage.setItem("midash_ver_prev", lastCur||""); localStorage.setItem("midash_ver_cur", cur); }
+    else prev=localStorage.getItem("midash_ver_prev");
   }catch(e){}
+  const cs=cur.split("."), ps=prev?prev.split("."):null;
+  const body=cs.map((seg,i)=>(ps && ps[i]!==undefined && ps[i]!==seg)?`<span class="vchg">${seg}</span>`:seg).join(".");
+  return "v"+body;
+}
+function showVersion(){
+  document.querySelectorAll(".ver").forEach(el=>{ el.innerHTML=versionHTML(); el.title="miDash version "+(CONFIG.version||""); });
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
