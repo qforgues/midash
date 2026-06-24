@@ -41,19 +41,26 @@
           padding:20px 22px 22px; box-shadow:var(--shadow); }
   .card.wide { grid-column:1/-1; }
 
-  /* top menu — quick-links grouped by category, laid out horizontally */
+  /* top menu — one collapsed row; categories open as floating dropdowns on hover */
   #layout .main { min-width:0; }
-  .side-head { display:flex; align-items:center; justify-content:space-between; padding:2px 0 12px;
-               margin-bottom:8px; border-bottom:1px solid var(--border);
-               font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
-  .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px 28px; }
-  .side-sec { padding:10px 0; min-width:0; }
-  .side-sec h2 { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
-                 color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-  .side-sec h2 .dot { font-size:15px; }
-  .side-sec h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; }
-  .side-sec h2 .refresh:hover { color:var(--accent); }
-  .side-sec .links a { font-size:14px; padding:6px 10px; }
+  .topmenu { padding:8px 14px; }
+  .menu-bar { display:flex; align-items:center; gap:10px; }
+  .menu-items { display:flex; align-items:center; gap:2px; flex-wrap:wrap; flex:1; }
+  .side-sec { position:relative; }
+  .side-sec > h2 { margin:0; padding:8px 12px; border-radius:10px; cursor:default;
+                   font-size:13px; font-weight:600; letter-spacing:.02em; text-transform:none;
+                   color:var(--text); display:flex; align-items:center; gap:7px; white-space:nowrap; }
+  .side-sec:hover > h2 { background:var(--accent-soft); color:var(--accent); }
+  .side-sec > h2 .dot { font-size:15px; }
+  .side-sec > h2 .refresh { margin-left:6px; font-size:12px; color:var(--muted); cursor:pointer; }
+  .side-sec > h2 .refresh:hover { color:var(--accent); }
+  /* dropdown panel — absolute so it overlays content instead of pushing it */
+  .side-sec .links { position:absolute; top:100%; left:0; min-width:220px; z-index:60;
+                     background:var(--surface); border:1px solid var(--border); border-radius:12px;
+                     box-shadow:var(--shadow); padding:8px; display:none; flex-direction:column; }
+  .side-sec:hover .links { display:flex; }
+  .side-sec .links a { font-size:14px; padding:8px 10px; }
+  @media (max-width:560px){ .side-sec .links { left:auto; right:0; } }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
   .card h2 .dot { font-size:16px; }
@@ -220,13 +227,12 @@
     <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
 
-  <!-- Top menu: quick-links grouped by category, laid out horizontally -->
+  <!-- Top menu: one collapsed row; each category opens on hover (overlays, no reflow) -->
   <div class="card topmenu" id="menu-card" style="margin-bottom:20px">
-    <div class="side-head">
-      <span>Menu</span>
+    <div class="menu-bar">
+      <div id="side-sections" class="menu-items"></div>
       <input type="color" id="theme-pick" class="cdot" title="Highlight color">
     </div>
-    <div id="side-sections" class="menu-grid"></div>
   </div>
 
   <div id="layout">
@@ -292,7 +298,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.6.3",
+  version: "1.6.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -350,7 +356,7 @@ const A = encodeURIComponent(CONFIG.account);
 const G = {
   // Gmail accepts /u/<email>/. Other Google apps are unreliable with an email in
   // the /u/ slot, so we use the ?authuser=<email> param, which they all honor.
-  mail:  p => `https://mail.google.com/mail/u/${A}/${p}`,
+  mail:  p => `https://mail.google.com/mail/u/${CONFIG.account}/${p}`,  // literal email — encoding the @ 404s
   cal:   p => `https://calendar.google.com/calendar/${p}?authuser=${A}`,
   drive: p => `https://drive.google.com/drive/u/0/?authuser=${A}`,
   docs:  p => `https://docs.google.com/document/u/0/?authuser=${A}`,
@@ -700,7 +706,8 @@ function labelPills(ids,map){
 
 const MAIL_PER=6;
 let mailRows=[], mailPage=0;
-function gmailMsgUrl(email,id){ return `https://mail.google.com/mail/u/${encodeURIComponent(email)}/#all/${id}`; }
+function gmailMsgUrl(email,id){ return `https://mail.google.com/mail/u/${email}/#all/${id}`; }
+function gmailSearchUrl(email,q){ return `https://mail.google.com/mail/u/${email}/#search/${encodeURIComponent(q)}`; }
 async function loadMail(){
   const box=document.getElementById("mail"), unsub=document.getElementById("unsub");
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; document.getElementById("mail-pager").style.display="none"; return; }
@@ -747,19 +754,19 @@ function renderMailPage(){
 
 async function loadUnsub(box){
   try{
-    const tally={};
+    const tally={}, senderAcct={};
     for(const acct of accounts){
       let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
       const ids=(list.messages||[]).map(m=>m.id).slice(0,20);
       if(!ids.length) continue;
       const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`, acct.token)));
-      msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f) tally[f]=(tally[f]||0)+1; });
+      msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f){ tally[f]=(tally[f]||0)+1; senderAcct[f]=acct.email; } });
     }
     const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,3);
     if(!top.length){ box.innerHTML=""; return; }
     box.innerHTML = `<div class="from" style="margin-bottom:4px">Frequent senders (last 14d) — unsubscribe candidates:</div>` +
       top.map(([f,c])=>`<div class="item"><span class="s">${esc(f)} <span class="pill">${c}</span></span>
-        <a href="${G.mail("#search/"+encodeURIComponent("from:"+f))}" target="_blank" rel="noopener">view & unsubscribe ↗</a></div>`).join("");
+        <a href="${gmailSearchUrl(senderAcct[f]||CONFIG.account, "from:"+f)}" target="_blank" rel="noopener">view & unsubscribe ↗</a></div>`).join("");
   }catch(e){ box.innerHTML=""; }
 }
 
