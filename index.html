@@ -109,12 +109,38 @@
   .dayhead:first-child { margin-top:2px; }
   .dayhead.today { color:var(--accent); }
 
+  /* Google-style agenda view */
+  #agenda-view { margin-top:2px; }
+  .agrow { display:grid; grid-template-columns:96px 14px 132px 1fr; align-items:baseline; gap:12px;
+           padding:11px 8px; margin:0 -8px; border-radius:10px; border-top:1px solid var(--border);
+           text-decoration:none; color:var(--text); transition:background .12s; }
+  .agrow:first-child { border-top:none; }
+  a.agrow:hover { background:var(--accent-soft); }
+  .agdate { display:flex; align-items:baseline; gap:8px; }
+  .agdnum { font-size:20px; font-weight:600; letter-spacing:-.02em; }
+  .agdlab { font-size:11px; font-weight:600; letter-spacing:.04em; color:var(--muted); }
+  .agdot { width:11px; height:11px; border-radius:50%; background:var(--p,var(--accent)); align-self:center; }
+  .agtime { font-size:13.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .agtitle { font-size:15px; font-weight:500; }
+  .agloc { color:var(--muted); font-weight:400; font-size:13.5px; margin-left:8px; }
+  .agrow.past { opacity:.42; } .agrow.past .agtitle { text-decoration:line-through; }
+  .agfoot { margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:13px; color:var(--muted); }
+  .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
+  @media (max-width:560px){ .agrow { grid-template-columns:74px 12px 1fr; } .agrow .agtime { grid-column:3; } }
+
   /* pager */
   .pager { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:13px; color:var(--muted); }
   .pager button { border:1px solid var(--border); background:var(--surface); color:var(--text);
                   border-radius:8px; padding:4px 11px; font-size:13px; cursor:pointer; }
   .pager button:hover:not(:disabled) { background:var(--accent-soft); border-color:var(--accent); }
   .pager button:disabled { opacity:.4; cursor:default; }
+
+  /* Notes */
+  #notes-area { width:100%; min-height:160px; resize:vertical; border:1px solid var(--border);
+    background:var(--bg); color:var(--text); border-radius:12px; padding:14px 16px; font-size:14.5px;
+    line-height:1.6; font-family:inherit; outline:none; }
+  #notes-area:focus { border-color:var(--accent); }
+  #notes-status { font-size:12px; }
 
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:48px; }
   footer code { background:var(--accent-soft); padding:1px 6px; border-radius:6px; }
@@ -181,6 +207,12 @@
 
   <div class="grid" id="grid"></div>
 
+  <!-- Notes — your scratchpad; the agent can read this on request -->
+  <div class="card wide" id="notes" style="margin-top:20px">
+    <h2><span class="dot">📝</span>Notes <span class="refresh" id="notes-status" style="cursor:default">saved</span></h2>
+    <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
+  </div>
+
   <footer>miDash · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
@@ -217,6 +249,10 @@ const CONFIG = {
   // ---- Chat agent backend (holds your Anthropic key; never in this file) ----
   chatEndpoint: "https://midash-chat.quentin-forgues.workers.dev",
 
+  // How far ahead the Agenda block looks (days). Birthdays etc. are sparse, so a
+  // wide window mirrors Google's agenda view.
+  agendaDays: 180,
+
   // Static quick-links. {label,url,meta}. Google links auto-pin to your account.
   sections: [
     { title:"Mail", icon:"✉️", links:[
@@ -240,6 +276,7 @@ const CONFIG = {
       { url:"#", label:"School portal", meta:"set me" },
     ]},
     { title:"Fun & Play", icon:"🎮", links:[
+      { url:"#notes", label:"Notes", meta:"jot ideas" },
       { url:"https://youtube.com", label:"YouTube" },
       { url:"https://open.spotify.com", label:"Spotify" },
       { url:"https://maps.google.com", label:"Maps" },
@@ -334,7 +371,7 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -453,7 +490,7 @@ async function loadAgenda(){
   const box=document.getElementById("agenda");
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; agendaEvents=[]; renderAgendaView(); return; }
   try{
-    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+7); // fetch a week
+    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+(CONFIG.agendaDays||30)); // wide window for the agenda block
     let all=[];
     for(const acct of accounts){
       let cals;
@@ -497,9 +534,32 @@ function renderAgenda(box, days, emptyMsg){
 }
 function renderAgendaView(){
   const box=document.getElementById("agenda-view"); if(!box) return;
-  if(!agendaEvents.length){ box.innerHTML=`<div class="empty">Nothing on the calendar for the next 7 days 🎉</div>`; return; }
-  box.innerHTML=groupByDay(agendaEvents);
+  if(!agendaEvents.length){ box.innerHTML=`<div class="empty">Nothing on the calendar in the next ${CONFIG.agendaDays||30} days 🎉</div>`; return; }
+  const now=Date.now(), multi=accounts.length>1; let lastDay="";
+  const rows=agendaEvents.map(o=>{
+    const past = o.timed && o.end && o.end.getTime()<now;
+    const dayKey=o.dt.toDateString();
+    const showDate=dayKey!==lastDay; lastDay=dayKey;
+    const dnum=o.dt.getDate();
+    const dlab=`${o.dt.toLocaleDateString([],{month:"short"})}, ${o.dt.toLocaleDateString([],{weekday:"short"})}`.toUpperCase();
+    const time = o.timed
+      ? `${fmtT(o.dt)}${o.end?` – ${fmtT(o.end)}`:""}`
+      : "All day";
+    const color = multi ? acctColor(o.acct) : "var(--accent)";
+    const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
+    const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
+    const idtag = multi ? acctPill(o.acct) : "";
+    return `<a class="agrow${past?" past":""}"${href}>
+      <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
+      <span class="agdot" style="--p:${color}"></span>
+      <span class="agtime">${time}</span>
+      <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}</span>
+    </a>`;
+  }).join("");
+  const last=agendaEvents[agendaEvents.length-1].dt.toLocaleDateString([],{month:"short",day:"numeric",year:"numeric"});
+  box.innerHTML=rows+`<div class="agfoot">Showing through ${last} · <a href="${G.cal("r/agenda")}" target="_blank" rel="noopener">Open in Google Calendar ↗</a></div>`;
 }
+function fmtT(d){ return d.toLocaleTimeString([],{hour:"numeric",minute:d.getMinutes()?"2-digit":undefined}).toLowerCase().replace(" ",""); }
 function groupByDay(evs){
   const groups={}; evs.forEach(o=>{ const k=o.dt.toDateString(); (groups[k]=groups[k]||[]).push(o); });
   const todayStr=new Date().toDateString();
@@ -598,7 +658,7 @@ document.getElementById("chat-toggle").addEventListener("click",()=>{ const p=do
 function initChat(){
   const on=!!CONFIG.chatEndpoint;
   document.getElementById("chat-status").classList.toggle("on",on);
-  if(on) addMsg("Hi! I can read your calendar and manage email. Try: “reply to the latest email from Sam saying I’ll call tomorrow”, “trash the promo from Old Navy”, or “what’s on for Friday?” I’ll ask you to confirm before sending or deleting.","bot");
+  if(on) addMsg("Hi! I work across all your connected Google accounts — calendar + email — and can read your Notes. Try: “reply to the latest email from Sam”, “delete the all-day birthday events in August”, or “draft a post from my notes”. I’ll confirm before sending or deleting.","bot");
   else addMsg("Agent is offline. Deploy the Cloudflare Worker and set CONFIG.chatEndpoint — see README.","sys");
 }
 
@@ -651,53 +711,107 @@ function decB64(d){ try{ return decodeURIComponent(escape(atob(d.replace(/-/g,"+
 function bodyOf(p){ if(!p) return ""; if(p.mimeType==="text/plain"&&p.body&&p.body.data) return decB64(p.body.data);
   if(p.parts){ for(const x of p.parts){ const t=bodyOf(x); if(t) return t; } } if(p.body&&p.body.data) return decB64(p.body.data); return ""; }
 
+function acctByEmail(email){ return accounts.find(a=>a.email===email)||null; }
+/* Find which connected account holds a Gmail message id (prefer a hinted account). */
+async function msgAccount(id, prefer){
+  const order=[]; if(prefer&&acctByEmail(prefer)) order.push(acctByEmail(prefer));
+  accounts.forEach(a=>{ if(!order.includes(a)) order.push(a); });
+  for(const acct of order){
+    try{ const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`, acct.token); if(m&&m.id) return acct; }catch(e){}
+  }
+  return null;
+}
+
 async function executeTool(name,a){
-  if(name!=="list_events" && !accessToken) return {error:"Google isn't connected. Click Connect Google, then retry."};
+  const noGoogle = (name==="read_notes");
+  if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
+      case "read_notes": { const n=getNotes(); return {notes:n||"(empty)", chars:n.length}; }
+
       case "search_emails": {
-        const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults="+(a.max||5)+"&q="+encodeURIComponent(a.query||"is:unread"));
-        const ids=(list.messages||[]).map(m=>m.id);
-        const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`)));
-        return msgs.map(m=>{ const h=hdr(m); return {id:m.id,from:h.From,subject:h.Subject,date:h.Date,snippet:m.snippet}; });
+        let out=[];
+        for(const acct of accounts){
+          let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults="+(a.max||5)+"&q="+encodeURIComponent(a.query||"is:unread"), acct.token); }catch(e){ continue; }
+          const ids=(list.messages||[]).map(m=>m.id);
+          const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
+          msgs.forEach(m=>{ const h=hdr(m); out.push({id:m.id,account:acct.email,from:h.From,subject:h.Subject,date:h.Date,snippet:m.snippet}); });
+        }
+        return out;
       }
       case "get_email": {
-        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=full`); const h=hdr(m);
-        return {id:m.id,from:h.From,to:h.To,subject:h.Subject,date:h.Date,body:bodyOf(m.payload).slice(0,4000)};
+        const acct=await msgAccount(a.id,a.account); if(!acct) return {error:"message not found in any connected account"};
+        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=full`, acct.token); const h=hdr(m);
+        return {id:m.id,account:acct.email,from:h.From,to:h.To,subject:h.Subject,date:h.Date,body:bodyOf(m.payload).slice(0,4000)};
       }
       case "reply_email": {
-        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID`); const h=hdr(m);
-        if(!confirm(`Send this reply to ${h.From}?\n\n${a.body}`)) return {cancelled:true,note:"User declined — do not retry."};
+        const acct=await msgAccount(a.id,a.account); if(!acct) return {error:"message not found in any connected account"};
+        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID`, acct.token); const h=hdr(m);
+        if(!confirm(`Send this reply from ${acct.email} to ${h.From}?\n\n${a.body}`)) return {cancelled:true,note:"User declined — do not retry."};
         const subj=/^re:/i.test(h.Subject||"")?h.Subject:"Re: "+(h.Subject||"");
         const raw=["To: "+h.From,"Subject: "+subj,h["Message-ID"]?"In-Reply-To: "+h["Message-ID"]:"",h["Message-ID"]?"References: "+h["Message-ID"]:"","Content-Type: text/plain; charset=UTF-8","",a.body].filter(Boolean).join("\r\n");
-        const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(raw),threadId:m.threadId})});
-        loadMail(); return r.ok?{sent:true}:{error:"send failed "+r.status};
+        const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(raw),threadId:m.threadId})});
+        loadMail(); return r.ok?{sent:true,account:acct.email}:{error:"send failed "+r.status};
       }
       case "trash_email": {
-        if(!confirm("Move this email to Trash?")) return {cancelled:true,note:"User declined — do not retry."};
-        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/trash`,{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
-        loadMail(); return r.ok?{trashed:true}:{error:"trash failed "+r.status};
+        const acct=await msgAccount(a.id,a.account); if(!acct) return {error:"message not found in any connected account"};
+        if(!confirm(`Move this email to Trash (${acct.email})?`)) return {cancelled:true,note:"User declined — do not retry."};
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/trash`,{method:"POST",headers:{Authorization:"Bearer "+acct.token}});
+        loadMail(); return r.ok?{trashed:true,account:acct.email}:{error:"trash failed "+r.status};
       }
       case "archive_email": {
-        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["INBOX"]})});
-        loadMail(); return r.ok?{archived:true}:{error:"archive failed "+r.status};
+        const acct=await msgAccount(a.id,a.account); if(!acct) return {error:"message not found in any connected account"};
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["INBOX"]})});
+        loadMail(); return r.ok?{archived:true,account:acct.email}:{error:"archive failed "+r.status};
       }
       case "mark_read": {
-        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["UNREAD"]})});
-        loadMail(); return r.ok?{marked_read:true}:{error:"modify failed "+r.status};
+        const acct=await msgAccount(a.id,a.account); if(!acct) return {error:"message not found in any connected account"};
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["UNREAD"]})});
+        loadMail(); return r.ok?{marked_read:true,account:acct.email}:{error:"modify failed "+r.status};
       }
       case "list_events": {
-        const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+(a.days||3));
-        const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`);
-        return (data.items||[]).map(x=>({summary:x.summary,start:x.start.dateTime||x.start.date,end:(x.end&&(x.end.dateTime||x.end.date))||null,location:x.location||null}));
+        const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+(a.days||7));
+        let out=[];
+        for(const acct of accounts){
+          let cals; try{ cals=await gfetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader", acct.token); }catch(e){ continue; }
+          for(const c of (cals.items||[])){
+            if(c.selected===false) continue;
+            let data; try{ data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(c.id)}/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`, acct.token); }catch(e){ continue; }
+            (data.items||[]).forEach(x=>out.push({account:acct.email,calendarId:c.id,calendar:c.summary,eventId:x.id,summary:x.summary,start:x.start.dateTime||x.start.date,end:(x.end&&(x.end.dateTime||x.end.date))||null,allDay:!x.start.dateTime,location:x.location||null,canEdit:(c.accessRole==="owner"||c.accessRole==="writer")}));
+          }
+        }
+        out.sort((p,q)=>new Date(p.start)-new Date(q.start));
+        return out;
+      }
+      case "delete_event": {
+        const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
+        if(!a.calendarId||!a.eventId) return {error:"need calendarId and eventId (get them from list_events)"};
+        if(!confirm(`Delete this event from ${acct.email}?\n\n${a.summary||a.eventId}`)) return {cancelled:true,note:"User declined — do not retry."};
+        const r=await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(a.calendarId)}/events/${encodeURIComponent(a.eventId)}`,{method:"DELETE",headers:{Authorization:"Bearer "+acct.token}});
+        loadAgenda(); return (r.ok||r.status===204||r.status===200)?{deleted:true}:{error:"delete failed "+r.status+" — some calendars (e.g. Birthdays) are read-only and can't be edited"};
       }
       default: return {error:"unknown tool "+name};
     }
   }catch(err){ if(err.message==="expired") return {error:"Google session expired — click Connect Google again."}; return {error:String(err.message||err)}; }
 }
 
+/* ---------- Notes (local scratchpad the agent can read) ---------- */
+function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }
+function initNotes(){
+  const ta=document.getElementById("notes-area"), st=document.getElementById("notes-status");
+  ta.value=getNotes();
+  let t=null;
+  ta.addEventListener("input",()=>{
+    st.textContent="saving…";
+    clearTimeout(t); t=setTimeout(()=>{
+      try{ localStorage.setItem("midash_notes",ta.value); st.textContent="saved"; }
+      catch(e){ st.textContent="couldn't save"; }
+    },400);
+  });
+}
+
 /* ---------- Boot ---------- */
-loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); googleBoot();
+loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); googleBoot();
 </script>
 </body>
 </html>
