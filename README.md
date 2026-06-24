@@ -59,6 +59,21 @@ your Anthropic API key.
 
 > ⚠️ Never put your API key in `index.html` — it's public on GitHub Pages.
 
+### What the agent can do
+
+The chat is a tool-using agent. It can:
+- read your calendar (next few days)
+- search your Gmail
+- reply to an email (in-thread), trash, archive, mark as read
+
+The Anthropic key lives only on the backend. The Gmail/Calendar actions run **in your
+browser** using your own Google login, so the backend never needs Google access.
+Replies and trash always pop an on-screen confirm before they happen.
+
+> Scopes used: `calendar.readonly`, `gmail.modify`, `gmail.send`. If you connected
+> Google before adding the agent, click **Connect Google** again to grant the new
+> permissions (you'll see a fresh consent screen).
+
 Two ready-made backends are included:
 
 - **`worker.js`** — deploy to a free Cloudflare Worker (simplest, always-on).

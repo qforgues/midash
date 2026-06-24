@@ -110,7 +110,7 @@
     <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none">↻ refresh</span></h2>
     <div class="today">
       <div class="col">
-        <h3>📅 Agenda</h3>
+        <h3>📅 Next 3 days</h3>
         <div id="agenda"><div class="empty">—</div></div>
       </div>
       <div class="col">
@@ -158,7 +158,7 @@ const CONFIG = {
   googleClientId: "649111264239-gro8ns552nso1398knfv03hc63rb5o8d.apps.googleusercontent.com",
 
   // ---- Chat agent backend (holds your Anthropic key; never in this file) ----
-  chatEndpoint: "",
+  chatEndpoint: "https://midash-chat.quentin-forgues.workers.dev",
 
   // Static quick-links. {label,url,meta}. Google links auto-pin to your account.
   sections: [
@@ -255,11 +255,11 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly";
+const SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
 let tokenClient = null, accessToken = null;
 
-function saveToken(t){ try{ localStorage.setItem("midash_tok", JSON.stringify({t:t.access_token, exp:Date.now()+(t.expires_in*1000)})); }catch(e){} }
-function loadToken(){ try{ const s=JSON.parse(localStorage.getItem("midash_tok")||"null"); if(s&&s.exp>Date.now()+60000){ accessToken=s.t; return true; } }catch(e){} return false; }
+function saveToken(t){ try{ localStorage.setItem("midash_tok_v2", JSON.stringify({t:t.access_token, exp:Date.now()+(t.expires_in*1000)})); }catch(e){} }
+function loadToken(){ try{ const s=JSON.parse(localStorage.getItem("midash_tok_v2")||"null"); if(s&&s.exp>Date.now()+60000){ accessToken=s.t; return true; } }catch(e){} return false; }
 
 function googleBoot() {
   const note = document.getElementById("auth-note");
@@ -293,21 +293,37 @@ function afterAuth(){
 }
 async function gfetch(url){
   const r=await fetch(url,{headers:{Authorization:"Bearer "+accessToken}});
-  if(r.status===401){ localStorage.removeItem("midash_tok"); accessToken=null; showConnect(); throw new Error("expired"); }
+  if(r.status===401){ localStorage.removeItem("midash_tok_v2"); accessToken=null; showConnect(); throw new Error("expired"); }
   return r.json();
 }
 function loadLive(){ loadAgenda(); loadMail(); }
 
+function dayLabel(d){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const diff=Math.round((new Date(new Date(d).setHours(0,0,0,0))-today)/86400000);
+  return diff===0?"Today":diff===1?"Tomorrow":d.toLocaleDateString([],{weekday:"long",month:"short",day:"numeric"});
+}
 async function loadAgenda(){
   const box=document.getElementById("agenda");
   try{
-    const s=new Date(); s.setHours(0,0,0,0); const e=new Date(); e.setHours(23,59,59,999);
+    const s=new Date(); s.setHours(0,0,0,0);
+    const e=new Date(s); e.setDate(e.getDate()+3);  // today + next 2 days
     const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`);
     const ev=data.items||[];
-    if(!ev.length){ box.innerHTML=`<div class="empty">Nothing scheduled today 🎉</div>`; return; }
-    box.innerHTML=ev.map(x=>{
-      const t=x.start.dateTime?new Date(x.start.dateTime).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
-      return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(x.summary||"(no title)")}</span></div>`;
+    if(!ev.length){ box.innerHTML=`<div class="empty">Nothing scheduled — clear runway 🎉</div>`; return; }
+    const groups={};
+    ev.forEach(x=>{
+      const dt=x.start.dateTime?new Date(x.start.dateTime):new Date(x.start.date+"T00:00:00");
+      const key=dt.toDateString();
+      (groups[key]=groups[key]||[]).push({dt,x});
+    });
+    box.innerHTML=Object.keys(groups).map(key=>{
+      const head=`<div class="from" style="font-weight:600;color:var(--text);margin:10px 0 2px">${dayLabel(new Date(key))}</div>`;
+      const rows=groups[key].map(({dt,x})=>{
+        const t=x.start.dateTime?dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"all day";
+        return `<div class="item"><span class="t">${t}</span> <span class="s">${esc(x.summary||"(no title)")}</span></div>`;
+      }).join("");
+      return head+rows;
     }).join("");
   }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
 }
@@ -355,25 +371,103 @@ document.getElementById("chat-toggle").addEventListener("click",()=>{ const p=do
 function initChat(){
   const on=!!CONFIG.chatEndpoint;
   document.getElementById("chat-status").classList.toggle("on",on);
-  if(on) addMsg("Hi! Ask me to pull something, draft a note, or look something up.","bot");
-  else addMsg("Agent is offline. Set CONFIG.chatEndpoint to your backend (Pi or Cloudflare Worker) — see README.","sys");
+  if(on) addMsg("Hi! I can read your calendar and manage email. Try: “reply to the latest email from Sam saying I’ll call tomorrow”, “trash the promo from Old Navy”, or “what’s on for Friday?” I’ll ask you to confirm before sending or deleting.","bot");
+  else addMsg("Agent is offline. Deploy the Cloudflare Worker and set CONFIG.chatEndpoint — see README.","sys");
 }
-const history=[];
+
+/* ---- Agent loop (tools run here in your browser with your Google login) ---- */
+const agentMessages=[];
+async function callModel(){
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:agentMessages})});
+  if(!res.ok) throw new Error("HTTP "+res.status);
+  return res.json();  // raw Anthropic response
+}
+
 document.getElementById("chat-form").addEventListener("submit",async(e)=>{
   e.preventDefault();
   const input=document.getElementById("chat-text"); const text=input.value.trim(); if(!text) return;
   if(!CONFIG.chatEndpoint){ addMsg("No backend configured yet.","sys"); return; }
-  addMsg(text,"user"); history.push({role:"user",content:text}); input.value="";
-  const sendBtn=document.getElementById("chat-send"); sendBtn.disabled=true; const thinking=addMsg("…","bot");
-  try{
-    const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:history})});
-    if(!res.ok) throw new Error("HTTP "+res.status);
-    const data=await res.json();
-    const reply=data.reply||(data.content&&data.content[0]&&data.content[0].text)||"(no reply)";
-    thinking.textContent=reply; history.push({role:"assistant",content:reply});
-  }catch(err){ thinking.className="msg sys"; thinking.textContent="Couldn't reach the agent backend ("+err.message+")."; }
+  addMsg(text,"user"); agentMessages.push({role:"user",content:text}); input.value="";
+  const sendBtn=document.getElementById("chat-send"); sendBtn.disabled=true;
+  const thinking=addMsg("…","bot");
+  try{ await agentLoop(thinking); }
+  catch(err){ thinking.className="msg sys"; thinking.textContent="Agent error: "+err.message; }
   finally{ sendBtn.disabled=false; document.getElementById("chat-text").focus(); }
 });
+
+async function agentLoop(thinking){
+  let bubble=thinking, used=false;
+  for(let i=0;i<8;i++){  // safety cap on tool rounds
+    const data=await callModel();
+    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    agentMessages.push({role:"assistant",content:data.content});
+    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+    if(txt){ if(!used){ bubble.textContent=txt; used=true; } else addMsg(txt,"bot"); }
+    if(data.stop_reason!=="tool_use"){ if(!used) bubble.remove(); return; }
+    if(!used){ bubble.textContent="working…"; }
+    const calls=(data.content||[]).filter(b=>b.type==="tool_use");
+    const results=[];
+    for(const c of calls){
+      const out=await executeTool(c.name, c.input||{});
+      results.push({type:"tool_result",tool_use_id:c.id,content:typeof out==="string"?out:JSON.stringify(out)});
+    }
+    agentMessages.push({role:"user",content:results});
+    used=false; bubble=addMsg("…","bot");
+  }
+  bubble.textContent="(stopped — too many steps)";
+}
+
+/* ---- Tool execution against Gmail / Calendar ---- */
+function hdr(m){ return Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value])); }
+function b64url(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""); }
+function decB64(d){ try{ return decodeURIComponent(escape(atob(d.replace(/-/g,"+").replace(/_/g,"/")))); }catch(e){ return ""; } }
+function bodyOf(p){ if(!p) return ""; if(p.mimeType==="text/plain"&&p.body&&p.body.data) return decB64(p.body.data);
+  if(p.parts){ for(const x of p.parts){ const t=bodyOf(x); if(t) return t; } } if(p.body&&p.body.data) return decB64(p.body.data); return ""; }
+
+async function executeTool(name,a){
+  if(name!=="list_events" && !accessToken) return {error:"Google isn't connected. Click Connect Google, then retry."};
+  try{
+    switch(name){
+      case "search_emails": {
+        const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults="+(a.max||5)+"&q="+encodeURIComponent(a.query||"is:unread"));
+        const ids=(list.messages||[]).map(m=>m.id);
+        const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`)));
+        return msgs.map(m=>{ const h=hdr(m); return {id:m.id,from:h.From,subject:h.Subject,date:h.Date,snippet:m.snippet}; });
+      }
+      case "get_email": {
+        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=full`); const h=hdr(m);
+        return {id:m.id,from:h.From,to:h.To,subject:h.Subject,date:h.Date,body:bodyOf(m.payload).slice(0,4000)};
+      }
+      case "reply_email": {
+        const m=await gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Message-ID`); const h=hdr(m);
+        if(!confirm(`Send this reply to ${h.From}?\n\n${a.body}`)) return {cancelled:true,note:"User declined — do not retry."};
+        const subj=/^re:/i.test(h.Subject||"")?h.Subject:"Re: "+(h.Subject||"");
+        const raw=["To: "+h.From,"Subject: "+subj,h["Message-ID"]?"In-Reply-To: "+h["Message-ID"]:"",h["Message-ID"]?"References: "+h["Message-ID"]:"","Content-Type: text/plain; charset=UTF-8","",a.body].filter(Boolean).join("\r\n");
+        const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(raw),threadId:m.threadId})});
+        loadMail(); return r.ok?{sent:true}:{error:"send failed "+r.status};
+      }
+      case "trash_email": {
+        if(!confirm("Move this email to Trash?")) return {cancelled:true,note:"User declined — do not retry."};
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/trash`,{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+        loadMail(); return r.ok?{trashed:true}:{error:"trash failed "+r.status};
+      }
+      case "archive_email": {
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["INBOX"]})});
+        loadMail(); return r.ok?{archived:true}:{error:"archive failed "+r.status};
+      }
+      case "mark_read": {
+        const r=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${a.id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+accessToken,"Content-Type":"application/json"},body:JSON.stringify({removeLabelIds:["UNREAD"]})});
+        loadMail(); return r.ok?{marked_read:true}:{error:"modify failed "+r.status};
+      }
+      case "list_events": {
+        const s=new Date(); s.setHours(0,0,0,0); const e=new Date(s); e.setDate(e.getDate()+(a.days||3));
+        const data=await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&timeMin=${s.toISOString()}&timeMax=${e.toISOString()}`);
+        return (data.items||[]).map(x=>({summary:x.summary,start:x.start.dateTime||x.start.date,end:(x.end&&(x.end.dateTime||x.end.date))||null,location:x.location||null}));
+      }
+      default: return {error:"unknown tool "+name};
+    }
+  }catch(err){ if(err.message==="expired") return {error:"Google session expired — click Connect Google again."}; return {error:String(err.message||err)}; }
+}
 
 /* ---------- Boot ---------- */
 render(); tick(); setInterval(tick,10000); initChat(); googleBoot();
