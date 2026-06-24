@@ -41,25 +41,19 @@
           padding:20px 22px 22px; box-shadow:var(--shadow); }
   .card.wide { grid-column:1/-1; }
 
-  /* sidebar + main layout — the sidebar is a full-height rail (stretches to match main) */
-  .layout { display:grid; grid-template-columns:260px 1fr; gap:20px; align-items:stretch; }
-  .layout.right { grid-template-columns:1fr 260px; }
-  .layout.right .sidebar { order:2; } .layout.right .main { order:1; }
-  @media (max-width:880px){ .layout, .layout.right { grid-template-columns:1fr; } .layout.right .sidebar { order:0; } }
-  .sidebar { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
-             box-shadow:var(--shadow); padding:6px 18px 14px; }
-  .side-head { display:flex; align-items:center; justify-content:space-between; padding:12px 0 6px;
+  /* top menu — quick-links grouped by category, laid out horizontally */
+  #layout .main { min-width:0; }
+  .side-head { display:flex; align-items:center; justify-content:space-between; padding:2px 0 12px;
+               margin-bottom:8px; border-bottom:1px solid var(--border);
                font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
-  .side-flip { border:1px solid var(--border); background:var(--surface); color:var(--muted);
-               border-radius:8px; width:28px; height:26px; cursor:pointer; font-size:14px; line-height:1; }
-  .side-flip:hover { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); }
-  .side-sec { padding:12px 0; border-top:1px solid var(--border); }
+  .menu-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px 28px; }
+  .side-sec { padding:10px 0; min-width:0; }
   .side-sec h2 { font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
-                 color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+                 color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .side-sec h2 .dot { font-size:15px; }
   .side-sec h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; }
   .side-sec h2 .refresh:hover { color:var(--accent); }
-  .side-sec .links a { font-size:14px; padding:7px 10px; }
+  .side-sec .links a { font-size:14px; padding:6px 10px; }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
   .card h2 .dot { font-size:16px; }
@@ -226,19 +220,16 @@
     <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
 
-  <div class="layout" id="layout">
-    <!-- Side menu: quick-links grouped by category -->
-    <aside class="sidebar" id="sidebar">
-      <div class="side-head">
-        <span>Menu</span>
-        <span style="display:flex;gap:8px;align-items:center">
-          <input type="color" id="theme-pick" class="cdot" title="Highlight color">
-          <button class="side-flip" id="side-flip" title="Switch menu side">⇄</button>
-        </span>
-      </div>
-      <div id="side-sections"></div>
-    </aside>
+  <!-- Top menu: quick-links grouped by category, laid out horizontally -->
+  <div class="card topmenu" id="menu-card" style="margin-bottom:20px">
+    <div class="side-head">
+      <span>Menu</span>
+      <input type="color" id="theme-pick" class="cdot" title="Highlight color">
+    </div>
+    <div id="side-sections" class="menu-grid"></div>
+  </div>
 
+  <div id="layout">
     <main class="main">
       <!-- Live Today panel -->
       <div class="card" style="margin-bottom:20px">
@@ -301,7 +292,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.6.2",
+  version: "1.6.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -390,14 +381,6 @@ function render() {
     </div>`;
   document.getElementById("side-sections").innerHTML = sections + projects;
   document.getElementById("proj-refresh").onclick = loadProjects;
-
-  // menu side preference (left default, switchable to right)
-  const layout=document.getElementById("layout");
-  if(localStorage.getItem("midash_menu_side")!=="left") layout.classList.add("right");  // default right; ⇄ toggles
-  document.getElementById("side-flip").onclick=()=>{
-    layout.classList.toggle("right");
-    try{ localStorage.setItem("midash_menu_side", layout.classList.contains("right")?"right":"left"); }catch(e){}
-  };
 
   // theme (highlight) color picker
   const tp=document.getElementById("theme-pick");
