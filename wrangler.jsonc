@@ -1,12 +1,14 @@
 {
-  "name": "midash-chat",
-  "compatibility_date": "2026-06-24",
-  "main": "worker.js",
-
-  // Notes storage. Create the namespace once with:
-  //   wrangler kv namespace create NOTES
-  // then paste the printed id below (replace REPLACE_WITH_KV_ID).
-  "kv_namespaces": [
-    { "binding": "NOTES", "id": "REPLACE_WITH_KV_ID" }
-  ]
+	"name": "midash-chat",
+	"compatibility_date": "2026-06-24",
+	"main": "worker.js",
+	// Notes storage. Create the namespace once with:
+	//   wrangler kv namespace create NOTES
+	// then paste the printed id below (replace REPLACE_WITH_KV_ID).
+	"kv_namespaces": [
+		{
+			"binding": "NOTES",
+			"id": "f095586747ee4a47b524082986e8f725"
+		}
+	]
 }

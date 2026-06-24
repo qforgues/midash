@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
 <title>miDash</title>
 <meta name="description" content="Q's personal command center — calendar, mail, projects, and play in one place." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>" />
@@ -130,7 +133,7 @@
 
   /* Google-style agenda view */
   #agenda-view { margin-top:2px; }
-  .agrow { display:grid; grid-template-columns:96px 14px 132px 1fr; align-items:baseline; gap:12px;
+  .agrow { display:grid; grid-template-columns:80px 12px 104px 1fr; align-items:baseline; gap:10px;
            padding:11px 8px; margin:0 -8px; border-radius:10px; border-top:1px solid var(--border);
            text-decoration:none; color:var(--text); transition:background .12s; }
   .agrow:first-child { border-top:none; }
@@ -151,8 +154,14 @@
   .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
   .split.live { grid-template-columns:2fr 3fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
+  .split > * { min-width:0; }        /* let the fr tracks win — don't let long URLs blow out a column */
   #notes { display:flex; flex-direction:column; }
   #notes-area { flex:1; }
+
+  /* keep long unbreakable URLs/titles from forcing columns wide */
+  .main { min-width:0; }
+  .agtitle, .agloc, .agrow .agtitle, .mailrow .s, .ev .s { overflow-wrap:anywhere; word-break:break-word; min-width:0; }
+  .agrow, .mailrow, .ev { min-width:0; }
 
   /* editable account color swatch (native color input styled as a dot) */
   input.cdot { -webkit-appearance:none; -moz-appearance:none; appearance:none; width:16px; height:16px; padding:0;
@@ -292,7 +301,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.5.3",
+  version: "1.6.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -717,7 +726,7 @@ async function loadMail(){
     let rows=[];
     for(const acct of accounts){
       let map={}; try{ map=await getLabelMap(acct.token); }catch(e){}
-      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=25&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
       const ids=(list.messages||[]).map(m=>m.id);
       if(!ids.length) continue;
       const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
@@ -757,8 +766,8 @@ async function loadUnsub(box){
   try{
     const tally={};
     for(const acct of accounts){
-      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=40&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
-      const ids=(list.messages||[]).map(m=>m.id).slice(0,40);
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
+      const ids=(list.messages||[]).map(m=>m.id).slice(0,20);
       if(!ids.length) continue;
       const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`, acct.token)));
       msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f) tally[f]=(tally[f]||0)+1; });
