@@ -209,11 +209,13 @@
 
   <!-- Notes — your scratchpad; the agent can read this on request -->
   <div class="card wide" id="notes" style="margin-top:20px">
-    <h2><span class="dot">📝</span>Notes <span class="refresh" id="notes-status" style="cursor:default">saved</span></h2>
+    <h2><span class="dot">📝</span>Notes
+      <span class="refresh" id="notes-sync" title="Set the sync key to share notes across devices">🔑 sync</span>
+      <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
     <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
   </div>
 
-  <footer>miDash · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
+  <footer>miDash <span id="version">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
 <!-- Chat agent -->
@@ -233,6 +235,12 @@
    ============================================================ */
 const CONFIG = {
   name: "Q",
+
+  // Bump this whenever you publish a change you want to recognize on the live site.
+  // Shown in the footer next to the live GitHub commit, so you always know which
+  // build you're looking at.
+  version: "1.4.0",
+  repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
   account: "quentin.forgues@gmail.com",
@@ -727,7 +735,11 @@ async function executeTool(name,a){
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
-      case "read_notes": { const n=getNotes(); return {notes:n||"(empty)", chars:n.length}; }
+      case "read_notes": {
+        const res=await fetchNotes();
+        if(res && typeof res.notes==="string"){ cacheNotes(res.notes); return {notes:res.notes||"(empty)", chars:res.notes.length, source:"synced"}; }
+        const n=getNotes(); return {notes:n||"(empty)", chars:n.length, source:"local"};
+      }
 
       case "search_emails": {
         let out=[];
@@ -795,23 +807,78 @@ async function executeTool(name,a){
   }catch(err){ if(err.message==="expired") return {error:"Google session expired — click Connect Google again."}; return {error:String(err.message||err)}; }
 }
 
-/* ---------- Notes (local scratchpad the agent can read) ---------- */
-function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }
+/* ---------- Notes (synced to the Worker's KV; localStorage is the offline cache) ---------- */
+const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
+function notesKey(){ try{ return localStorage.getItem("midash_notes_key")||""; }catch(e){ return ""; } }
+function notesHeaders(extra){ const h=extra||{}; const k=notesKey(); if(k) h.Authorization="Bearer "+k; return h; }
+function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }    // local cache
+function cacheNotes(v){ try{ localStorage.setItem("midash_notes",v); }catch(e){} }
+
+async function fetchNotes(){   // returns synced text, or null if sync unavailable
+  if(!NOTES_URL) return null;
+  try{
+    const r=await fetch(NOTES_URL,{headers:notesHeaders()});
+    if(r.status===401) return {error:"key"};
+    if(!r.ok) return null;
+    const d=await r.json(); return {notes:d.notes||""};
+  }catch(e){ return null; }
+}
+async function pushNotes(text){
+  if(!NOTES_URL) return false;
+  try{ const r=await fetch(NOTES_URL,{method:"PUT",headers:notesHeaders({"Content-Type":"text/plain"}),body:text}); return r.ok; }
+  catch(e){ return false; }
+}
+
 function initNotes(){
   const ta=document.getElementById("notes-area"), st=document.getElementById("notes-status");
-  ta.value=getNotes();
+  const sync=document.getElementById("notes-sync");
+  ta.value=getNotes();   // show cached immediately
+  if(!NOTES_URL){ sync.style.display="none"; }
+  sync.onclick=async()=>{
+    const v=prompt("Notes sync key (the NOTES_KEY secret you set on the Worker). Leave blank to clear:", notesKey());
+    if(v===null) return;
+    try{ if(v.trim()) localStorage.setItem("midash_notes_key",v.trim()); else localStorage.removeItem("midash_notes_key"); }catch(e){}
+    loadNotesRemote();
+  };
+  async function loadNotesRemote(){
+    if(!NOTES_URL) return;
+    st.textContent="syncing…";
+    const res=await fetchNotes();
+    if(res && res.error==="key"){ st.textContent="🔑 set sync key"; return; }
+    if(res && typeof res.notes==="string"){ ta.value=res.notes; cacheNotes(res.notes); st.textContent="synced"; }
+    else { st.textContent="offline (local)"; }
+  }
+  loadNotesRemote();
+
   let t=null;
   ta.addEventListener("input",()=>{
-    st.textContent="saving…";
-    clearTimeout(t); t=setTimeout(()=>{
-      try{ localStorage.setItem("midash_notes",ta.value); st.textContent="saved"; }
-      catch(e){ st.textContent="couldn't save"; }
-    },400);
+    st.textContent="saving…"; cacheNotes(ta.value);
+    clearTimeout(t); t=setTimeout(async()=>{
+      const ok=await pushNotes(ta.value);
+      st.textContent = NOTES_URL ? (ok?"synced":"saved locally (sync failed)") : "saved";
+    },500);
   });
 }
 
+/* ---------- Version / build stamp ---------- */
+async function showVersion(){
+  const el=document.getElementById("version"); if(!el) return;
+  el.textContent="v"+(CONFIG.version||"?");
+  el.title="Dashboard version (baked into index.html)";
+  try{
+    const r=await fetch(`https://api.github.com/repos/${CONFIG.githubUser}/${CONFIG.repo}/commits?per_page=1`);
+    const c=await r.json();
+    if(Array.isArray(c)&&c[0]){
+      const sha=c[0].sha.slice(0,7);
+      const d=new Date(c[0].commit.author.date).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+      el.textContent=`v${CONFIG.version} · live ${sha} · ${d}`;
+      el.title=`Baked version v${CONFIG.version}. Latest published commit: ${sha} (${d}).`;
+    }
+  }catch(e){}
+}
+
 /* ---------- Boot ---------- */
-loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); googleBoot();
+loadAliases(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); showVersion(); googleBoot();
 </script>
 </body>
 </html>

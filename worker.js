@@ -79,34 +79,63 @@ const TOOLS = [
 function cors() {
   return {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 }
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...cors() } });
 }
 
+// Notes are gated by a shared key you set with `wrangler secret put NOTES_KEY`.
+// The dashboard sends it as "Authorization: Bearer <key>" — it lives only in your
+// browser's localStorage, never in the public site. If NOTES_KEY is unset, access is
+// open (fine for local testing, not recommended once deployed).
+function notesAuthed(request, env) {
+  if (!env.NOTES_KEY) return true;
+  return (request.headers.get("Authorization") || "") === "Bearer " + env.NOTES_KEY;
+}
+
+async function handleNotes(request, env) {
+  if (!env.NOTES) return json({ error: { message: "Notes storage not configured — create a KV namespace bound as NOTES (see README)." } }, 501);
+  if (!notesAuthed(request, env)) return json({ error: { message: "unauthorized" } }, 401);
+  if (request.method === "GET") {
+    const notes = (await env.NOTES.get("notes")) || "";
+    return json({ notes });
+  }
+  if (request.method === "PUT") {
+    const text = await request.text();
+    await env.NOTES.put("notes", text);
+    return json({ ok: true, chars: text.length });
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
+async function handleChat(request, env) {
+  if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
+  let body;
+  try { body = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
+  });
+
+  const data = await r.json();           // pass the full Anthropic response back
+  return json(data, r.ok ? 200 : r.status);
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
-    if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
-
-    let body;
-    try { body = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
-    });
-
-    const data = await r.json();           // pass the full Anthropic response back
-    return json(data, r.ok ? 200 : r.status);
+    const url = new URL(request.url);
+    if (url.pathname === "/notes") return handleNotes(request, env);
+    return handleChat(request, env);
   },
 };

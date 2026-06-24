@@ -88,6 +88,34 @@ Because the agent is just an HTTP endpoint, the **same** backend can power other
 clients you run — e.g. your Pi's Discord bot — giving you one shared agent across the
 dashboard, Discord, and anything else.
 
+## Notes (synced across devices)
+
+The Notes card is a free-form scratchpad. With the Worker it syncs through Cloudflare
+KV, so the same notes show up on every device and the agent can read them with the
+`read_notes` tool (from the dashboard *or* the Pi). One-time setup on the Worker:
+
+```bash
+cd ~/miDash
+wrangler kv namespace create NOTES     # prints an id
+# paste that id into wrangler.jsonc → kv_namespaces[0].id (replace REPLACE_WITH_KV_ID)
+wrangler secret put NOTES_KEY          # choose a passphrase — this gates read/write
+wrangler deploy                        # redeploy with KV + the new tools
+```
+
+Then on the dashboard, click **🔑 sync** in the Notes header once and paste the same
+`NOTES_KEY`. It's stored only in your browser (localStorage), never in the public repo.
+Without the key set, Notes still work locally (per-browser) as a fallback.
+
+> The notes endpoints live at `<chatEndpoint>/notes` (`GET` to read, `PUT` to write),
+> protected by `Authorization: Bearer <NOTES_KEY>`.
+
+## Version stamp
+
+`CONFIG.version` is baked into `index.html`, and the footer shows it next to the latest
+published GitHub commit (`v1.4.0 · live a1b2c3d · Jun 24, 3:14 PM`). Bump
+`CONFIG.version` whenever you want to recognize a change on the live site, and set
+`CONFIG.repo` to your Pages repo name so the live commit stamp resolves.
+
 ## Files
 
 | File         | Purpose                                  |
