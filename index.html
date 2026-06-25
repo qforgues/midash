@@ -298,7 +298,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.6.4",
+  version: "1.6.5",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // Your PERSONAL Google address — pins every Google link to the right account.
@@ -754,19 +754,35 @@ function renderMailPage(){
 
 async function loadUnsub(box){
   try{
-    const tally={}, senderAcct={};
+    const multi=accounts.length>1;
+    const tally={}, senderAcct={}, unsubUrl={};
     for(const acct of accounts){
       let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
       const ids=(list.messages||[]).map(m=>m.id).slice(0,20);
       if(!ids.length) continue;
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From`, acct.token)));
-      msgs.forEach(m=>{ const f=cleanFrom((m.payload.headers||[]).find(x=>x.name==="From")?.value||""); if(f){ tally[f]=(tally[f]||0)+1; senderAcct[f]=acct.email; } });
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=List-Unsubscribe`, acct.token)));
+      msgs.forEach(m=>{
+        const hs=m.payload.headers||[];
+        const f=cleanFrom(hs.find(x=>x.name==="From")?.value||""); if(!f) return;
+        tally[f]=(tally[f]||0)+1; senderAcct[f]=acct.email;
+        if(!unsubUrl[f]){
+          const lu=hs.find(x=>x.name && x.name.toLowerCase()==="list-unsubscribe")?.value||"";
+          const mm=lu.match(/<(https?:\/\/[^>]+)>/i);   // pull the one-click web unsubscribe URL
+          if(mm) unsubUrl[f]=mm[1];
+        }
+      });
     }
     const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,3);
     if(!top.length){ box.innerHTML=""; return; }
     box.innerHTML = `<div class="from" style="margin-bottom:4px">Frequent senders (last 14d) — unsubscribe candidates:</div>` +
-      top.map(([f,c])=>`<div class="item"><span class="s">${esc(f)} <span class="pill">${c}</span></span>
-        <a href="${gmailSearchUrl(senderAcct[f]||CONFIG.account, "from:"+f)}" target="_blank" rel="noopener">view & unsubscribe ↗</a></div>`).join("");
+      top.map(([f,c])=>{
+        const col=acctColor(senderAcct[f]||CONFIG.account);
+        const direct=unsubUrl[f];
+        const href=direct||gmailSearchUrl(senderAcct[f]||CONFIG.account, "from:"+f);
+        const label=direct?"unsubscribe ↗":"view in Gmail ↗";
+        return `<div class="item" style="--p:${col}"><span class="s">${esc(f)} <span class="idpill" style="--p:${col}">${c}</span>${multi?acctPill(senderAcct[f]):""}</span>
+        <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a></div>`;
+      }).join("");
   }catch(e){ box.innerHTML=""; }
 }
 
