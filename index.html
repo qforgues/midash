@@ -60,6 +60,7 @@
                      box-shadow:var(--shadow); padding:8px; display:none; flex-direction:column; }
   .side-sec:hover .links { display:flex; }
   .side-sec .links a { font-size:14px; padding:8px 10px; }
+  #contacts { max-height:60vh; overflow-y:auto; }
   @media (max-width:560px){ .side-sec .links { left:auto; right:0; } }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
@@ -86,8 +87,8 @@
   .item .from { color:var(--muted); font-size:12.5px; }
   .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--accent-soft); color:var(--accent); margin-left:6px; }
   .empty { color:var(--muted); font-size:14px; padding:6px 0; }
-  .unsub a { color:var(--warn); text-decoration:none; }
-  .unsub a:hover { text-decoration:underline; }
+  .att { display:inline-block; font-size:12px; color:var(--muted); margin-top:3px; }
+  .mailrow .age { color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .needsauth { color:var(--muted); font-size:14px; }
   .needsauth button { margin-top:10px; }
 
@@ -183,7 +184,7 @@
   .pager button:disabled { opacity:.4; cursor:default; }
 
   /* Notes */
-  #notes-area { width:100%; min-height:360px; resize:vertical; border:1px solid var(--border);
+  #notes-area { width:100%; min-height:150px; resize:vertical; border:1px solid var(--border);
     background:var(--bg); color:var(--text); border-radius:12px; padding:14px 16px; font-size:14.5px;
     line-height:1.6; font-family:inherit; outline:none; }
   #notes-area:focus { border-color:var(--accent); }
@@ -202,7 +203,9 @@
     border-radius:var(--radius); box-shadow:var(--shadow); display:none; flex-direction:column; overflow:hidden; z-index:50; }
   #chat-panel.open { display:flex; }
   .chat-head { padding:14px 18px; border-bottom:1px solid var(--border); font-weight:600; font-size:15px; display:flex; align-items:center; gap:8px; }
-  .chat-head .status { width:8px; height:8px; border-radius:50%; background:#c0bfb9; margin-left:auto; }
+  .chat-head #chat-model { margin-left:auto; font-size:12px; border:1px solid var(--border); background:var(--bg);
+    color:var(--text); border-radius:8px; padding:3px 6px; cursor:pointer; max-width:160px; }
+  .chat-head .status { width:8px; height:8px; border-radius:50%; background:#c0bfb9; }
   .chat-head .status.on { background:var(--accent); }
   #chat-log { flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px; }
   .msg { font-size:14px; padding:10px 13px; border-radius:12px; max-width:85%; white-space:pre-wrap; word-wrap:break-word; }
@@ -249,10 +252,23 @@
             <h3>✉️ Unread in inbox</h3>
             <div id="mail"><div class="empty">—</div></div>
             <div id="mail-pager" class="pager" style="display:none"></div>
-            <div id="unsub" class="unsub" style="margin-top:14px"></div>
           </div>
         </div>
         <div id="auth-note" class="needsauth" style="display:none"></div>
+      </div>
+
+      <!-- Google Tasks (#8) + daily reach-out (#6) -->
+      <div class="split live" id="tasks-row" style="margin-bottom:20px;display:none">
+        <div class="card" id="tasks-card">
+          <h2><span class="dot">✅</span>Tasks
+            <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="tasks"><div class="empty">—</div></div>
+        </div>
+        <div class="card" id="reachout-card">
+          <h2><span class="dot">🤝</span>Stay connected
+            <span class="refresh" id="reachout-shuffle">🎲 shuffle</span></h2>
+          <div id="reachout"><div class="empty">—</div></div>
+        </div>
       </div>
 
       <!-- Agenda (60%) + Notes (40%) -->
@@ -280,7 +296,9 @@
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
-  <div class="chat-head"><span>Agent</span><span class="status" id="chat-status"></span></div>
+  <div class="chat-head"><span>Agent</span>
+    <select id="chat-model" title="Chat model — cheaper = lower per-message cost"></select>
+    <span class="status" id="chat-status"></span></div>
   <div id="chat-log"></div>
   <form class="chat-input" id="chat-form">
     <input id="chat-text" placeholder="Ask for anything…" autocomplete="off" />
@@ -298,8 +316,18 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.6.5",
+  version: "1.7.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
+
+  // ---- Chat model picker ----
+  // The Worker bills the metered Anthropic API per token (separate from any Max plan).
+  // Haiku is the cheapest; switch live via the picker in the chat header.
+  models: [
+    { id:"claude-haiku-4-5",  label:"Haiku — cheapest" },
+    { id:"claude-sonnet-4-6", label:"Sonnet — balanced" },
+    { id:"claude-opus-4-8",   label:"Opus — smartest" },
+  ],
+  defaultModel: "claude-haiku-4-5",
 
   // Your PERSONAL Google address — pins every Google link to the right account.
   account: "quentin.forgues@gmail.com",
@@ -325,7 +353,7 @@ const CONFIG = {
     { title:"Mail", icon:"✉️", links:[
       { g:"mail", path:"#inbox", label:"Gmail — Inbox" },
       { g:"mail", path:"#starred", label:"Starred" },
-      { g:"mail", path:"#inbox?compose=new", label:"Compose" },
+      { g:"compose", path:"", label:"Compose" },   // reliable compose deep-link (view=cm)
     ]},
     { title:"Calendar", icon:"📅", links:[
       { g:"cal", path:"r", label:"Google Calendar" },
@@ -347,6 +375,7 @@ const CONFIG = {
       { url:"https://youtube.com", label:"YouTube" },
       { url:"https://open.spotify.com", label:"Spotify" },
       { url:"https://maps.google.com", label:"Maps" },
+      { url:"#", label:"Can-Am forum", meta:"add link" },  // paste the forum URL here when you have it
     ]},
   ],
 };
@@ -357,11 +386,16 @@ const G = {
   // Gmail accepts /u/<email>/. Other Google apps are unreliable with an email in
   // the /u/ slot, so we use the ?authuser=<email> param, which they all honor.
   mail:  p => `https://mail.google.com/mail/u/${CONFIG.account}/${p}`,  // literal email — encoding the @ 404s
+  // Compose: the `?compose=new` hash form is flaky; `?view=cm&fs=1` reliably opens
+  // a compose window. `p`, if set, is a "to" address.
+  compose: p => `https://mail.google.com/mail/u/${CONFIG.account}/?view=cm&fs=1${p?`&to=${encodeURIComponent(p)}`:""}`,
   cal:   p => `https://calendar.google.com/calendar/${p}?authuser=${A}`,
   drive: p => `https://drive.google.com/drive/u/0/?authuser=${A}`,
   docs:  p => `https://docs.google.com/document/u/0/?authuser=${A}`,
   photos:p => `https://photos.google.com/?authuser=${A}`,
 };
+/* Compose to a specific address from a specific account (used by Contacts + daily reach-out). */
+function gmailComposeUrl(email,to){ return `https://mail.google.com/mail/u/${email||CONFIG.account}/?view=cm&fs=1${to?`&to=${encodeURIComponent(to)}`:""}`; }
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
 /* ---------- Render the side menu (categories as headers) + live projects ---------- */
@@ -385,8 +419,14 @@ function render() {
       <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h2>
       <div class="links" id="projects"><div class="empty">loading repos…</div></div>
     </div>`;
-  document.getElementById("side-sections").innerHTML = sections + projects;
+  const contacts = `
+    <div class="side-sec">
+      <h2><span class="dot">👤</span>Contacts <span class="refresh" id="contacts-refresh"><span class="ricon">↻</span></span></h2>
+      <div class="links" id="contacts"><div class="empty">connect Google…</div></div>
+    </div>`;
+  document.getElementById("side-sections").innerHTML = sections + projects + contacts;
   document.getElementById("proj-refresh").onclick = loadProjects;
+  document.getElementById("contacts-refresh").onclick = loadContacts;
 
   // theme (highlight) color picker
   const tp=document.getElementById("theme-pick");
@@ -452,7 +492,7 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send";
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks.readonly";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -565,6 +605,7 @@ function showConnect(){
   document.getElementById("auth-note").style.display="none";
   document.getElementById("agenda-view-card").style.display="none";
   document.getElementById("agenda-notes-row").classList.remove("live");
+  document.getElementById("tasks-row").style.display="none";
 }
 function afterAuth(){
   renderAccountBar();
@@ -573,19 +614,22 @@ function afterAuth(){
   document.getElementById("agenda-view-card").style.display="block";
   document.getElementById("agenda-notes-row").classList.add("live");
   document.getElementById("agenda-refresh").onclick=refreshLive;
+  document.getElementById("tasks-row").style.display="grid";
+  document.getElementById("tasks-refresh").onclick=loadTasks;
+  document.getElementById("reachout-shuffle").onclick=()=>renderReachout(false,true);
   loadLive();
 }
 function refreshLive(){
   const rb=document.getElementById("today-refresh"), ab=document.getElementById("agenda-refresh");
   rb.classList.add("spin"); ab.classList.add("spin");
-  Promise.allSettled([loadAgenda(), loadMail()]).finally(()=>setTimeout(()=>{rb.classList.remove("spin");ab.classList.remove("spin");},500));
+  Promise.allSettled([loadAgenda(), loadMail(), loadContacts(), loadTasks()]).finally(()=>setTimeout(()=>{rb.classList.remove("spin");ab.classList.remove("spin");},500));
 }
 async function gfetch(url, token){
   const r=await fetch(url,{headers:{Authorization:"Bearer "+(token||accessToken)}});
   if(r.status===401){ throw new Error("expired"); }
   return r.json();
 }
-function loadLive(){ loadAgenda(); loadMail(); }
+function loadLive(){ loadAgenda(); loadMail(); loadContacts(); loadTasks(); }
 
 function dayLabel(d){
   const today=new Date(); today.setHours(0,0,0,0);
@@ -616,22 +660,38 @@ async function loadAgenda(){
       }
     }
     all.sort((a,b)=>a.dt-b.dt);
-    agendaEvents=all;
+    agendaEvents=all.filter(o=>!isOver(o));   // drop finished meetings entirely (no strikethrough)
     renderAgenda(box, 3, "Nothing scheduled — clear runway 🎉");
     renderAgendaView();
   }catch(err){ if(err.message==="expired") showConnect(); else box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
 }
 
-function eventRow(o){
+/* An event is "over" once it has ended. Timed: end < now. All-day: its end date
+   (exclusive in Google's API) is on or before today. */
+function isOver(o){
   const now=Date.now();
-  const past = o.timed && o.end && o.end.getTime()<now;
+  if(o.timed) return o.end ? o.end.getTime()<now : o.dt.getTime()+3600000<now;
+  const todayStart=new Date().setHours(0,0,0,0);
+  const end = o.end ? o.end.getTime() : o.dt.getTime()+86400000;
+  return end<=todayStart;
+}
+/* Who else is on the invite (excludes you and meeting-room resources). */
+function attendeesLabel(x){
+  const a=(x.attendees||[]).filter(p=>!p.self && !p.resource);
+  if(!a.length) return "";
+  const names=a.map(p=>(p.displayName||p.email||"").split("@")[0]).filter(Boolean);
+  const shown=names.slice(0,3); const extra=names.length-shown.length;
+  return `<span class="att" title="${esc(names.join(", "))}">👥 ${esc(shown.join(", "))}${extra>0?` +${extra}`:""}</span>`;
+}
+function eventRow(o){
   const t = o.timed ? o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "all day";
   const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
   const tag = accounts.length>1 ? acctPill(o.acct) : "";
   const p = accounts.length>1 ? acctColor(o.acct) : "var(--accent)";
-  return `<a class="row ev${past?" past":""}" style="--p:${p}"${href}>
+  const att = attendeesLabel(o.x);
+  return `<a class="row ev" style="--p:${p}"${href}>
     <span class="t">${t}</span>
-    <span class="s">${esc(o.x.summary||"(no title)")}${o.x.location?` <span class="lbl">${esc(o.x.location)}</span>`:""}${tag}</span>
+    <span class="s">${esc(o.x.summary||"(no title)")}${o.x.location?` <span class="lbl">${esc(o.x.location)}</span>`:""}${tag}${att?`<br>${att}`:""}</span>
   </a>`;
 }
 function renderAgenda(box, days, emptyMsg){
@@ -643,8 +703,7 @@ function renderAgenda(box, days, emptyMsg){
 const AGENDA_PER=10, AGENDA_MAX=20;
 let agendaPage=0;
 function agendaRowHTML(o, showDate){
-  const now=Date.now(), multi=accounts.length>1;
-  const past = o.timed && o.end && o.end.getTime()<now;
+  const multi=accounts.length>1;
   const dnum=o.dt.getDate();
   const dlab=`${o.dt.toLocaleDateString([],{month:"short"})}, ${o.dt.toLocaleDateString([],{weekday:"short"})}`.toUpperCase();
   const time = o.timed ? `${fmtT(o.dt)}${o.end?` – ${fmtT(o.end)}`:""}` : "All day";
@@ -652,11 +711,12 @@ function agendaRowHTML(o, showDate){
   const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
   const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
   const idtag = multi ? acctPill(o.acct) : "";
-  return `<a class="agrow${past?" past":""}" style="--p:${color}"${href}>
+  const att = attendeesLabel(o.x);
+  return `<a class="agrow" style="--p:${color}"${href}>
     <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
     <span class="agdot"></span>
     <span class="agtime">${time}</span>
-    <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}</span>
+    <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}${att?`<br>${att}`:""}</span>
   </a>`;
 }
 function renderAgendaView(){
@@ -704,12 +764,25 @@ function labelPills(ids,map){
     .map(n=>`<span class="lbl">${esc(n)}</span>`).join("");
 }
 
-const MAIL_PER=6;
+const MAIL_PER=5;   // show 5 emails per page
 let mailRows=[], mailPage=0;
-function gmailMsgUrl(email,id){ return `https://mail.google.com/mail/u/${email}/#all/${id}`; }
+// Deep-link by THREAD id (more reliable than message id for opening a conversation).
+function gmailMsgUrl(email,threadId){ return `https://mail.google.com/mail/u/${email}/#all/${threadId}`; }
 function gmailSearchUrl(email,q){ return `https://mail.google.com/mail/u/${email}/#search/${encodeURIComponent(q)}`; }
+/* Compact "how old" label for an email date. */
+function mailAge(d){
+  const ms=Date.now()-d.getTime();
+  if(ms<0||!isFinite(ms)) return "";
+  const m=ms/60000, h=m/60, days=h/24;
+  if(m<1) return "just now";
+  if(h<1) return Math.floor(m)+"m ago";
+  if(days<1) return Math.floor(h)+"h ago";
+  if(days<7) return Math.floor(days)+"d ago";
+  if(days<30) return Math.floor(days/7)+"w ago";
+  return Math.floor(days/30)+"mo ago";
+}
 async function loadMail(){
-  const box=document.getElementById("mail"), unsub=document.getElementById("unsub");
+  const box=document.getElementById("mail");
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; document.getElementById("mail-pager").style.display="none"; return; }
   try{
     const multi=accounts.length>1;
@@ -725,15 +798,15 @@ async function loadMail(){
         const acctTag=multi?acctPill(acct.email):"";
         const p=multi?acctColor(acct.email):"var(--accent)";
         const when=h.Date?new Date(h.Date):new Date(0);
-        rows.push({when, html:`<a class="row mailrow" style="--p:${p}" href="${gmailMsgUrl(acct.email,m.id)}" target="_blank" rel="noopener">
+        const age=mailAge(when);
+        rows.push({when, html:`<a class="row mailrow" style="--p:${p}" href="${gmailMsgUrl(acct.email,m.threadId||m.id)}" target="_blank" rel="noopener">
           <span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span>
-          <span class="from">${esc(cleanFrom(h.From||""))}</span></a>`});
+          <span class="from">${esc(cleanFrom(h.From||""))}${age?` · <span class="age">${age}</span>`:""}</span></a>`});
       });
     }
     rows.sort((a,b)=>b.when-a.when);
     mailRows=rows.map(r=>r.html); mailPage=0;
     renderMailPage();
-    loadUnsub(unsub);
   }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load mail.</div>`; }
 }
 function renderMailPage(){
@@ -752,47 +825,106 @@ function renderMailPage(){
   document.getElementById("m-next").onclick=()=>{ mailPage++; renderMailPage(); };
 }
 
-async function loadUnsub(box){
-  try{
-    const multi=accounts.length>1;
-    const tally={}, senderAcct={}, unsubUrl={};
-    for(const acct of accounts){
-      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q="+encodeURIComponent("in:inbox category:promotions newer_than:14d"), acct.token); }catch(e){ continue; }
-      const ids=(list.messages||[]).map(m=>m.id).slice(0,20);
-      if(!ids.length) continue;
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=From&metadataHeaders=List-Unsubscribe`, acct.token)));
-      msgs.forEach(m=>{
-        const hs=m.payload.headers||[];
-        const f=cleanFrom(hs.find(x=>x.name==="From")?.value||""); if(!f) return;
-        tally[f]=(tally[f]||0)+1; senderAcct[f]=acct.email;
-        if(!unsubUrl[f]){
-          const lu=hs.find(x=>x.name && x.name.toLowerCase()==="list-unsubscribe")?.value||"";
-          const mm=lu.match(/<(https?:\/\/[^>]+)>/i);   // pull the one-click web unsubscribe URL
-          if(mm) unsubUrl[f]=mm[1];
-        }
-      });
-    }
-    const top=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,3);
-    if(!top.length){ box.innerHTML=""; return; }
-    box.innerHTML = `<div class="from" style="margin-bottom:4px">Frequent senders (last 14d) — unsubscribe candidates:</div>` +
-      top.map(([f,c])=>{
-        const col=acctColor(senderAcct[f]||CONFIG.account);
-        const direct=unsubUrl[f];
-        const href=direct||gmailSearchUrl(senderAcct[f]||CONFIG.account, "from:"+f);
-        const label=direct?"unsubscribe ↗":"view in Gmail ↗";
-        return `<div class="item" style="--p:${col}"><span class="s">${esc(f)} <span class="idpill" style="--p:${col}">${c}</span>${multi?acctPill(senderAcct[f]):""}</span>
-        <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a></div>`;
-      }).join("");
-  }catch(e){ box.innerHTML=""; }
-}
-
 function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ============================================================
+   CONTACTS (Google People API) — powers the dropdown (#11)
+   and the daily reach-out (#6). Needs the contacts.readonly scope,
+   so a one-time reconnect is required after this update.
+   ============================================================ */
+let contactsList=[];   // [{name,email}]
+async function loadContacts(){
+  if(!accounts.length){ renderContacts(false); renderReachout(false); return; }
+  let all=[], needAuth=false;
+  for(const acct of accounts){
+    let d; try{ d=await gfetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1000&personFields=names,emailAddresses&sortOrder=FIRST_NAME_ASCENDING", acct.token); }catch(e){ continue; }
+    if(d && d.error){ needAuth=true; continue; }   // 403 = scope not granted yet, or People API disabled
+    (d.connections||[]).forEach(p=>{
+      const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value;
+      const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0];
+      if(email) all.push({name, email});
+    });
+  }
+  const seen=new Set();
+  contactsList=all.filter(c=>{ const k=c.email.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
+                  .sort((a,b)=>a.name.localeCompare(b.name));
+  renderContacts(needAuth);
+  renderReachout(needAuth);
+}
+function reconnectBtn(id){ return `<button class="gbtn" id="${id}" style="margin-top:8px">🔓 Reconnect Google</button>`; }
+function wireReconnect(id){ const b=document.getElementById(id); if(b) b.onclick=()=>tokenClient.requestAccessToken({prompt:"consent"}); }
+function renderContacts(needAuth){
+  const box=document.getElementById("contacts"); if(!box) return;
+  if(!accounts.length){ box.innerHTML=`<div class="empty">connect Google…</div>`; return; }
+  if(needAuth){ box.innerHTML=`<div class="empty">Reconnect to grant Contacts access.</div>`; return; }
+  if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts found.</div>`; return; }
+  box.innerHTML=contactsList.slice(0,300).map(c=>
+    `<a href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" title="${esc(c.email)}">
+       <span class="lhs">${esc(c.name)}</span><span class="arrow">✉</span></a>`).join("");
+}
+/* Stable day index so the daily pick is the same all day, then shuffles on demand. */
+function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
+function renderReachout(needAuth, shuffle){
+  const box=document.getElementById("reachout"); if(!box) return;
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
+  if(needAuth){ box.innerHTML=`<div class="needsauth">Reconnect Google to grant Contacts access.<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
+  if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
+  const i = shuffle ? Math.floor(Math.random()*contactsList.length) : (dayIndex()%contactsList.length);
+  const c=contactsList[i];
+  box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Today's nudge — say hi to:</div>
+    <div style="font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(c.name)}</div>
+    <div class="from" style="margin:2px 0 14px">${esc(c.email)}</div>
+    <a class="gbtn" href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex">✉️ Send a message</a>`;
+}
+
+/* ============================================================
+   GOOGLE TASKS (#8) — read-only across all connected accounts.
+   Needs the tasks.readonly scope (same one-time reconnect).
+   ============================================================ */
+async function loadTasks(){
+  const box=document.getElementById("tasks"); if(!box) return;
+  if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
+  let out=[], needAuth=false;
+  for(const acct of accounts){
+    let lists; try{ lists=await gfetch("https://www.googleapis.com/tasks/v1/users/@me/lists", acct.token); }catch(e){ continue; }
+    if(lists && lists.error){ needAuth=true; continue; }
+    for(const tl of (lists.items||[])){
+      let t; try{ t=await gfetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(tl.id)}/tasks?showCompleted=false&maxResults=100`, acct.token); }catch(e){ continue; }
+      if(t && t.error){ needAuth=true; continue; }
+      (t.items||[]).filter(x=>x.status!=="completed" && x.title).forEach(x=>{
+        out.push({acct:acct.email, title:x.title, due:x.due?new Date(x.due):null});
+      });
+    }
+  }
+  renderTasks(out, needAuth);
+}
+function renderTasks(items, needAuth){
+  const box=document.getElementById("tasks"); if(!box) return;
+  if(needAuth && !items.length){ box.innerHTML=`<div class="needsauth">Reconnect Google to grant Tasks access.<br>${reconnectBtn("reconnect-tasks")}</div>`; wireReconnect("reconnect-tasks"); return; }
+  if(!items.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; return; }
+  const multi=accounts.length>1;
+  items.sort((a,b)=>(a.due?a.due.getTime():Infinity)-(b.due?b.due.getTime():Infinity));
+  box.innerHTML=items.map(t=>{
+    const p=multi?acctColor(t.acct):"var(--accent)";
+    const due=t.due?` <span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:"";
+    const tag=multi?acctPill(t.acct):"";
+    return `<div class="item" style="--p:${p}"><span class="s">☐ ${esc(t.title)}${tag}${due}</span></div>`;
+  }).join("");
+}
 
 /* ---------- Chat agent ---------- */
 const log=document.getElementById("chat-log");
 function addMsg(text,cls){ const d=document.createElement("div"); d.className="msg "+cls; d.textContent=text; log.appendChild(d); log.scrollTop=log.scrollHeight; return d; }
 document.getElementById("chat-toggle").addEventListener("click",()=>{ const p=document.getElementById("chat-panel"); p.classList.toggle("open"); if(p.classList.contains("open")) document.getElementById("chat-text").focus(); });
+/* ---- Chat model picker (#1) ---- */
+function selectedModel(){ try{ return localStorage.getItem("midash_model")||CONFIG.defaultModel; }catch(e){ return CONFIG.defaultModel; } }
+function initModelPicker(){
+  const sel=document.getElementById("chat-model"); if(!sel) return;
+  sel.innerHTML=(CONFIG.models||[]).map(m=>`<option value="${m.id}">${esc(m.label)}</option>`).join("");
+  sel.value=selectedModel();
+  sel.onchange=()=>{ try{ localStorage.setItem("midash_model", sel.value); }catch(e){} };
+}
 function initChat(){
   const on=!!CONFIG.chatEndpoint;
   document.getElementById("chat-status").classList.toggle("on",on);
@@ -803,7 +935,7 @@ function initChat(){
 /* ---- Agent loop (tools run here in your browser with your Google login) ---- */
 const agentMessages=[];
 async function callModel(){
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:agentMessages})});
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
   if(!res.ok) throw new Error("HTTP "+res.status);
   return res.json();  // raw Anthropic response
 }
@@ -1005,7 +1137,7 @@ function showVersion(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); render(); tick(); setInterval(tick,10000); initChat(); initNotes(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); render(); tick(); setInterval(tick,10000); initModelPicker(); initChat(); initNotes(); showVersion(); googleBoot();
 </script>
 </body>
 </html>

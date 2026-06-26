@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.6.5` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.7.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-06-24
 
@@ -34,8 +34,16 @@ to be an external retriever that talks to the same Worker via a messaging app
 - **Anthropic key:** lives ONLY as a Wrangler secret on the Worker
   (`wrangler secret put ANTHROPIC_API_KEY`). Never in the repo.
 - **KV namespace:** `NOTES`, id `f095586747ee4a47b524082986e8f725` (in `wrangler.jsonc`)
-- **Model:** `claude-sonnet-4-6`
-- **OAuth scopes:** `openid email`, `calendar.events`, `gmail.modify`, `gmail.send`
+- **Model:** switchable from the chat header (picker). Default `claude-haiku-4-5`
+  (cheapest); options `claude-sonnet-4-6`, `claude-opus-4-8`. The dashboard sends
+  `model` in the chat POST body; the Worker validates it against `ALLOWED_MODELS`
+  and falls back to `DEFAULT_MODEL`. **This is the metered Anthropic API — billed
+  per token, separate from any Max plan. Cap spend in the Anthropic Console.**
+- **OAuth scopes:** `openid email`, `calendar.events`, `gmail.modify`, `gmail.send`,
+  `contacts.readonly` (People API → Contacts dropdown + daily reach-out),
+  `tasks.readonly` (Google Tasks). Scopes added in v1.7.0 require a one-time
+  reconnect, and the **People API + Tasks API must be enabled** in the Google Cloud
+  project behind the OAuth client.
 
 ---
 

@@ -16,7 +16,17 @@
  */
 
 const ALLOWED_ORIGIN = "https://qforgues.github.io"; // only your site may call this
-const MODEL = "claude-sonnet-4-6";
+
+// Models the dashboard may pick from (the picker sends one of these strings).
+// Haiku is the default — it's ~5x cheaper than Sonnet for the same chat.
+// NOTE: this is the metered Anthropic API (billed per token, separate from any
+// Max subscription). Haiku keeps the per-message cost in the fractions-of-a-cent range.
+const ALLOWED_MODELS = new Set([
+  "claude-haiku-4-5",   // cheapest  ($1 / $5 per Mtok)
+  "claude-sonnet-4-6",  // balanced  ($3 / $15)
+  "claude-opus-4-8",    // smartest  ($5 / $25)
+]);
+const DEFAULT_MODEL = "claude-haiku-4-5";
 
 const SYSTEM = `You are the assistant embedded in Q's personal dashboard (miDash).
 You can read Q's Google Calendar (across ALL of his connected Google accounts and ALL
@@ -109,6 +119,8 @@ async function handleChat(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  // The dashboard's model picker sends body.model; fall back to the cheap default.
+  const model = (typeof body.model === "string" && ALLOWED_MODELS.has(body.model)) ? body.model : DEFAULT_MODEL;
 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -117,7 +129,7 @@ async function handleChat(request, env) {
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
+    body: JSON.stringify({ model, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
   });
 
   const data = await r.json();           // pass the full Anthropic response back
