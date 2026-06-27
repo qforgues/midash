@@ -195,6 +195,24 @@
   footer { text-align:center; color:var(--muted); font-size:13px; margin-top:48px; }
   footer code { background:var(--accent-soft); padding:1px 6px; border-radius:6px; }
 
+  /* Settings modal */
+  .modal { position:fixed; inset:0; z-index:100; display:flex; align-items:center; justify-content:center; }
+  .modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,.35); backdrop-filter:blur(1px); }
+  .modal .panel { position:relative; background:var(--surface); border:1px solid var(--border); border-radius:16px;
+    box-shadow:var(--shadow); padding:22px 24px; width:400px; max-width:calc(100vw - 36px); max-height:calc(100vh - 80px); overflow:auto; }
+  .modal .panel h2 { font-size:15px; font-weight:600; margin-bottom:16px; }
+  .modal label { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:14px; margin-bottom:12px; }
+  .modal label input[type=text] { flex:1; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:7px 10px; font-size:14px; outline:none; }
+  .modal label input[type=text]:focus { border-color:var(--accent); }
+  .modal label input[type=color] { width:36px; height:26px; border:1px solid var(--border); border-radius:6px; background:none; cursor:pointer; padding:0; flex:0 0 auto; }
+  .set-label { font-size:13px; color:var(--muted); margin:6px 0 4px; }
+  .pat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:14px; }
+  .pat-btn { font-size:12px; padding:8px 4px; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; cursor:pointer; }
+  .pat-btn:hover { background:var(--accent-soft); }
+  .pat-btn.active { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); font-weight:600; }
+  .pat-colors { display:flex; gap:16px; margin-bottom:6px; }
+  .pat-actions { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+
   /* Chat */
   #chat-toggle { position:fixed; right:24px; bottom:24px; width:56px; height:56px; border-radius:50%;
     background:var(--accent); color:#fff; border:none; font-size:24px; cursor:pointer; box-shadow:var(--shadow);
@@ -240,6 +258,7 @@
     <div class="menu-bar">
       <div id="side-sections" class="menu-items"></div>
       <input type="color" id="theme-pick" class="cdot" title="Highlight color">
+      <button id="settings-btn" class="gbtn" title="Settings & appearance" style="padding:6px 11px">⚙️</button>
     </div>
   </div>
 
@@ -299,6 +318,26 @@
   <footer>miDash <span class="ver">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
+<!-- Settings / profile -->
+<div id="settings-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="settings-close-bg"></div>
+  <div class="panel">
+    <h2>⚙️ Settings</h2>
+    <label>Name <input id="set-name" type="text" placeholder="Your name"></label>
+    <label>Highlight color <input id="set-accent" type="color"></label>
+    <div class="set-label">Background pattern</div>
+    <div id="set-patterns" class="pat-grid"></div>
+    <div class="pat-colors">
+      <label style="flex:1">Color A <input id="set-bga" type="color"></label>
+      <label style="flex:1">Color B <input id="set-bgb" type="color"></label>
+    </div>
+    <div class="pat-actions">
+      <button id="set-reset" class="gbtn" style="color:var(--warn)">Reset appearance</button>
+      <button id="set-done" class="gbtn">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -323,7 +362,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.1",
+  version: "1.7.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -500,7 +539,7 @@ function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
 function tick() {
   const now=new Date(), h=now.getHours();
   const part = h<5?"Still up":h<12?"Good morning":h<18?"Good afternoon":"Good evening";
-  document.getElementById("greeting").textContent = `${part}, ${CONFIG.name}`;
+  document.getElementById("greeting").textContent = `${part}, ${nameOf()}`;
   document.getElementById("clock").textContent = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
   document.getElementById("datestr").textContent = now.toLocaleDateString([], {weekday:"long",month:"long",day:"numeric"});
 }
@@ -554,6 +593,56 @@ function applyTheme(){
   if(c){ root.setProperty("--accent", c); root.setProperty("--accent-soft", `color-mix(in srgb, ${c} 16%, var(--surface))`); }
   else { root.removeProperty("--accent"); root.removeProperty("--accent-soft"); }
   const tp=document.getElementById("theme-pick"); if(tp && c) tp.value=c;
+}
+
+/* ---------- Profile name (overrides CONFIG.name) ---------- */
+function nameOf(){ try{ return (localStorage.getItem("midash_name")||"").trim()||CONFIG.name; }catch(e){ return CONFIG.name; } }
+
+/* ---------- Background patterns (two colors, pure CSS) ---------- */
+const BG_PATTERNS = {
+  solid:    (a,b)=>({color:a, image:"none", size:"auto"}),
+  gradient: (a,b)=>({color:a, image:`linear-gradient(135deg, ${a}, ${b})`, size:"cover"}),
+  vertical: (a,b)=>({color:a, image:`linear-gradient(${a}, ${b})`, size:"cover"}),
+  stripes:  (a,b)=>({color:a, image:`repeating-linear-gradient(45deg, ${a} 0 14px, ${b} 14px 28px)`, size:"auto"}),
+  dots:     (a,b)=>({color:a, image:`radial-gradient(${b} 2.5px, transparent 2.6px)`, size:"22px 22px"}),
+  grid:     (a,b)=>({color:a, image:`linear-gradient(${b} 1px, transparent 1px), linear-gradient(90deg, ${b} 1px, transparent 1px)`, size:"28px 28px"}),
+  checker:  (a,b)=>({color:a, image:`conic-gradient(${b} 25%, transparent 0 50%, ${b} 0 75%, transparent 0)`, size:"40px 40px"}),
+};
+function bgSettings(){ try{ return JSON.parse(localStorage.getItem("midash_bg")||"null"); }catch(e){ return null; } }
+function saveBg(s){ try{ localStorage.setItem("midash_bg", JSON.stringify(s)); }catch(e){} applyBackground(); }
+function applyBackground(){
+  const b=document.body, s=bgSettings();
+  if(!s || !s.pattern || s.pattern==="default"){ b.style.backgroundColor=""; b.style.backgroundImage=""; b.style.backgroundSize=""; b.style.backgroundAttachment=""; return; }
+  const fn=BG_PATTERNS[s.pattern]||BG_PATTERNS.solid;
+  const p=fn(s.a||"#fafaf9", s.b||"#2d6a4f");
+  b.style.backgroundColor=p.color;
+  b.style.backgroundImage=p.image;
+  b.style.backgroundSize=p.size;
+  b.style.backgroundAttachment="fixed";
+}
+function initSettings(){
+  const btn=document.getElementById("settings-btn"), modal=document.getElementById("settings-modal");
+  if(!btn||!modal) return;
+  const nameI=document.getElementById("set-name"), accI=document.getElementById("set-accent");
+  const aI=document.getElementById("set-bga"), bI=document.getElementById("set-bgb"), pg=document.getElementById("set-patterns");
+  const PATS=[["default","Default"],["solid","Solid"],["gradient","Gradient"],["vertical","Vertical"],["stripes","Stripes"],["dots","Dots"],["grid","Grid"],["checker","Checker"]];
+  pg.innerHTML=PATS.map(([k,l])=>`<button class="pat-btn" data-p="${k}">${l}</button>`).join("");
+  function markActive(){ const cur=(bgSettings()&&bgSettings().pattern)||"default"; pg.querySelectorAll(".pat-btn").forEach(x=>x.classList.toggle("active", x.dataset.p===cur)); }
+  function fill(){
+    nameI.value=nameOf();
+    accI.value=themeColor()||(accounts[0]?acctColor(accounts[0].email):"#2d6a4f");
+    const s=bgSettings()||{}; aI.value=s.a||"#fafaf9"; bI.value=s.b||"#2d6a4f"; markActive();
+  }
+  const close=()=>{ modal.style.display="none"; };
+  btn.onclick=()=>{ fill(); modal.style.display="flex"; };
+  document.getElementById("settings-close-bg").onclick=close;
+  document.getElementById("set-done").onclick=close;
+  nameI.oninput=()=>{ try{ localStorage.setItem("midash_name", nameI.value.trim()); }catch(e){} tick(); };
+  accI.oninput=accI.onchange=()=>{ try{ localStorage.setItem("midash_theme", accI.value); }catch(e){} applyTheme(); };
+  const applyColors=()=>{ const s=bgSettings()||{pattern:"gradient"}; s.a=aI.value; s.b=bI.value; if(!s.pattern||s.pattern==="default") s.pattern="gradient"; saveBg(s); markActive(); };
+  aI.oninput=bI.oninput=applyColors;
+  pg.querySelectorAll(".pat-btn").forEach(x=>x.onclick=()=>{ const s=bgSettings()||{}; s.pattern=x.dataset.p; s.a=s.a||aI.value; s.b=s.b||bI.value; saveBg(s); markActive(); });
+  document.getElementById("set-reset").onclick=()=>{ try{ localStorage.removeItem("midash_bg"); localStorage.removeItem("midash_theme"); }catch(e){} applyBackground(); applyTheme(); fill(); };
 }
 
 function googleBoot() {
@@ -723,7 +812,7 @@ function renderAgenda(box, days, emptyMsg){
   if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
   box.innerHTML=groupByDay(evs);
 }
-const AGENDA_PER=10, AGENDA_MAX=20;
+const AGENDA_PER=5, AGENDA_MAX=20;
 let agendaPage=0;
 function agendaRowHTML(o, showDate){
   const multi=accounts.length>1;
@@ -948,8 +1037,9 @@ async function aiDraftAndOpen(c, btn){
       msgs.forEach(m=>{ const h=hdr(m); ctx.push(`${(h.Date||"").slice(0,16)} | from ${cleanFrom(h.From||"")} | ${h.Subject||"(no subject)"} | ${(m.snippet||"").slice(0,200)}`); });
     }
     const history = ctx.length ? ctx.join("\n") : "(no prior emails found with this person)";
-    const prompt = `You are drafting a short, warm, casual check-in email from ${CONFIG.name} to ${c.name} <${c.email}> to reconnect and stay in touch. `
-      + `Base the tone and any references on the recent email history below. Keep it brief (2-4 sentences), friendly, and specific if the history gives you something to reference; otherwise a simple genuine hello. Sign off as ${CONFIG.name}. `
+    const me=nameOf();
+    const prompt = `You are drafting a short, warm, casual check-in email from ${me} to ${c.name} <${c.email}> to reconnect and stay in touch. `
+      + `Base the tone and any references on the recent email history below. Keep it brief (2-4 sentences), friendly, and specific if the history gives you something to reference; otherwise a simple genuine hello. Sign off as ${me}. `
       + `Recent email history (most recent first may vary):\n${history}\n\n`
       + `Do not call any tools — everything you need is in this message. `
       + `Respond with ONLY a JSON object, no markdown, no commentary: {"subject": "...", "body": "..."}`;
@@ -1277,7 +1367,7 @@ function showVersion(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); render(); tick(); setInterval(tick,10000); initModelPicker(); initChat(); initNotes(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initSettings(); initChat(); initNotes(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
