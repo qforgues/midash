@@ -135,12 +135,14 @@
 
   /* Google-style agenda view */
   #agenda-view { margin-top:2px; }
-  .agrow { display:grid; grid-template-columns:80px 12px 104px 1fr; align-items:baseline; gap:10px;
+  .agrow { display:grid; grid-template-columns:96px 12px 100px 1fr; align-items:baseline; gap:10px;
            padding:11px 8px; margin:0 -8px; border-radius:10px; border-top:1px solid var(--border);
            text-decoration:none; color:var(--text); transition:background .12s; }
   .agrow:first-child { border-top:none; }
   a.agrow:hover { background:color-mix(in srgb, var(--p,var(--accent)) 14%, var(--surface)); }
-  .agdate { display:flex; align-items:baseline; gap:8px; }
+  .agdate { display:flex; flex-direction:column; align-items:flex-start; gap:2px; }
+  .agdaterow { display:flex; align-items:baseline; gap:8px; }
+  .agcount { font-size:10px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); white-space:nowrap; }
   .agdnum { font-size:20px; font-weight:600; letter-spacing:-.02em; }
   .agdlab { font-size:11px; font-weight:600; letter-spacing:.04em; color:var(--muted); }
   .agdot { width:11px; height:11px; border-radius:50%; background:var(--p,var(--accent)); align-self:center; }
@@ -150,7 +152,7 @@
   .agrow.past { opacity:.42; } .agrow.past .agtitle { text-decoration:line-through; }
   .agfoot { margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:13px; color:var(--muted); }
   .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
-  @media (max-width:560px){ .agrow { grid-template-columns:74px 12px 1fr; } .agrow .agtime { grid-column:3; } }
+  @media (max-width:560px){ .agrow { grid-template-columns:90px 12px 1fr; } .agrow .agtime { grid-column:3; } }
 
   /* agenda + notes row (notes gets the bigger share), stretched so heights match */
   .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
@@ -266,6 +268,7 @@
           <h2><span class="dot">✅</span>Tasks
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
           <div id="tasks"><div class="empty">—</div></div>
+          <div id="tasks-pager" class="pager" style="display:none"></div>
         </div>
         <div class="card" id="reachout-card">
           <h2><span class="dot">🤝</span>Stay connected
@@ -320,7 +323,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.0",
+  version: "1.7.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -389,7 +392,9 @@ const A = encodeURIComponent(CONFIG.account);
 const G = {
   // Gmail accepts /u/<email>/. Other Google apps are unreliable with an email in
   // the /u/ slot, so we use the ?authuser=<email> param, which they all honor.
-  mail:  p => `https://mail.google.com/mail/u/${CONFIG.account}/${p}`,  // literal email — encoding the @ 404s
+  // Use ?authuser=<email> (with a valid /u/0/ path) for navigation — the literal-email
+  // /u/<email>/ path 404s on plain #inbox/#starred. authuser is what Cal/Drive/Docs use here too.
+  mail:  p => `https://mail.google.com/mail/u/0/?authuser=${A}${p||""}`,
   // Compose: the `?compose=new` hash form is flaky; `?view=cm&fs=1` reliably opens
   // a compose window. `p`, if set, is a "to" address.
   compose: p => `https://mail.google.com/mail/u/${CONFIG.account}/?view=cm&fs=1${p?`&to=${encodeURIComponent(p)}`:""}`,
@@ -647,6 +652,13 @@ function dayLabel(d){
   const diff=Math.round((new Date(new Date(d).setHours(0,0,0,0))-today)/86400000);
   return diff===0?"Today":diff===1?"Tomorrow":d.toLocaleDateString([],{weekday:"long",month:"short",day:"numeric"});
 }
+/* "today" / "tomorrow" / "in N days" — shown before the date in the agenda. */
+function daysUntilLabel(d){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const t=new Date(d); t.setHours(0,0,0,0);
+  const n=Math.round((t-today)/86400000);
+  return n<=0?"today":n===1?"tomorrow":`in ${n} days`;
+}
 let agendaEvents=[];   // shared by the 3-day panel and the 7-day Agenda View
 async function loadAgenda(){
   const box=document.getElementById("agenda");
@@ -724,7 +736,7 @@ function agendaRowHTML(o, showDate){
   const idtag = multi ? acctPill(o.acct) : "";
   const att = attendeesLabel(o.x);
   return `<a class="agrow" style="--p:${color}"${href}>
-    <span class="agdate">${showDate?`<span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span>`:""}</span>
+    <span class="agdate">${showDate?`<span class="agcount">${daysUntilLabel(o.dt)}</span><span class="agdaterow"><span class="agdnum">${dnum}</span><span class="agdlab">${dlab}</span></span>`:""}</span>
     <span class="agdot"></span>
     <span class="agtime">${time}</span>
     <span class="agtitle">${esc(o.x.summary||"(no title)")} ${loc}${idtag}${att?`<br>${att}`:""}</span>
@@ -777,9 +789,10 @@ function labelPills(ids,map){
 
 const MAIL_PER=5;   // show 5 emails per page
 let mailRows=[], mailPage=0;
-// Deep-link by THREAD id (more reliable than message id for opening a conversation).
-function gmailMsgUrl(email,threadId){ return `https://mail.google.com/mail/u/${email}/#all/${threadId}`; }
-function gmailSearchUrl(email,q){ return `https://mail.google.com/mail/u/${email}/#search/${encodeURIComponent(q)}`; }
+// Deep-link by THREAD id (more reliable than message id for opening a conversation),
+// via the authuser form so it doesn't 404 like the /u/<email>/ path.
+function gmailMsgUrl(email,threadId){ return `https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(email)}#all/${threadId}`; }
+function gmailSearchUrl(email,q){ return `https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(email)}#search/${encodeURIComponent(q)}`; }
 /* Compact "how old" label for an email date. */
 function mailAge(d){
   const ms=Date.now()-d.getTime();
@@ -978,24 +991,40 @@ async function loadTasks(){
   }
   renderTasks(out, err, failedAccts);
 }
+const TASKS_PER=10;            // show 10 at a time, page through the rest
+let taskItems=[], taskPage=0, taskFailed=[];
 function renderTasks(items, err, failedAccts){
-  const box=document.getElementById("tasks"); if(!box) return;
-  if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; wireReconnect("reconnect-tasks"); return; }
-  if(!items.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; return; }
-  const multi=accounts.length>1;
+  const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
+  taskFailed=failedAccts||[];
+  if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; if(pager)pager.style.display="none"; wireReconnect("reconnect-tasks"); return; }
+  // sort by due date ascending; undated tasks fall to the bottom
   items.sort((a,b)=>(a.due?a.due.getTime():Infinity)-(b.due?b.due.getTime():Infinity));
-  let html=items.map(t=>{
+  taskItems=items; taskPage=0;
+  renderTasksPage();
+}
+function renderTasksPage(){
+  const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
+  const failNote = taskFailed.length
+    ? `<div class="needsauth" style="margin-top:12px;line-height:1.4">${taskFailed.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>` : "";
+  if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(pager)pager.style.display="none"; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
+  const multi=accounts.length>1;
+  const pages=Math.ceil(taskItems.length/TASKS_PER);
+  taskPage=Math.max(0,Math.min(taskPage,pages-1));
+  const start=taskPage*TASKS_PER;
+  box.innerHTML=taskItems.slice(start,start+TASKS_PER).map(t=>{
     const p=multi?acctColor(t.acct):"var(--accent)";
-    const due=t.due?` <span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:"";
+    const due=t.due?`<span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:`<span class="att" style="opacity:.6">no due date</span>`;
     const tag=multi?acctPill(t.acct):"";
-    return `<div class="item" style="--p:${p}"><span class="s">☐ ${esc(t.title)}${tag}${due}</span></div>`;
-  }).join("");
-  // Some accounts loaded, others failed (e.g. work account hasn't granted the scope yet)
-  if((failedAccts||[]).length){
-    html+=`<div class="needsauth" style="margin-top:12px;line-height:1.4">${failedAccts.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>`;
-  }
-  box.innerHTML=html;
-  if((failedAccts||[]).length) wireReconnect("reconnect-tasks");
+    return `<div class="item" style="--p:${p}"><span class="s">☐ ${esc(t.title)}${tag}</span>${due}</div>`;
+  }).join("")+failNote;
+  if(taskFailed.length) wireReconnect("reconnect-tasks");
+  if(pages<=1){ if(pager)pager.style.display="none"; return; }
+  pager.style.display="flex";
+  pager.innerHTML=`<button id="t-prev"${taskPage===0?" disabled":""}>‹ prev</button>
+    <span>${start+1}–${Math.min(start+TASKS_PER,taskItems.length)} of ${taskItems.length}</span>
+    <button id="t-next"${taskPage>=pages-1?" disabled":""}>next ›</button>`;
+  document.getElementById("t-prev").onclick=()=>{ taskPage--; renderTasksPage(); };
+  document.getElementById("t-next").onclick=()=>{ taskPage++; renderTasksPage(); };
 }
 
 /* ---------- Chat agent ---------- */
