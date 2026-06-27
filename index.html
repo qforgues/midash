@@ -28,11 +28,23 @@
          background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; padding:0 24px 120px; }
   .wrap { max-width:1400px; margin:0 auto; }
 
-  header { padding:36px 0 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  header { padding:24px 0; }
   .hcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
-           box-shadow:var(--shadow); padding:16px 24px; }
-  .greeting { font-size:30px; font-weight:600; letter-spacing:-.02em; }
-  .sub { color:var(--muted); font-size:15px; margin-top:6px; }
+           box-shadow:var(--shadow); padding:16px 22px; }
+  .hbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .hleft { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+  .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; position:relative; }
+  .greeting { font-size:28px; font-weight:600; letter-spacing:-.02em; }
+  .sub { color:var(--muted); font-size:15px; }
+  .avatar { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex:0 0 auto; }
+  .gear-menu { position:absolute; top:calc(100% + 10px); right:0; z-index:80; width:300px; max-width:88vw; max-height:74vh;
+    overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:10px; }
+  .gear-sec { margin-bottom:4px; }
+  .gear-sec > h3 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+    padding:8px 8px 4px; display:flex; align-items:center; gap:7px; }
+  .gear-sec > h3 .refresh { margin-left:auto; cursor:pointer; color:var(--muted); }
+  .gear-sec > h3 .refresh:hover { color:var(--accent); }
+  .gear-foot { border-top:1px solid var(--border); margin-top:6px; padding-top:8px; }
   #clock { font-variant-numeric:tabular-nums; }
   .gbtn { border:1px solid var(--border); background:var(--surface); color:var(--text);
           border-radius:10px; padding:9px 14px; font-size:14px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; }
@@ -62,7 +74,7 @@
                      box-shadow:var(--shadow); padding:8px; display:none; flex-direction:column; }
   .side-sec:hover .links { display:flex; }
   .side-sec .links a { font-size:14px; padding:8px 10px; }
-  #contacts { max-height:60vh; overflow-y:auto; }
+  #contacts { max-height:240px; overflow-y:auto; }
   @media (max-width:560px){ .side-sec .links { left:auto; right:0; } }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
@@ -253,21 +265,22 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="hcard">
-      <div class="greeting">miDash <span class="ver" id="version">v?</span></div>
-      <div class="sub"><span id="datestr"></span> · <span id="clock"></span></div>
+    <div class="hcard hbar">
+      <div class="hleft">
+        <span class="greeting">miDash <span class="ver" id="version">v?</span></span>
+        <span class="sub"><span id="datestr"></span> · <span id="clock"></span></span>
+      </div>
+      <div class="hright">
+        <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
+        <img id="avatar" class="avatar" alt="" style="display:none">
+        <button id="gear-btn" class="gbtn" title="Menu & settings" style="padding:8px 11px">⚙️</button>
+        <div id="gear-menu" class="gear-menu" style="display:none">
+          <div id="gear-sections"></div>
+          <div class="gear-foot"><button id="open-settings" class="gbtn" style="width:100%">⚙️ Appearance &amp; profile</button></div>
+        </div>
+      </div>
     </div>
-    <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
-
-  <!-- Top menu: one collapsed row; each category opens on hover (overlays, no reflow) -->
-  <div class="card topmenu" id="menu-card" style="margin-bottom:20px">
-    <div class="menu-bar">
-      <div id="side-sections" class="menu-items"></div>
-      <input type="color" id="theme-pick" class="cdot" title="Highlight color">
-      <button id="settings-btn" class="gbtn" title="Settings & appearance" style="padding:6px 11px">⚙️</button>
-    </div>
-  </div>
 
   <div id="layout">
     <main class="main">
@@ -368,7 +381,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.5",
+  version: "1.7.6",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -459,11 +472,11 @@ function gmailComposeUrl(email,to,subject,body){
 }
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
-/* ---------- Render the side menu (categories as headers) + live projects ---------- */
+/* ---------- Render all quick-links into the gear dropdown ---------- */
 function render() {
   const sections = CONFIG.sections.map(s => `
-    <div class="side-sec">
-      <h2><span class="dot">${s.icon}</span>${s.title}</h2>
+    <div class="gear-sec">
+      <h3><span class="dot">${s.icon}</span>${s.title}</h3>
       <div class="links">
         ${s.links.map(l => {
           const u = urlFor(l);
@@ -476,27 +489,20 @@ function render() {
       </div>
     </div>`).join("");
   const projects = `
-    <div class="side-sec">
-      <h2><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h2>
+    <div class="gear-sec">
+      <h3><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h3>
       <div class="links" id="projects"><div class="empty">loading repos…</div></div>
     </div>`;
   const contacts = `
-    <div class="side-sec">
-      <h2><span class="dot">👤</span>Contacts <span class="refresh" id="contacts-refresh"><span class="ricon">↻</span></span></h2>
+    <div class="gear-sec">
+      <h3><span class="dot">👤</span>Contacts <span class="refresh" id="contacts-refresh"><span class="ricon">↻</span></span></h3>
       <div class="links" id="contacts"><div class="empty">connect Google…</div></div>
     </div>`;
-  document.getElementById("side-sections").innerHTML = sections + projects + contacts;
-  document.getElementById("proj-refresh").onclick = loadProjects;
-  document.getElementById("contacts-refresh").onclick = loadContacts;
+  document.getElementById("gear-sections").innerHTML = sections + projects + contacts;
+  document.getElementById("proj-refresh").onclick = (e)=>{ e.stopPropagation(); loadProjects(); };
+  document.getElementById("contacts-refresh").onclick = (e)=>{ e.stopPropagation(); loadContacts(); };
 
-  // theme (highlight) color picker
-  const tp=document.getElementById("theme-pick");
-  if(tp){
-    tp.value = themeColor() || "#2d6a4f";
-    tp.oninput=tp.onchange=()=>{ try{ localStorage.setItem("midash_theme", tp.value); }catch(e){} applyTheme(); };
-  }
   applyTheme();
-
   loadProjects();
   pingLinks();
 }
@@ -642,8 +648,15 @@ function applyBackground(){
   }
   applyTheme();   // recompute accent-soft against the new surface
 }
+function initGearMenu(){
+  const btn=document.getElementById("gear-btn"), menu=document.getElementById("gear-menu");
+  if(!btn||!menu) return;
+  btn.onclick=(e)=>{ e.stopPropagation(); menu.style.display = menu.style.display==="block" ? "none" : "block"; };
+  menu.addEventListener("click",(e)=>e.stopPropagation());   // clicks inside keep it open (links still navigate)
+  document.addEventListener("click",()=>{ menu.style.display="none"; });
+}
 function initSettings(){
-  const btn=document.getElementById("settings-btn"), modal=document.getElementById("settings-modal");
+  const btn=document.getElementById("open-settings"), modal=document.getElementById("settings-modal");
   if(!btn||!modal) return;
   const nameI=document.getElementById("set-name"), accI=document.getElementById("set-accent");
   const aI=document.getElementById("set-bga"), bI=document.getElementById("set-bgb"), pg=document.getElementById("set-patterns");
@@ -656,7 +669,7 @@ function initSettings(){
     const s=bgSettings()||{}; aI.value=s.a||"#fafaf9"; bI.value=s.b||"#2d6a4f"; markActive();
   }
   const close=()=>{ modal.style.display="none"; };
-  btn.onclick=()=>{ fill(); modal.style.display="flex"; };
+  btn.onclick=()=>{ const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; fill(); modal.style.display="flex"; };
   document.getElementById("settings-close-bg").onclick=close;
   document.getElementById("set-done").onclick=close;
   nameI.oninput=()=>{ try{ localStorage.setItem("midash_name", nameI.value.trim()); }catch(e){} tick(); };
@@ -688,23 +701,28 @@ function googleBoot() {
 
 async function onToken(resp){
   if(!resp || !resp.access_token) return;
-  let email="account";
+  let email="account", pic="";
   try{
     const info=await (await fetch("https://www.googleapis.com/oauth2/v3/userinfo",{headers:{Authorization:"Bearer "+resp.access_token}})).json();
-    email=info.email||email;
+    email=info.email||email; pic=info.picture||"";
   }catch(e){}
   const exp=Date.now()+((resp.expires_in||3000)*1000);
   const found=accounts.find(a=>a.email===email);
-  if(found){ found.token=resp.access_token; found.exp=exp; } else accounts.push({email, token:resp.access_token, exp});
+  if(found){ found.token=resp.access_token; found.exp=exp; if(pic) found.pic=pic; } else accounts.push({email, token:resp.access_token, exp, pic});
   accessToken=accounts[0].token; saveAccounts(); afterAuth();
 }
 
+function setAvatar(){
+  const av=document.getElementById("avatar"); if(!av) return;
+  const pic=accounts[0] && accounts[0].pic;
+  if(pic){ av.src=pic; av.style.display=""; } else av.style.display="none";
+}
 function renderAccountBar(){
   const bar=document.getElementById("acct-bar");
   if(!accounts.length){
     bar.innerHTML=`<button class="gbtn" id="g-connect">🔓 Connect Google</button>`;
     document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
-    applyTheme();
+    setAvatar(); applyTheme();
     return;
   }
   bar.innerHTML = accounts.map(a=>`<span class="chip" style="--p:${acctColor(a.email)}">
@@ -723,7 +741,7 @@ function renderAccountBar(){
     accessToken=accounts[0]?accounts[0].token:null; delete labelCache[x.dataset.e]; saveAccounts();
     if(accounts.length){ renderAccountBar(); loadLive(); } else showConnect();
   });
-  applyTheme();
+  setAvatar(); applyTheme();
 }
 
 function showConnect(){
@@ -1414,7 +1432,7 @@ function showVersion(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initSettings(); initChat(); initNotes(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
