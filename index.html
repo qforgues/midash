@@ -616,7 +616,7 @@ function afterAuth(){
   document.getElementById("agenda-refresh").onclick=refreshLive;
   document.getElementById("tasks-row").style.display="grid";
   document.getElementById("tasks-refresh").onclick=loadTasks;
-  document.getElementById("reachout-shuffle").onclick=()=>renderReachout(false,true);
+  document.getElementById("reachout-shuffle").onclick=()=>renderReachout(true);
   loadLive();
 }
 function refreshLive(){
@@ -833,13 +833,31 @@ function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;","
    and the daily reach-out (#6). Needs the contacts.readonly scope,
    so a one-time reconnect is required after this update.
    ============================================================ */
-let contactsList=[];   // [{name,email}]
+/* Turn a Google API error body into a short, actionable message. Google's own
+   message for a disabled API includes the exact "enable it here" link, so we
+   surface it verbatim. */
+function apiErrMsg(err, apiLabel, enableUrl){
+  const raw=(err && (err.message||err.status))||"";
+  const low=String(raw).toLowerCase();
+  if(/has not been used|is disabled|not been used in project|enable it by visiting/.test(low)){
+    return `${apiLabel} API isn't enabled in your Google Cloud project. <a href="${enableUrl}" target="_blank" rel="noopener">Enable it ↗</a>, wait a minute, then refresh.`;
+  }
+  if(/insufficient|scope|permission|forbidden|access_token/.test(low) || (err&&err.code===403)){
+    return `This account hasn't granted ${apiLabel} access. Use “🔓 reconnect” and approve ${apiLabel} for each account.`;
+  }
+  return esc(raw||(`Couldn't load ${apiLabel}.`));
+}
+const PEOPLE_ENABLE="https://console.cloud.google.com/apis/library/people.googleapis.com";
+const TASKS_ENABLE="https://console.cloud.google.com/apis/library/tasks.googleapis.com";
+
+let contactsList=[], contactsErr=null;
 async function loadContacts(){
-  if(!accounts.length){ renderContacts(false); renderReachout(false); return; }
-  let all=[], needAuth=false;
+  contactsErr=null;
+  if(!accounts.length){ renderContacts(); renderReachout(); return; }
+  let all=[];
   for(const acct of accounts){
     let d; try{ d=await gfetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1000&personFields=names,emailAddresses&sortOrder=FIRST_NAME_ASCENDING", acct.token); }catch(e){ continue; }
-    if(d && d.error){ needAuth=true; continue; }   // 403 = scope not granted yet, or People API disabled
+    if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); continue; }
     (d.connections||[]).forEach(p=>{
       const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value;
       const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0];
@@ -849,15 +867,16 @@ async function loadContacts(){
   const seen=new Set();
   contactsList=all.filter(c=>{ const k=c.email.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
                   .sort((a,b)=>a.name.localeCompare(b.name));
-  renderContacts(needAuth);
-  renderReachout(needAuth);
+  renderContacts();
+  renderReachout();
 }
-function reconnectBtn(id){ return `<button class="gbtn" id="${id}" style="margin-top:8px">🔓 Reconnect Google</button>`; }
-function wireReconnect(id){ const b=document.getElementById(id); if(b) b.onclick=()=>tokenClient.requestAccessToken({prompt:"consent"}); }
-function renderContacts(needAuth){
+function reconnectBtn(id){ return `<button class="gbtn" id="${id}" style="margin-top:8px">🔓 reconnect (pick account)</button>`; }
+/* select_account so the user can re-grant scopes for the WORK account too, not just the default one. */
+function wireReconnect(id){ const b=document.getElementById(id); if(b) b.onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"}); }
+function renderContacts(){
   const box=document.getElementById("contacts"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">connect Google…</div>`; return; }
-  if(needAuth){ box.innerHTML=`<div class="empty">Reconnect to grant Contacts access.</div>`; return; }
+  if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="empty" style="line-height:1.4">${contactsErr}</div>`; return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts found.</div>`; return; }
   box.innerHTML=contactsList.slice(0,300).map(c=>
     `<a href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" title="${esc(c.email)}">
@@ -865,10 +884,10 @@ function renderContacts(needAuth){
 }
 /* Stable day index so the daily pick is the same all day, then shuffles on demand. */
 function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
-function renderReachout(needAuth, shuffle){
+function renderReachout(shuffle){
   const box=document.getElementById("reachout"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
-  if(needAuth){ box.innerHTML=`<div class="needsauth">Reconnect Google to grant Contacts access.<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
+  if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${contactsErr}<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
   const i = shuffle ? Math.floor(Math.random()*contactsList.length) : (dayIndex()%contactsList.length);
   const c=contactsList[i];
@@ -885,32 +904,38 @@ function renderReachout(needAuth, shuffle){
 async function loadTasks(){
   const box=document.getElementById("tasks"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
-  let out=[], needAuth=false;
+  let out=[], err=null, failedAccts=[];
   for(const acct of accounts){
     let lists; try{ lists=await gfetch("https://www.googleapis.com/tasks/v1/users/@me/lists", acct.token); }catch(e){ continue; }
-    if(lists && lists.error){ needAuth=true; continue; }
+    if(lists && lists.error){ console.warn("[tasks]", acct.email, lists.error); if(!err) err=apiErrMsg(lists.error,"Tasks",TASKS_ENABLE); failedAccts.push(acct.email); continue; }
     for(const tl of (lists.items||[])){
       let t; try{ t=await gfetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(tl.id)}/tasks?showCompleted=false&maxResults=100`, acct.token); }catch(e){ continue; }
-      if(t && t.error){ needAuth=true; continue; }
+      if(t && t.error){ continue; }
       (t.items||[]).filter(x=>x.status!=="completed" && x.title).forEach(x=>{
         out.push({acct:acct.email, title:x.title, due:x.due?new Date(x.due):null});
       });
     }
   }
-  renderTasks(out, needAuth);
+  renderTasks(out, err, failedAccts);
 }
-function renderTasks(items, needAuth){
+function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks"); if(!box) return;
-  if(needAuth && !items.length){ box.innerHTML=`<div class="needsauth">Reconnect Google to grant Tasks access.<br>${reconnectBtn("reconnect-tasks")}</div>`; wireReconnect("reconnect-tasks"); return; }
+  if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; wireReconnect("reconnect-tasks"); return; }
   if(!items.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; return; }
   const multi=accounts.length>1;
   items.sort((a,b)=>(a.due?a.due.getTime():Infinity)-(b.due?b.due.getTime():Infinity));
-  box.innerHTML=items.map(t=>{
+  let html=items.map(t=>{
     const p=multi?acctColor(t.acct):"var(--accent)";
     const due=t.due?` <span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:"";
     const tag=multi?acctPill(t.acct):"";
     return `<div class="item" style="--p:${p}"><span class="s">☐ ${esc(t.title)}${tag}${due}</span></div>`;
   }).join("");
+  // Some accounts loaded, others failed (e.g. work account hasn't granted the scope yet)
+  if((failedAccts||[]).length){
+    html+=`<div class="needsauth" style="margin-top:12px;line-height:1.4">${failedAccts.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>`;
+  }
+  box.innerHTML=html;
+  if((failedAccts||[]).length) wireReconnect("reconnect-tasks");
 }
 
 /* ---------- Chat agent ---------- */
