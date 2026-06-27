@@ -260,6 +260,37 @@
   .chat-input input:focus { border-color:var(--accent); }
   .chat-input button { border:none; background:var(--accent); color:#fff; border-radius:10px; padding:0 16px; font-size:14px; font-weight:600; cursor:pointer; }
   .chat-input button:disabled { opacity:.5; cursor:default; }
+
+  /* ---- Command bar: universal capture + focus filters (v1.8) ---- */
+  .cmd-card { padding:16px 18px; }
+  .cap-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+  .cap-modes { display:flex; gap:6px; flex-wrap:wrap; }
+  .capmode { border:1px solid var(--border); background:var(--surface); color:var(--muted);
+             border-radius:20px; padding:6px 12px; font-size:13px; cursor:pointer; transition:all .12s; }
+  .capmode:hover { border-color:var(--accent); }
+  .capmode.active { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); font-weight:600; }
+  .cap-input { display:flex; flex:1; min-width:220px; gap:8px; }
+  .cap-input input { flex:1; min-width:0; border:1px solid var(--border); border-radius:10px; padding:9px 12px;
+                     font-size:14px; background:var(--bg); color:var(--text); }
+  .cap-input input:focus { border-color:var(--accent); outline:none; }
+  .cap-input button { border:none; background:var(--accent); color:#fff; border-radius:10px; padding:0 16px;
+                      font-size:14px; font-weight:600; cursor:pointer; }
+  .cap-flash { flex-basis:100%; font-size:13px; color:var(--accent); height:0; opacity:0; overflow:hidden; transition:opacity .2s; }
+  .cap-flash.show { height:auto; opacity:1; margin-top:2px; }
+  .focus-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+  .focus-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-right:2px; }
+  .focus-pill { border:1px solid var(--border); background:var(--surface); color:var(--text);
+                border-radius:20px; padding:6px 12px; font-size:13px; cursor:pointer; transition:all .12s; }
+  .focus-pill:hover { border-color:var(--accent); }
+  .focus-pill.active { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  .focus-panel { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+  .focus-head { display:flex; align-items:center; font-weight:600; font-size:14px; margin-bottom:6px; }
+  .focus-head .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; }
+  .focus-reply { display:inline-block; margin-top:4px; font-size:12px; color:var(--accent); cursor:pointer; }
+  .focus-notes { white-space:normal; font-size:13.5px; line-height:1.5; max-height:260px; overflow:auto;
+                 background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px; }
+  .focus-links { display:flex; flex-wrap:wrap; gap:8px; }
+  .focus-links .gbtn { text-decoration:none; font-size:13px; padding:7px 12px; }
 </style>
 </head>
 <body>
@@ -284,6 +315,34 @@
 
   <div id="layout">
     <main class="main">
+      <!-- Command bar: universal capture box + "Show:" focus filters -->
+      <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
+        <div class="cap-row">
+          <div class="cap-modes" id="cap-modes">
+            <button type="button" class="capmode active" data-mode="remind">⏰ Remind me to…</button>
+            <button type="button" class="capmode" data-mode="draft">✉️ Draft email to…</button>
+            <button type="button" class="capmode" data-mode="idea">💡 Save this idea…</button>
+          </div>
+          <form class="cap-input" id="cap-form">
+            <input id="cap-text" autocomplete="off" placeholder="Remind me to… e.g. call the dentist Friday">
+            <button type="submit" id="cap-go">Capture</button>
+          </form>
+          <div class="cap-flash" id="cap-flash"></div>
+        </div>
+        <div class="focus-row">
+          <span class="focus-label">Show:</span>
+          <button type="button" class="focus-pill" data-focus="reply">📨 Needs reply</button>
+          <button type="button" class="focus-pill" data-focus="bills">💳 Bills/payments</button>
+          <button type="button" class="focus-pill" data-focus="today">📅 Today’s schedule</button>
+          <button type="button" class="focus-pill" data-focus="notes">🗒️ Loose notes/docs</button>
+        </div>
+        <div class="focus-panel" id="focus-panel" style="display:none">
+          <div class="focus-head"><span id="focus-title"></span>
+            <span class="refresh" id="focus-close">✕ close</span></div>
+          <div id="focus-body"><div class="empty">—</div></div>
+        </div>
+      </div>
+
       <!-- Live Today panel: Unread inbox (60%) + Next 3 days (40%), separated like the rows below -->
       <div class="split live" id="today-row" style="margin-bottom:20px">
         <div class="card">
@@ -381,7 +440,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.7",
+  version: "1.8.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1434,8 +1493,147 @@ function showVersion(){
   document.querySelectorAll(".ver").forEach(el=>{ el.innerHTML=versionHTML(); el.title="miDash version "+(CONFIG.version||""); });
 }
 
+/* ============================================================
+   COMMAND BAR — universal capture + "Show:" focus filters (v1.8)
+   Capture writes to Notes (autosyncs to the Worker KV; the agent's
+   read_notes tool can see it) or hands a draft to the chat agent.
+   Focus filters run targeted Gmail/Calendar lenses over your
+   already-connected accounts — no backend changes needed.
+   ============================================================ */
+const CAP_PLACEHOLDER = {
+  remind: "Remind me to… e.g. call the dentist Friday",
+  draft:  "Draft email to… e.g. Sam about the Q3 numbers",
+  idea:   "Save this idea… e.g. rewrite the landing-page hero",
+};
+let capMode = "remind";
+function initCapture(){
+  const modes=document.getElementById("cap-modes"); if(!modes) return;
+  const input=document.getElementById("cap-text");
+  modes.querySelectorAll(".capmode").forEach(b=>{
+    b.onclick=()=>{ capMode=b.dataset.mode;
+      modes.querySelectorAll(".capmode").forEach(x=>x.classList.toggle("active",x===b));
+      input.placeholder=CAP_PLACEHOLDER[capMode]; input.focus(); };
+  });
+  document.getElementById("cap-form").addEventListener("submit",e=>{
+    e.preventDefault(); const text=input.value.trim(); if(!text) return;
+    if(capMode==="draft") captureDraft(text); else captureToNotes(capMode, text);
+    input.value="";
+  });
+}
+function capFlash(msg){
+  const f=document.getElementById("cap-flash"); if(!f) return;
+  f.textContent=msg; f.classList.add("show");
+  clearTimeout(capFlash._t); capFlash._t=setTimeout(()=>f.classList.remove("show"),3400);
+}
+function capStamp(){ return new Date().toLocaleDateString([],{month:"short",day:"numeric"}); }
+/* Remind + Save-idea both prepend a line to Notes — instant, no API cost, and the
+   chat agent can read it later via read_notes. Reuses the textarea's autosave. */
+function captureToNotes(mode, text){
+  const ta=document.getElementById("notes-area"); if(!ta) return;
+  const line = mode==="remind" ? `- [ ] ${text}  · added ${capStamp()}`
+                               : `💡 ${text}  · ${capStamp()}`;
+  ta.value = line + "\n" + ta.value;
+  ta.dispatchEvent(new Event("input"));   // fire the existing autosave → Worker KV
+  capFlash(mode==="remind" ? "⏰ Reminder saved to Notes" : "💡 Idea saved to Notes");
+}
+/* Draft email → hand it to the chat agent (it resolves the contact, can pull
+   context from Notes/mail, and drafts). We prefill + open the panel but leave the
+   Send press to you, so you control the metered Anthropic spend. */
+function captureDraft(text){
+  const ci=document.getElementById("chat-text"), panel=document.getElementById("chat-panel");
+  if(!ci || !CONFIG.chatEndpoint){
+    window.open(gmailComposeUrl(CONFIG.account,"",text,""),"_blank","noopener");
+    capFlash("✉️ Opened a Gmail compose window"); return;
+  }
+  ci.value = `Draft an email to ${text}`;
+  panel.classList.add("open"); ci.focus();
+  capFlash("✉️ Handed to your agent — review &amp; press Send");
+}
+
+/* ---- Focus filters ("Show:") ---- */
+const FOCUS_MAIL = {
+  reply: { title:"📨 Needs reply",
+    q:'in:inbox is:unread -category:promotions -category:social -category:forums -category:updates -from:me',
+    empty:"Nothing personal waiting on a reply 🎉" },
+  bills: { title:"💳 Bills &amp; payments",
+    q:'in:inbox newer_than:120d (invoice OR bill OR receipt OR statement OR "amount due" OR "past due" OR "payment due" OR subscription OR renewal OR "your order")',
+    empty:"No bills or payment emails in the last few months." },
+};
+let activeFocus=null;
+function initFocus(){
+  document.querySelectorAll(".focus-pill").forEach(b=>{
+    b.onclick=()=>{ const f=b.dataset.focus; if(activeFocus===f){ closeFocus(); return; } openFocus(f); };
+  });
+  const c=document.getElementById("focus-close"); if(c) c.onclick=closeFocus;
+}
+function closeFocus(){
+  activeFocus=null;
+  document.getElementById("focus-panel").style.display="none";
+  document.querySelectorAll(".focus-pill").forEach(x=>x.classList.remove("active"));
+}
+function openFocus(f){
+  activeFocus=f;
+  document.querySelectorAll(".focus-pill").forEach(x=>x.classList.toggle("active",x.dataset.focus===f));
+  const panel=document.getElementById("focus-panel"), title=document.getElementById("focus-title"), body=document.getElementById("focus-body");
+  panel.style.display="block";
+  if(f==="today"){ title.textContent="📅 Today’s schedule"; renderTodayFocus(body); return; }
+  if(f==="notes"){ title.textContent="🗒️ Loose notes & docs"; renderNotesFocus(body); return; }
+  const def=FOCUS_MAIL[f]; title.innerHTML=def.title;
+  if(!accounts.length){ body.innerHTML=`<div class="empty">Connect Google to use this view.</div>`; return; }
+  body.innerHTML=`<div class="empty">Searching your mail…</div>`;
+  runMailFocus(def, body);
+}
+async function runMailFocus(def, body){
+  const isReply = def===FOCUS_MAIL.reply;
+  try{
+    const multi=accounts.length>1; let rows=[];
+    for(const acct of accounts){
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=12&q="+encodeURIComponent(def.q), acct.token); }catch(e){ continue; }
+      const ids=(list.messages||[]).map(m=>m.id); if(!ids.length) continue;
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
+      msgs.forEach(m=>{
+        const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
+        const when=h.Date?new Date(h.Date):new Date(0);
+        const p=multi?acctColor(acct.email):"var(--accent)";
+        const fromAddr=(h.From||"").match(/<(.+?)>/);
+        const reply= isReply ? `<span class="focus-reply" data-acct="${esc(acct.email)}" data-to="${esc(fromAddr?fromAddr[1]:(h.From||""))}" data-subj="${esc(h.Subject||"")}">↩︎ reply</span>` : "";
+        rows.push({when, html:`<div class="row mailrow" style="--p:${p}">
+          <a href="${gmailMsgUrl(acct.email,m.threadId||m.id)}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit;display:block">
+            <span class="s">${esc(h.Subject||"(no subject)")}${multi?acctPill(acct.email):""}</span>
+            <span class="from">${esc(cleanFrom(h.From||""))} · <span class="age">${mailAge(when)}</span></span>
+          </a>${reply}</div>`});
+      });
+    }
+    if(!rows.length){ body.innerHTML=`<div class="empty">${def.empty}</div>`; return; }
+    rows.sort((a,b)=>b.when-a.when);
+    body.innerHTML=rows.map(r=>r.html).join("");
+    body.querySelectorAll(".focus-reply").forEach(el=>{
+      el.onclick=()=>{ const s=el.dataset.subj; const re=/^re:/i.test(s)?s:("Re: "+s);
+        window.open(gmailComposeUrl(el.dataset.acct, el.dataset.to, re, ""),"_blank","noopener"); };
+    });
+  }catch(err){ body.innerHTML=`<div class="empty">Couldn't search mail.</div>`; }
+}
+function renderTodayFocus(body){
+  if(!accounts.length){ body.innerHTML=`<div class="empty">Connect Google to see today’s schedule.</div>`; return; }
+  const start=new Date(); start.setHours(0,0,0,0); const end=new Date(start); end.setDate(end.getDate()+1);
+  const evs=agendaEvents.filter(o=>o.dt>=start && o.dt<end);
+  if(!evs.length){ body.innerHTML=`<div class="empty">Nothing scheduled today — clear runway 🎉</div>`; return; }
+  body.innerHTML=evs.map(eventRow).join("");
+}
+function renderNotesFocus(body){
+  const ta=document.getElementById("notes-area"); const txt=(ta&&ta.value.trim())||"";
+  const preview = txt ? `<div class="focus-notes">${esc(txt).replace(/\n/g,"<br>")}</div>`
+                      : `<div class="empty">No notes yet — capture a reminder or idea above to start.</div>`;
+  body.innerHTML = preview + `<div class="focus-links">
+    <button type="button" class="gbtn" id="focus-jump-notes">📝 Open Notes editor</button>
+    <a class="gbtn" href="https://drive.google.com/drive/u/0/?authuser=${A}" target="_blank" rel="noopener">📁 Google Drive ↗</a>
+    <a class="gbtn" href="https://docs.google.com/document/u/0/?authuser=${A}" target="_blank" rel="noopener">📄 Recent Docs ↗</a></div>`;
+  const j=document.getElementById("focus-jump-notes");
+  if(j) j.onclick=()=>{ const n=document.getElementById("notes"); if(n){ n.scrollIntoView({behavior:"smooth",block:"center"}); const a=document.getElementById("notes-area"); if(a) a.focus(); } };
+}
+
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
