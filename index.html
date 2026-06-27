@@ -271,22 +271,21 @@
 
   <div id="layout">
     <main class="main">
-      <!-- Live Today panel -->
-      <div class="card" style="margin-bottom:20px">
-        <h2><span class="dot">⚡</span>Today <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
-        <div class="today">
-          <div class="col">
-            <h3>📅 Next 3 days</h3>
-            <div id="agenda"><div class="empty">—</div></div>
-          </div>
-          <div class="col">
-            <h3>✉️ Unread in inbox</h3>
-            <div id="mail"><div class="empty">—</div></div>
-            <div id="mail-pager" class="pager" style="display:none"></div>
-          </div>
+      <!-- Live Today panel: Unread inbox (60%) + Next 3 days (40%), separated like the rows below -->
+      <div class="split live" id="today-row" style="margin-bottom:20px">
+        <div class="card">
+          <h2><span class="dot">✉️</span>Unread in inbox
+            <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="mail"><div class="empty">—</div></div>
+          <div id="mail-pager" class="pager" style="display:none"></div>
         </div>
-        <div id="auth-note" class="needsauth" style="display:none"></div>
+        <div class="card">
+          <h2><span class="dot">📅</span>Next 3 days
+            <span class="refresh" id="agenda3-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="agenda"><div class="empty">—</div></div>
+        </div>
       </div>
+      <div id="auth-note" class="needsauth" style="display:none;margin-bottom:20px"></div>
 
       <!-- Google Tasks (#8) + daily reach-out (#6) -->
       <div class="split live" id="tasks-row" style="margin-bottom:20px;display:none">
@@ -369,7 +368,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.4",
+  version: "1.7.5",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -730,6 +729,7 @@ function renderAccountBar(){
 function showConnect(){
   renderAccountBar();
   document.getElementById("today-refresh").style.display="none";
+  document.getElementById("agenda3-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
   document.getElementById("agenda-view-card").style.display="none";
   document.getElementById("agenda-notes-row").classList.remove("live");
@@ -739,6 +739,7 @@ function afterAuth(){
   renderAccountBar();
   document.getElementById("auth-note").style.display="none";
   const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
+  const a3=document.getElementById("agenda3-refresh"); a3.style.display="inline"; a3.onclick=refreshLive;
   document.getElementById("agenda-view-card").style.display="block";
   document.getElementById("agenda-notes-row").classList.add("live");
   document.getElementById("agenda-refresh").onclick=refreshLive;
@@ -748,9 +749,9 @@ function afterAuth(){
   loadLive();
 }
 function refreshLive(){
-  const rb=document.getElementById("today-refresh"), ab=document.getElementById("agenda-refresh");
-  rb.classList.add("spin"); ab.classList.add("spin");
-  Promise.allSettled([loadAgenda(), loadMail(), loadContacts(), loadTasks()]).finally(()=>setTimeout(()=>{rb.classList.remove("spin");ab.classList.remove("spin");},500));
+  const els=["today-refresh","agenda3-refresh","agenda-refresh"].map(i=>document.getElementById(i)).filter(Boolean);
+  els.forEach(e=>e.classList.add("spin"));
+  Promise.allSettled([loadAgenda(), loadMail(), loadContacts(), loadTasks()]).finally(()=>setTimeout(()=>els.forEach(e=>e.classList.remove("spin")),500));
 }
 async function gfetch(url, token){
   const r=await fetch(url,{headers:{Authorization:"Bearer "+(token||accessToken)}});
