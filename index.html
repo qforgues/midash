@@ -398,8 +398,15 @@ const G = {
   docs:  p => `https://docs.google.com/document/u/0/?authuser=${A}`,
   photos:p => `https://photos.google.com/?authuser=${A}`,
 };
-/* Compose to a specific address from a specific account (used by Contacts + daily reach-out). */
-function gmailComposeUrl(email,to){ return `https://mail.google.com/mail/u/${email||CONFIG.account}/?view=cm&fs=1${to?`&to=${encodeURIComponent(to)}`:""}`; }
+/* Compose to a specific address from a specific account (used by Contacts + daily reach-out).
+   Optional subject/body prefill the draft (Gmail honors &su= and &body=). */
+function gmailComposeUrl(email,to,subject,body){
+  let u=`https://mail.google.com/mail/u/${email||CONFIG.account}/?view=cm&fs=1`;
+  if(to) u+=`&to=${encodeURIComponent(to)}`;
+  if(subject) u+=`&su=${encodeURIComponent(subject)}`;
+  if(body) u+=`&body=${encodeURIComponent(body)}`;
+  return u;
+}
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
 /* ---------- Render the side menu (categories as headers) + live projects ---------- */
@@ -888,17 +895,66 @@ function renderContacts(){
 }
 /* Stable day index so the daily pick is the same all day, then shuffles on demand. */
 function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
+let reachoutContact=null;
 function renderReachout(shuffle){
   const box=document.getElementById("reachout"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${contactsErr}<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
   const i = shuffle ? Math.floor(Math.random()*contactsList.length) : (dayIndex()%contactsList.length);
-  const c=contactsList[i];
+  const c=contactsList[i]; reachoutContact=c;
   box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Today's nudge — say hi to:</div>
     <div style="font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(c.name)}</div>
     <div class="from" style="margin:2px 0 14px">${esc(c.email)}</div>
-    <a class="gbtn" href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex">✉️ Send a message</a>`;
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="gbtn" id="reach-draft">✨ Draft &amp; open</button>
+      <a class="gbtn" id="reach-blank" href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;color:var(--muted)">blank email</a>
+    </div>
+    <div id="reach-note" class="from" style="margin-top:8px"></div>`;
+  const db=document.getElementById("reach-draft");
+  if(db) db.onclick=()=>aiDraftAndOpen(reachoutContact, db);
+}
+
+/* Pull recent Gmail history with this contact, ask the model for a subject + body,
+   then open Gmail compose pre-filled. The compose window is opened on the click
+   (user gesture) so popup blockers don't eat it, then navigated once the draft is ready. */
+async function aiDraftAndOpen(c, btn){
+  if(!c) return;
+  const note=document.getElementById("reach-note");
+  const win=window.open("about:blank","_blank");   // reserve the tab during the user gesture
+  const fail=(msg)=>{ if(note) note.textContent=msg; if(win) win.location.href=gmailComposeUrl(CONFIG.account,c.email); };
+  if(!CONFIG.chatEndpoint){ fail("Agent offline — opened a blank email."); return; }
+  if(btn){ btn.disabled=true; btn.textContent="✨ drafting…"; }
+  try{
+    // gather recent threads with this contact across all accounts
+    let ctx=[];
+    for(const acct of accounts){
+      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=6&q="+encodeURIComponent(`from:${c.email} OR to:${c.email}`), acct.token); }catch(e){ continue; }
+      const ids=(list.messages||[]).map(m=>m.id).slice(0,6);
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
+      msgs.forEach(m=>{ const h=hdr(m); ctx.push(`${(h.Date||"").slice(0,16)} | from ${cleanFrom(h.From||"")} | ${h.Subject||"(no subject)"} | ${(m.snippet||"").slice(0,200)}`); });
+    }
+    const history = ctx.length ? ctx.join("\n") : "(no prior emails found with this person)";
+    const prompt = `You are drafting a short, warm, casual check-in email from ${CONFIG.name} to ${c.name} <${c.email}> to reconnect and stay in touch. `
+      + `Base the tone and any references on the recent email history below. Keep it brief (2-4 sentences), friendly, and specific if the history gives you something to reference; otherwise a simple genuine hello. Sign off as ${CONFIG.name}. `
+      + `Recent email history (most recent first may vary):\n${history}\n\n`
+      + `Do not call any tools — everything you need is in this message. `
+      + `Respond with ONLY a JSON object, no markdown, no commentary: {"subject": "...", "body": "..."}`;
+    const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:selectedModel(), messages:[{role:"user",content:prompt}]})});
+    const data=await res.json();
+    if(data.error) throw new Error(data.error.message||"model error");
+    let txt=((data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")).trim();
+    txt=txt.replace(/^```(?:json)?\s*/i,"").replace(/```$/,"").trim();
+    let subject="", body="";
+    try{ const j=JSON.parse(txt); subject=j.subject||""; body=j.body||""; }
+    catch(e){ body=txt; }   // model didn't return clean JSON — use whatever text it gave as the body
+    if(win) win.location.href=gmailComposeUrl(CONFIG.account, c.email, subject, body);
+    if(note) note.textContent="Draft opened in Gmail ↗ — review before sending.";
+  }catch(err){
+    fail("Couldn't draft ("+(err.message||err)+") — opened a blank email.");
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent="✨ Draft & open"; }
+  }
 }
 
 /* ============================================================
