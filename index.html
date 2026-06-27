@@ -88,6 +88,11 @@
   .pill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; background:var(--accent-soft); color:var(--accent); margin-left:6px; }
   .empty { color:var(--muted); font-size:14px; padding:6px 0; }
   .att { display:inline-block; font-size:12px; color:var(--muted); margin-top:3px; }
+  .dft-in { width:100%; border:1px solid var(--border); background:var(--bg); color:var(--text);
+    border-radius:8px; padding:8px 10px; font-size:14px; outline:none; margin-bottom:8px; font-family:inherit; }
+  .dft-area { width:100%; min-height:130px; resize:vertical; border:1px solid var(--border); background:var(--bg);
+    color:var(--text); border-radius:8px; padding:10px 12px; font-size:14px; line-height:1.5; outline:none; margin-bottom:8px; font-family:inherit; }
+  .dft-in:focus, .dft-area:focus { border-color:var(--accent); }
   .mailrow .age { color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .needsauth { color:var(--muted); font-size:14px; }
   .needsauth button { margin-top:10px; }
@@ -362,7 +367,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.2",
+  version: "1.7.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -997,67 +1002,90 @@ function renderContacts(){
 }
 /* Stable day index so the daily pick is the same all day, then shuffles on demand. */
 function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
-let reachoutContact=null;
+let reachoutContact=null, reachoutHistory=null;
 function renderReachout(shuffle){
   const box=document.getElementById("reachout"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${contactsErr}<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
   const i = shuffle ? Math.floor(Math.random()*contactsList.length) : (dayIndex()%contactsList.length);
-  const c=contactsList[i]; reachoutContact=c;
+  const c=contactsList[i]; reachoutContact=c; reachoutHistory=null;
   box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Today's nudge — say hi to:</div>
     <div style="font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(c.name)}</div>
     <div class="from" style="margin:2px 0 14px">${esc(c.email)}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="gbtn" id="reach-draft">✨ Draft &amp; open</button>
+      <button class="gbtn" id="reach-draft">✨ Draft a message</button>
       <a class="gbtn" id="reach-blank" href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;color:var(--muted)">blank email</a>
     </div>
     <div id="reach-note" class="from" style="margin-top:8px"></div>`;
   const db=document.getElementById("reach-draft");
-  if(db) db.onclick=()=>aiDraftAndOpen(reachoutContact, db);
+  if(db) db.onclick=()=>startDraft(c, db);
 }
 
-/* Pull recent Gmail history with this contact, ask the model for a subject + body,
-   then open Gmail compose pre-filled. The compose window is opened on the click
-   (user gesture) so popup blockers don't eat it, then navigated once the draft is ready. */
-async function aiDraftAndOpen(c, btn){
+/* Gather recent Gmail history with this contact (cached per nudge so Regenerate is fast). */
+async function gatherHistory(c){
+  let ctx=[];
+  for(const acct of accounts){
+    let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=6&q="+encodeURIComponent(`from:${c.email} OR to:${c.email}`), acct.token); }catch(e){ continue; }
+    const ids=(list.messages||[]).map(m=>m.id).slice(0,6);
+    const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
+    msgs.forEach(m=>{ const h=hdr(m); ctx.push(`${(h.Date||"").slice(0,16)} | from ${cleanFrom(h.From||"")} | ${h.Subject||"(no subject)"} | ${(m.snippet||"").slice(0,200)}`); });
+  }
+  return ctx.length ? ctx.join("\n") : "(no prior emails found with this person)";
+}
+/* Ask the model for {subject, body}; `tone` is the user's optional guidance on how it should sound. */
+async function generateDraft(c, tone){
+  if(reachoutHistory===null) reachoutHistory=await gatherHistory(c);
+  const me=nameOf();
+  const toneLine = tone && tone.trim() ? `How ${me} wants it to sound / what to include: ${tone.trim()}\n` : "";
+  const prompt = `You are drafting a short, warm, casual check-in email from ${me} to ${c.name} <${c.email}> to reconnect and stay in touch. `
+    + `Base the tone and any references on the recent email history below. Keep it brief (2-4 sentences) unless the guidance says otherwise, friendly, and specific if the history gives you something to reference; otherwise a simple genuine hello. Sign off as ${me}.\n`
+    + toneLine
+    + `Recent email history (most recent first may vary):\n${reachoutHistory}\n\n`
+    + `Do not call any tools — everything you need is in this message. `
+    + `Respond with ONLY a JSON object, no markdown, no commentary: {"subject": "...", "body": "..."}`;
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:selectedModel(), messages:[{role:"user",content:prompt}]})});
+  const data=await res.json();
+  if(data.error) throw new Error(data.error.message||"model error");
+  let txt=((data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")).trim();
+  txt=txt.replace(/^```(?:json)?\s*/i,"").replace(/```$/,"").trim();
+  try{ const j=JSON.parse(txt); return {subject:j.subject||"", body:j.body||""}; }
+  catch(e){ return {subject:"", body:txt}; }   // model didn't return clean JSON — use whatever text it gave
+}
+async function startDraft(c, btn){
   if(!c) return;
   const note=document.getElementById("reach-note");
-  const win=window.open("about:blank","_blank");   // reserve the tab during the user gesture
-  const fail=(msg)=>{ if(note) note.textContent=msg; if(win) win.location.href=gmailComposeUrl(CONFIG.account,c.email); };
-  if(!CONFIG.chatEndpoint){ fail("Agent offline — opened a blank email."); return; }
+  if(!CONFIG.chatEndpoint){ if(note) note.textContent="Agent offline — use “blank email”."; return; }
   if(btn){ btn.disabled=true; btn.textContent="✨ drafting…"; }
-  try{
-    // gather recent threads with this contact across all accounts
-    let ctx=[];
-    for(const acct of accounts){
-      let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=6&q="+encodeURIComponent(`from:${c.email} OR to:${c.email}`), acct.token); }catch(e){ continue; }
-      const ids=(list.messages||[]).map(m=>m.id).slice(0,6);
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
-      msgs.forEach(m=>{ const h=hdr(m); ctx.push(`${(h.Date||"").slice(0,16)} | from ${cleanFrom(h.From||"")} | ${h.Subject||"(no subject)"} | ${(m.snippet||"").slice(0,200)}`); });
-    }
-    const history = ctx.length ? ctx.join("\n") : "(no prior emails found with this person)";
-    const me=nameOf();
-    const prompt = `You are drafting a short, warm, casual check-in email from ${me} to ${c.name} <${c.email}> to reconnect and stay in touch. `
-      + `Base the tone and any references on the recent email history below. Keep it brief (2-4 sentences), friendly, and specific if the history gives you something to reference; otherwise a simple genuine hello. Sign off as ${me}. `
-      + `Recent email history (most recent first may vary):\n${history}\n\n`
-      + `Do not call any tools — everything you need is in this message. `
-      + `Respond with ONLY a JSON object, no markdown, no commentary: {"subject": "...", "body": "..."}`;
-    const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:selectedModel(), messages:[{role:"user",content:prompt}]})});
-    const data=await res.json();
-    if(data.error) throw new Error(data.error.message||"model error");
-    let txt=((data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")).trim();
-    txt=txt.replace(/^```(?:json)?\s*/i,"").replace(/```$/,"").trim();
-    let subject="", body="";
-    try{ const j=JSON.parse(txt); subject=j.subject||""; body=j.body||""; }
-    catch(e){ body=txt; }   // model didn't return clean JSON — use whatever text it gave as the body
-    if(win) win.location.href=gmailComposeUrl(CONFIG.account, c.email, subject, body);
-    if(note) note.textContent="Draft opened in Gmail ↗ — review before sending.";
-  }catch(err){
-    fail("Couldn't draft ("+(err.message||err)+") — opened a blank email.");
-  }finally{
-    if(btn){ btn.disabled=false; btn.textContent="✨ Draft & open"; }
-  }
+  try{ const d=await generateDraft(c,""); renderDraftPreview(c,d); }
+  catch(err){ if(note) note.textContent="Couldn't draft ("+(err.message||err)+")."; if(btn){ btn.disabled=false; btn.textContent="✨ Draft a message"; } }
+}
+/* Editable preview: tweak subject/body, give tone guidance, regenerate, then open in Gmail. */
+function renderDraftPreview(c, draft){
+  const box=document.getElementById("reachout"); if(!box) return;
+  box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Draft to <b>${esc(c.name)}</b> &lt;${esc(c.email)}&gt;</div>
+    <input id="dft-subject" class="dft-in" placeholder="Subject" value="${esc(draft.subject||"").replace(/"/g,"&quot;")}">
+    <textarea id="dft-body" class="dft-area" placeholder="Message">${esc(draft.body||"")}</textarea>
+    <input id="dft-tone" class="dft-in" placeholder="How should it sound? e.g. playful, mention the trip, keep it pro">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
+      <button class="gbtn" id="dft-regen">↻ Regenerate</button>
+      <button class="gbtn" id="dft-open" style="border-color:var(--accent);color:var(--accent)">✉️ Open in Gmail</button>
+      <button class="gbtn" id="dft-back" style="color:var(--muted)">back</button>
+    </div>
+    <div id="dft-note" class="from" style="margin-top:8px"></div>`;
+  const subjI=document.getElementById("dft-subject"), bodyI=document.getElementById("dft-body"),
+        toneI=document.getElementById("dft-tone"), note=document.getElementById("dft-note");
+  document.getElementById("dft-regen").onclick=async(e)=>{
+    const b=e.currentTarget; b.disabled=true; b.textContent="↻ regenerating…"; note.textContent="";
+    try{ const d=await generateDraft(c, toneI.value); subjI.value=d.subject||subjI.value; bodyI.value=d.body||bodyI.value; }
+    catch(err){ note.textContent="Couldn't regenerate ("+(err.message||err)+")."; }
+    finally{ b.disabled=false; b.textContent="↻ Regenerate"; }
+  };
+  document.getElementById("dft-open").onclick=()=>{   // synchronous → no popup blocker
+    window.open(gmailComposeUrl(CONFIG.account, c.email, subjI.value, bodyI.value), "_blank", "noopener");
+    note.textContent="Opened in Gmail ↗ — review before sending.";
+  };
+  document.getElementById("dft-back").onclick=()=>renderReachout();
 }
 
 /* ============================================================
@@ -1081,7 +1109,7 @@ async function loadTasks(){
   }
   renderTasks(out, err, failedAccts);
 }
-const TASKS_PER=10;            // show 10 at a time, page through the rest
+const TASKS_PER=5;             // show 5 at a time, page through the rest
 let taskItems=[], taskPage=0, taskFailed=[];
 function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
