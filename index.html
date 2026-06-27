@@ -28,8 +28,10 @@
          background:var(--bg); color:var(--text); line-height:1.5; -webkit-font-smoothing:antialiased; padding:0 24px 120px; }
   .wrap { max-width:1400px; margin:0 auto; }
 
-  header { padding:48px 0 28px; display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-  .greeting { font-size:32px; font-weight:600; letter-spacing:-.02em; }
+  header { padding:36px 0 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .hcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+           box-shadow:var(--shadow); padding:16px 24px; }
+  .greeting { font-size:30px; font-weight:600; letter-spacing:-.02em; }
   .sub { color:var(--muted); font-size:15px; margin-top:6px; }
   #clock { font-variant-numeric:tabular-nums; }
   .gbtn { border:1px solid var(--border); background:var(--surface); color:var(--text);
@@ -251,9 +253,9 @@
 <body>
 <div class="wrap">
   <header>
-    <div>
-      <div class="greeting" id="greeting">Hello</div>
-      <div class="sub"><span id="clock"></span> · <span id="datestr"></span> · <span class="ver" id="version">v?</span></div>
+    <div class="hcard">
+      <div class="greeting">miDash <span class="ver" id="version">v?</span></div>
+      <div class="sub"><span id="datestr"></span> · <span id="clock"></span></div>
     </div>
     <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
   </header>
@@ -367,7 +369,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.3",
+  version: "1.7.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -542,9 +544,7 @@ function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
 
 /* ---------- Clock & greeting ---------- */
 function tick() {
-  const now=new Date(), h=now.getHours();
-  const part = h<5?"Still up":h<12?"Good morning":h<18?"Good afternoon":"Good evening";
-  document.getElementById("greeting").textContent = `${part}, ${nameOf()}`;
+  const now=new Date();
   document.getElementById("clock").textContent = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
   document.getElementById("datestr").textContent = now.toLocaleDateString([], {weekday:"long",month:"long",day:"numeric"});
 }
@@ -615,15 +615,33 @@ const BG_PATTERNS = {
 };
 function bgSettings(){ try{ return JSON.parse(localStorage.getItem("midash_bg")||"null"); }catch(e){ return null; } }
 function saveBg(s){ try{ localStorage.setItem("midash_bg", JSON.stringify(s)); }catch(e){} applyBackground(); }
+/* WCAG relative luminance of a #rrggbb color (0 = black, 1 = white). */
+function luminance(hex){
+  const c=String(hex||"").replace("#",""); if(c.length<6) return 1;
+  const ch=i=>{ let v=parseInt(c.substr(i,2),16)/255; return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4); };
+  return .2126*ch(0)+.7152*ch(2)+.0722*ch(4);
+}
 function applyBackground(){
-  const b=document.body, s=bgSettings();
-  if(!s || !s.pattern || s.pattern==="default"){ b.style.backgroundColor=""; b.style.backgroundImage=""; b.style.backgroundSize=""; b.style.backgroundAttachment=""; return; }
-  const fn=BG_PATTERNS[s.pattern]||BG_PATTERNS.solid;
-  const p=fn(s.a||"#fafaf9", s.b||"#2d6a4f");
-  b.style.backgroundColor=p.color;
-  b.style.backgroundImage=p.image;
-  b.style.backgroundSize=p.size;
-  b.style.backgroundAttachment="fixed";
+  const root=document.documentElement.style, b=document.body, s=bgSettings();
+  const CONTRAST=["--text","--muted","--surface","--border"];
+  if(!s || !s.pattern || s.pattern==="default"){
+    b.style.backgroundColor=""; b.style.backgroundImage=""; b.style.backgroundSize=""; b.style.backgroundAttachment="";
+    CONTRAST.forEach(v=>root.removeProperty(v));   // fall back to the prefers-color-scheme theme
+    applyTheme(); return;
+  }
+  const a=s.a||"#fafaf9", c=s.b||"#2d6a4f";
+  const fn=BG_PATTERNS[s.pattern]||BG_PATTERNS.solid; const p=fn(a,c);
+  b.style.backgroundColor=p.color; b.style.backgroundImage=p.image; b.style.backgroundSize=p.size; b.style.backgroundAttachment="fixed";
+  // Pick a readable text + panel scheme based on how dark the background reads (weight the base color A).
+  const lum = 0.7*luminance(a) + 0.3*luminance(c);
+  if(lum < 0.5){   // dark background → light text, dark translucent panels
+    root.setProperty("--text","#f2f1ee"); root.setProperty("--muted","#bdbab2");
+    root.setProperty("--surface","rgba(24,24,22,.90)"); root.setProperty("--border","rgba(255,255,255,.14)");
+  } else {         // light background → dark text, light translucent panels
+    root.setProperty("--text","#191917"); root.setProperty("--muted","#5f5d57");
+    root.setProperty("--surface","rgba(255,255,255,.93)"); root.setProperty("--border","rgba(0,0,0,.10)");
+  }
+  applyTheme();   // recompute accent-soft against the new surface
 }
 function initSettings(){
   const btn=document.getElementById("settings-btn"), modal=document.getElementById("settings-modal");
