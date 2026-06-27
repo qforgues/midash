@@ -74,7 +74,7 @@
                      box-shadow:var(--shadow); padding:8px; display:none; flex-direction:column; }
   .side-sec:hover .links { display:flex; }
   .side-sec .links a { font-size:14px; padding:8px 10px; }
-  #contacts { max-height:240px; overflow-y:auto; }
+  /* contacts flow inside the gear dropdown's own scroll — no inner cap */
   @media (max-width:560px){ .side-sec .links { left:auto; right:0; } }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
@@ -381,7 +381,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.7.6",
+  version: "1.7.7",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1005,14 +1005,14 @@ function apiErrMsg(err, apiLabel, enableUrl){
 const PEOPLE_ENABLE="https://console.cloud.google.com/apis/library/people.googleapis.com";
 const TASKS_ENABLE="https://console.cloud.google.com/apis/library/tasks.googleapis.com";
 
-let contactsList=[], contactsErr=null;
+let contactsList=[], contactsErr=null, contactsFailed=[];
 async function loadContacts(){
-  contactsErr=null;
+  contactsErr=null; contactsFailed=[];
   if(!accounts.length){ renderContacts(); renderReachout(); return; }
   let all=[];
   for(const acct of accounts){
     let d; try{ d=await gfetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1000&personFields=names,emailAddresses&sortOrder=FIRST_NAME_ASCENDING", acct.token); }catch(e){ continue; }
-    if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); continue; }
+    if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); contactsFailed.push(acct.email); continue; }
     (d.connections||[]).forEach(p=>{
       const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value;
       const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0];
@@ -1033,9 +1033,12 @@ function renderContacts(){
   if(!accounts.length){ box.innerHTML=`<div class="empty">connect Google…</div>`; return; }
   if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="empty" style="line-height:1.4">${contactsErr}</div>`; return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts found.</div>`; return; }
-  box.innerHTML=contactsList.slice(0,300).map(c=>
+  let html=contactsList.map(c=>
     `<a href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" title="${esc(c.email)}">
        <span class="lhs">${esc(c.name)}</span><span class="arrow">✉</span></a>`).join("");
+  if(contactsFailed.length) html+=`<div class="needsauth" style="margin:8px 6px;line-height:1.4">${contactsFailed.map(esc).join(", ")} need Contacts access. ${reconnectBtn("reconnect-contacts-note")}</div>`;
+  box.innerHTML=html;
+  if(contactsFailed.length) wireReconnect("reconnect-contacts-note");
 }
 /* Stable day index so the daily pick is the same all day, then shuffles on demand. */
 function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
@@ -1045,9 +1048,9 @@ function renderReachout(shuffle){
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${contactsErr}<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
-  const i = shuffle ? Math.floor(Math.random()*contactsList.length) : (dayIndex()%contactsList.length);
+  const i = Math.floor(Math.random()*contactsList.length);   // always a fresh random pick
   const c=contactsList[i]; reachoutContact=c; reachoutHistory=null;
-  box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Today's nudge — say hi to:</div>
+  box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Say hi to:</div>
     <div style="font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(c.name)}</div>
     <div class="from" style="margin:2px 0 14px">${esc(c.email)}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1170,7 +1173,7 @@ function renderTasksPage(){
     const p=multi?acctColor(t.acct):"var(--accent)";
     const due=t.due?`<span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:`<span class="att" style="opacity:.6">no due date</span>`;
     const tag=multi?acctPill(t.acct):"";
-    return `<div class="item" style="--p:${p}"><span class="s">☐ ${esc(t.title)}${tag}</span>${due}</div>`;
+    return `<div class="item" style="--p:${p}"><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
   }).join("")+failNote;
   if(taskFailed.length) wireReconnect("reconnect-tasks");
   if(pages<=1){ if(pager)pager.style.display="none"; return; }
