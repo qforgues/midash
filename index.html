@@ -476,7 +476,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.12.0",
+  version: "1.12.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1569,8 +1569,13 @@ const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"
    Shared secret that must match the Worker's DASH_KEY. Stored only on this device.
    Sent as "Authorization: Bearer <key>" on chat + notes requests. The Worker
    fails open until DASH_KEY is set, so this is a no-op until you enable it. */
-function getDashKey(){ try{ return localStorage.getItem("midash_dash_key")||""; }catch(e){ return ""; } }
-function setDashKey(k){ try{ if(k) localStorage.setItem("midash_dash_key",k); else localStorage.removeItem("midash_dash_key"); }catch(e){} }
+/* Session fallback for when localStorage is blocked (iOS Private Browsing, some PWA storage
+   buckets). Without this, "Save" silently no-ops and every request 401s — the test passes
+   (it uses the typed value) but the real request sends nothing. */
+let _dashKeyMem="";
+function getDashKey(){ try{ const v=localStorage.getItem("midash_dash_key"); if(v!=null) return v; }catch(e){} return _dashKeyMem; }
+function setDashKey(k){ _dashKeyMem=k||""; try{ if(k) localStorage.setItem("midash_dash_key",k); else localStorage.removeItem("midash_dash_key"); }catch(e){} }
+function dashKeyPersists(){ try{ localStorage.setItem("midash_kt","1"); const ok=localStorage.getItem("midash_kt")==="1"; localStorage.removeItem("midash_kt"); return ok; }catch(e){ return false; } }
 function dashAuthHeader(){ const k=getDashKey(); return k?{Authorization:"Bearer "+k}:{}; }
 let resyncNotes=null;   // set by initNotes so the passphrase button can re-sync
 
@@ -1580,7 +1585,8 @@ let resyncNotes=null;   // set by initNotes so the passphrase button can re-sync
 function showKeyMeta(){
   const el=document.getElementById("key-meta"); if(!el) return;
   const cur=getDashKey();
-  el.textContent = cur ? `Stored on this device: ${cur.length} character(s).` : "Nothing stored on this device yet.";
+  const warn = dashKeyPersists() ? "" : " · ⚠️ this browser is blocking local storage (Private Browsing?), so it won't persist across launches";
+  el.textContent = (cur ? `Held on this device: ${cur.length} character(s).` : "Nothing held on this device yet.") + warn;
 }
 async function testKey(val){
   const r=document.getElementById("key-result"); if(!r) return false;
@@ -1608,7 +1614,10 @@ function initKeyModal(){
     const v=inp.value.trim(); const ok=await testKey(v);
     setDashKey(v); showKeyMeta();
     if(ok){ if(resyncNotes) resyncNotes();
-      const r=document.getElementById("key-result"); r.textContent="✅ Saved & in use — the agent and Notes will work now."; r.className="key-result ok"; }
+      const r=document.getElementById("key-result");
+      if(dashKeyPersists()){ r.textContent="✅ Saved & in use — the agent and Notes work now. Resend your message."; r.className="key-result ok"; }
+      else { r.textContent="✅ In use for this session — resend your message now. ⚠️ This browser is blocking local storage (Private Browsing?), so you'll re-enter it next launch. Turn off Private Browsing, or install miDash to your home screen, to make it stick."; r.className="key-result ok"; }
+    }
   };
   document.getElementById("key-clear2").onclick=()=>{ setDashKey(""); inp.value=""; showKeyMeta();
     const r=document.getElementById("key-result"); r.textContent="Cleared the locally stored passphrase."; r.className="key-result"; };
