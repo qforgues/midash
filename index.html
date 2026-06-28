@@ -317,6 +317,7 @@
           <div id="gear-sections"></div>
           <div class="gear-foot">
             <button id="pwa-install" class="gbtn" style="width:100%;display:none;margin-bottom:8px;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
+            <button id="dash-key-btn" class="gbtn" style="width:100%;margin-bottom:8px">🔒 Dashboard passphrase</button>
             <button id="open-settings" class="gbtn" style="width:100%">⚙️ Appearance &amp; profile</button>
           </div>
         </div>
@@ -451,7 +452,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.9.0",
+  version: "1.10.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1306,8 +1307,13 @@ function renderChatHistory(){
   }
 }
 
-async function callModel(){
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
+async function callModel(retried){
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
+  if(res.status===401){
+    if(retried) throw new Error("wrong passphrase — set it again in ⚙️ → 🔒 Dashboard passphrase");
+    if(!promptDashKey()) throw new Error("locked — enter your passphrase to use the agent");
+    return callModel(true);
+  }
   if(!res.ok) throw new Error("HTTP "+res.status);
   return res.json();  // raw Anthropic response
 }
@@ -1443,7 +1449,25 @@ async function executeTool(name,a){
 
 /* ---------- Notes (synced to the Worker's KV; localStorage is the offline cache) ---------- */
 const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
-function notesHeaders(extra){ return extra||{}; }   // notes are open (no auth) for now
+
+/* ---- Dashboard passphrase ----
+   Shared secret that must match the Worker's DASH_KEY. Stored only on this device.
+   Sent as "Authorization: Bearer <key>" on chat + notes requests. The Worker
+   fails open until DASH_KEY is set, so this is a no-op until you enable it. */
+function getDashKey(){ try{ return localStorage.getItem("midash_dash_key")||""; }catch(e){ return ""; } }
+function setDashKey(k){ try{ if(k) localStorage.setItem("midash_dash_key",k); else localStorage.removeItem("midash_dash_key"); }catch(e){} }
+function dashAuthHeader(){ const k=getDashKey(); return k?{Authorization:"Bearer "+k}:{}; }
+/* Called after a 401 — capture the passphrase so the request can be retried. */
+function promptDashKey(){ const k=prompt("🔒 miDash is locked.\n\nEnter your dashboard passphrase (the Worker's DASH_KEY):"); if(k && k.trim()){ setDashKey(k.trim()); return k.trim(); } return ""; }
+let resyncNotes=null;   // set by initNotes so the passphrase button can re-sync
+function setDashKeyInteractive(){
+  const k=prompt("🔒 Dashboard passphrase\n\nMust match the Worker's DASH_KEY secret. Stored only on this device.\nLeave blank to clear it.", getDashKey());
+  if(k===null) return;                  // cancelled
+  setDashKey(k.trim());
+  if(resyncNotes) resyncNotes();
+}
+
+function notesHeaders(extra){ return {...(extra||{}), ...dashAuthHeader()}; }
 function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }    // local cache
 function cacheNotes(v){ try{ localStorage.setItem("midash_notes",v); }catch(e){} }
 
@@ -1467,16 +1491,20 @@ async function pushNotes(text){
 function initNotes(){
   const ta=document.getElementById("notes-area"), st=document.getElementById("notes-status");
   const sync=document.getElementById("notes-sync");
-  if(sync) sync.style.display="none";   // notes are open for now — no key needed
+  if(sync) sync.style.display="none";   // passphrase is managed from the gear menu, not here
   ta.value=getNotes();   // show cached immediately
-  const SYNC_MSG={ route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
-  async function loadNotesRemote(){
+  const SYNC_MSG={ key:"🔒 locked — enter passphrase", route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
+  async function loadNotesRemote(retried){
     if(!NOTES_URL) return;
     st.textContent="syncing…";
     const res=await fetchNotes();
+    if(res.error==="key" && !retried){   // 401 → ask for the passphrase, then retry once
+      if(promptDashKey()) return loadNotesRemote(true);
+    }
     if(res.error){ st.textContent=SYNC_MSG[res.error]||"offline (local)"; st.title=res.status?("HTTP "+res.status):""; return; }
     ta.value=res.notes; cacheNotes(res.notes); st.textContent="synced"; st.title="";
   }
+  resyncNotes=loadNotesRemote;   // let the passphrase button re-sync after a change
   loadNotesRemote();
 
   let t=null;
@@ -1656,6 +1684,7 @@ function renderNotesFocus(body){
 function isStandalone(){ return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true; }
 function initPWA(){
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+  const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); setDashKeyInteractive(); };
   const btn=document.getElementById("pwa-install"); if(!btn) return;
   let deferred=null;
   if(isStandalone()) return;   // already installed → no button

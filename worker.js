@@ -97,9 +97,21 @@ function json(obj, status = 200) {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...cors() } });
 }
 
-// Notes are currently open (no auth) for simplicity. To lock them later, gate this on
-// a shared key (e.g. `wrangler secret put NOTES_KEY`) and have the dashboard send it as
-// an Authorization header.
+// Shared-passphrase gate for /chat and /notes — stops anyone who finds the URL from
+// spamming the metered Anthropic API or reading/writing the Notes. The dashboard sends
+// "Authorization: Bearer <passphrase>"; we compare it to the DASH_KEY secret.
+//   wrangler secret put DASH_KEY        (choose any passphrase)
+// FAIL-OPEN by design: if DASH_KEY isn't set yet, requests are allowed (same as before),
+// so deploying this code never locks you out. Enforcement starts the instant you set the
+// secret. To disable later: `wrangler secret delete DASH_KEY`.
+function authed(request, env) {
+  if (!env.DASH_KEY) return true;                         // not configured → open (set the secret to enforce)
+  const h = request.headers.get("Authorization") || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  return !!m && m[1] === env.DASH_KEY;
+}
+
+// Notes read/write. Access is gated upstream by authed() once DASH_KEY is set.
 async function handleNotes(request, env) {
   if (!env.NOTES) return json({ error: { message: "Notes storage not configured — create a KV namespace bound as NOTES (see README)." } }, 501);
   if (request.method === "GET") {
@@ -139,6 +151,7 @@ async function handleChat(request, env) {
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
+    if (!authed(request, env)) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
     const url = new URL(request.url);
     if (url.pathname === "/notes") return handleNotes(request, env);
     return handleChat(request, env);
