@@ -27,12 +27,15 @@ const ALLOWED_MODELS = new Set([
   "claude-opus-4-8",    // smartest  ($5 / $25)
 ]);
 const DEFAULT_MODEL = "claude-haiku-4-5";
+// Adaptive thinking + the effort parameter are supported on Sonnet 4.6 / Opus 4.8 but
+// NOT on Haiku 4.5 (sending them to Haiku 400s). So we only enable them on the smart models.
+const SMART_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
 
 const SYSTEM = `You are the assistant embedded in Q's personal dashboard (miDash).
 You can read Q's Google Calendar (across ALL of his connected Google accounts and ALL
-calendars) and read, reply to, trash, archive, and mark-read his Gmail, delete calendar
-events, and read his Notes scratchpad — via the provided tools. Tools run in Q's browser
-using his own Google logins. Be concise and friendly.
+calendars), create calendar events, delete events, read/reply/trash/archive/mark-read his
+Gmail, send new emails, and read his Notes scratchpad — via the provided tools. Tools run
+in Q's browser using his own Google logins. Be concise and friendly.
 
 Multiple accounts:
 - Q may connect more than one Google account (e.g. a personal gmail and a work address).
@@ -49,9 +52,11 @@ Guidelines:
 - To remove calendar events: call list_events, then delete_event with the event's
   account, calendarId, and eventId. Events on read-only calendars (like Birthdays)
   can't be deleted — tell Q if that happens. Only delete events where canEdit is true.
-- reply_email, trash_email and delete_event pop a confirmation dialog on Q's screen, so
-  just call the tool when asked — do NOT ask for permission again in text. If a tool
-  returns cancelled:true, respect it and don't retry.
+- reply_email, trash_email, delete_event, create_event and send_email pop a confirmation
+  dialog on Q's screen, so just call the tool when asked — do NOT ask for permission again
+  in text. If a tool returns cancelled:true, respect it and don't retry.
+- To add something to the calendar, call create_event with an ISO start (and end if known).
+  To email someone new, call send_email; for a reply to an existing thread, use reply_email.
 - read_notes returns Q's free-form scratchpad; use it as context when he references
   "my notes", "my ideas", or asks you to draft from what he jotted down.
 - After acting, briefly confirm what you did. Draft replies in Q's voice: warm, brief, direct.`;
@@ -84,6 +89,12 @@ const TOOLS = [
   { name: "read_notes",
     description: "Read Q's free-form Notes scratchpad from the dashboard. Use when he references his notes/ideas or asks you to draft from them.",
     input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "create_event",
+    description: "Create a NEW calendar event. Q confirms on screen before it's created. Give 'start' (and ideally 'end') as ISO 8601 local time, e.g. 2026-07-02T15:00:00. For an all-day event, pass a date-only 'start' (YYYY-MM-DD) and allDay:true. Defaults to Q's primary calendar on his primary account unless 'account' is set.",
+    input_schema: { type: "object", properties: { summary: { type: "string" }, start: { type: "string" }, end: { type: "string" }, allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, account: { type: "string" } }, required: ["summary", "start"] } },
+  { name: "send_email",
+    description: "Send a NEW email (not a reply — use reply_email for replies). Q confirms on screen before it sends. Sends from his primary account unless 'account' is set.",
+    input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, cc: { type: "string" }, account: { type: "string" } }, required: ["to", "subject", "body"] } },
 ];
 
 function cors() {
@@ -134,6 +145,14 @@ async function handleChat(request, env) {
   // The dashboard's model picker sends body.model; fall back to the cheap default.
   const model = (typeof body.model === "string" && ALLOWED_MODELS.has(body.model)) ? body.model : DEFAULT_MODEL;
 
+  // We stream, so timeouts aren't a concern; give the smart models headroom for thinking.
+  const smart = SMART_MODELS.has(model);
+  const payload = { model, max_tokens: smart ? 6000 : 1500, system: SYSTEM, tools: TOOLS, messages, stream: true };
+  if (smart) {
+    payload.thinking = { type: "adaptive" };       // Claude decides when/how much to think
+    payload.output_config = { effort: "medium" };  // balance quality vs token spend
+  }
+
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -141,11 +160,20 @@ async function handleChat(request, env) {
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model, max_tokens: 1500, system: SYSTEM, tools: TOOLS, messages }),
+    body: JSON.stringify(payload),
   });
 
-  const data = await r.json();           // pass the full Anthropic response back
-  return json(data, r.ok ? 200 : r.status);
+  // Upstream errors come back as JSON (not SSE) — surface them as JSON so the dashboard
+  // can show the message. On success, pipe the SSE stream straight through to the browser.
+  if (!r.ok) {
+    let err;
+    try { err = await r.json(); } catch { err = { error: { message: "upstream " + r.status } }; }
+    return json(err, r.status);
+  }
+  return new Response(r.body, {
+    status: 200,
+    headers: { ...cors(), "Content-Type": "text/event-stream; charset=utf-8", "Cache-Control": "no-cache" },
+  });
 }
 
 export default {

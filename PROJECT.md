@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.9.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.11.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-06-28
 
@@ -113,9 +113,23 @@ to be an external retriever that talks to the same Worker via a messaging app
 ## Agent tools (defined in `worker.js`, executed in `index.html`)
 
 `search_emails`, `get_email`, `reply_email`, `trash_email`, `archive_email`,
-`mark_read`, `list_events`, `delete_event`, `read_notes`.
+`mark_read`, `list_events`, `create_event`, `delete_event`, `send_email`, `read_notes`.
 All are **multi-account aware** (sweep every connected account, tag results with
-`account`). Reply/trash/delete pop an on-screen `confirm()` first.
+`account`). Reply/trash/delete/**create_event**/**send_email** pop an on-screen `confirm()`
+first. `create_event` defaults to the **primary** calendar; `send_email` sends a NEW message
+(use `reply_email` for replies).
+
+**Chat is streamed** (v1.11.0): the Worker proxies Anthropic's SSE; the browser
+(`streamModel` in `index.html`) reconstructs the message (text/thinking/tool_use blocks +
+`usage`) while rendering the answer token-by-token. **Adaptive thinking** + `effort:"medium"`
+are enabled **only on `sonnet-4-6`/`opus-4-8`** (Haiku 4.5 400s on those params — gated by
+`SMART_MODELS` in `worker.js`). A **daily usage meter** in the chat header estimates metered
+spend from each response's `usage`, accumulated per local day, resetting at midnight
+(`midash_usage` in localStorage; pricing table `PRICE` in `index.html`).
+
+> **Cost note:** every chat turn resends the full `system` + `TOOLS` schema (~2.3k input
+> tokens/turn, uncached). Adding prompt caching (`cache_control` on the system block in
+> `worker.js`) would cut that ~90% — a good future optimization, not yet done.
 
 ---
 
