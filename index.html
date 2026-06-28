@@ -440,7 +440,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.8.0",
+  version: "1.8.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -523,7 +523,9 @@ const G = {
 /* Compose to a specific address from a specific account (used by Contacts + daily reach-out).
    Optional subject/body prefill the draft (Gmail honors &su= and &body=). */
 function gmailComposeUrl(email,to,subject,body){
-  let u=`https://mail.google.com/mail/u/${email||CONFIG.account}/?view=cm&fs=1`;
+  // Use the /u/0/?authuser=<email> form (not /u/<email>/, which 404s / misbehaves
+  // on mobile Safari — iPad). authuser is what Gmail honors reliably cross-device.
+  let u=`https://mail.google.com/mail/u/0/?authuser=${encodeURIComponent(email||CONFIG.account)}&view=cm&fs=1&tf=1`;
   if(to) u+=`&to=${encodeURIComponent(to)}`;
   if(subject) u+=`&su=${encodeURIComponent(subject)}`;
   if(body) u+=`&body=${encodeURIComponent(body)}`;
@@ -687,7 +689,7 @@ function luminance(hex){
 }
 function applyBackground(){
   const root=document.documentElement.style, b=document.body, s=bgSettings();
-  const CONTRAST=["--text","--muted","--surface","--border"];
+  const CONTRAST=["--text","--muted","--surface","--border","--bg"];
   if(!s || !s.pattern || s.pattern==="default"){
     b.style.backgroundColor=""; b.style.backgroundImage=""; b.style.backgroundSize=""; b.style.backgroundAttachment="";
     CONTRAST.forEach(v=>root.removeProperty(v));   // fall back to the prefers-color-scheme theme
@@ -701,9 +703,11 @@ function applyBackground(){
   if(lum < 0.5){   // dark background → light text, dark translucent panels
     root.setProperty("--text","#f2f1ee"); root.setProperty("--muted","#bdbab2");
     root.setProperty("--surface","rgba(24,24,22,.90)"); root.setProperty("--border","rgba(255,255,255,.14)");
+    root.setProperty("--bg","#2a2a26");   // input/notes field bg — must track the theme or text turns invisible
   } else {         // light background → dark text, light translucent panels
     root.setProperty("--text","#191917"); root.setProperty("--muted","#5f5d57");
     root.setProperty("--surface","rgba(255,255,255,.93)"); root.setProperty("--border","rgba(0,0,0,.10)");
+    root.setProperty("--bg","#ffffff");
   }
   applyTheme();   // recompute accent-soft against the new surface
 }
