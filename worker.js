@@ -116,10 +116,11 @@ function json(obj, status = 200) {
 // so deploying this code never locks you out. Enforcement starts the instant you set the
 // secret. To disable later: `wrangler secret delete DASH_KEY`.
 function authed(request, env) {
-  if (!env.DASH_KEY) return true;                         // not configured → open (set the secret to enforce)
+  const secret = (env.DASH_KEY || "").trim();            // tolerate a trailing newline/space in the secret
+  if (!secret) return true;                              // not configured → open (set the secret to enforce)
   const h = request.headers.get("Authorization") || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
-  return !!m && m[1] === env.DASH_KEY;
+  return !!m && m[1].trim() === secret;
 }
 
 // Notes read/write. Access is gated upstream by authed() once DASH_KEY is set.

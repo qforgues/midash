@@ -239,6 +239,10 @@
   .pat-btn.active { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); font-weight:600; }
   .pat-colors { display:flex; gap:16px; margin-bottom:6px; }
   .pat-actions { display:flex; justify-content:space-between; align-items:center; margin-top:10px; }
+  .key-result { font-size:13.5px; line-height:1.45; min-height:18px; margin:4px 0 2px; }
+  .key-result.ok { color:var(--accent); }
+  .key-result.bad { color:var(--warn); }
+  .key-meta { font-size:12px; color:var(--muted); margin-bottom:8px; }
 
   /* Chat */
   #chat-toggle { position:fixed; right:24px; bottom:24px; width:56px; height:56px; border-radius:50%;
@@ -429,6 +433,24 @@
   </div>
 </div>
 
+<!-- Dashboard passphrase — live tester -->
+<div id="key-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="key-close-bg"></div>
+  <div class="panel">
+    <h2>🔒 Dashboard passphrase</h2>
+    <p class="set-label" style="margin:0 0 10px">Must match the Worker's <code>DASH_KEY</code> secret. Stored only on this device. Type it and hit <b>Test</b> to check it live against the Worker — no guessing.</p>
+    <label>Passphrase <input id="key-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="type it exactly"></label>
+    <div id="key-result" class="key-result"></div>
+    <div id="key-meta" class="key-meta"></div>
+    <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
+      <button id="key-test" class="gbtn">Test against Worker</button>
+      <button id="key-save" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Save &amp; use</button>
+      <button id="key-clear2" class="gbtn" style="color:var(--warn)">Clear</button>
+      <button id="key-done" class="gbtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -454,7 +476,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.11.0",
+  version: "1.12.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1313,12 +1335,11 @@ function renderChatHistory(){
 /* Stream one model turn over SSE, calling onText(delta) as the answer arrives, and
    reconstruct the full Anthropic message ({content, stop_reason, usage, model}) so the
    tool loop and the usage meter keep working. The Worker proxies Anthropic's SSE. */
-async function streamModel(onText, retried){
+async function streamModel(onText){
   const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
   if(res.status===401){
-    if(retried) throw new Error("wrong passphrase — set it again in ⚙️ → 🔒 Dashboard passphrase");
-    if(!promptDashKey()) throw new Error("locked — enter your passphrase to use the agent");
-    return streamModel(onText, true);
+    openKeyModal();   // robust tester — avoids the iOS prompt() autocapitalize trap
+    throw new Error("🔒 Locked — set & test your passphrase in the panel that just opened, then resend your message.");
   }
   const ct=res.headers.get("Content-Type")||"";
   if(!ct.includes("text/event-stream")){           // worker returned a JSON error (not a stream)
@@ -1551,14 +1572,49 @@ const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"
 function getDashKey(){ try{ return localStorage.getItem("midash_dash_key")||""; }catch(e){ return ""; } }
 function setDashKey(k){ try{ if(k) localStorage.setItem("midash_dash_key",k); else localStorage.removeItem("midash_dash_key"); }catch(e){} }
 function dashAuthHeader(){ const k=getDashKey(); return k?{Authorization:"Bearer "+k}:{}; }
-/* Called after a 401 — capture the passphrase so the request can be retried. */
-function promptDashKey(){ const k=prompt("🔒 miDash is locked.\n\nEnter your dashboard passphrase (the Worker's DASH_KEY):"); if(k && k.trim()){ setDashKey(k.trim()); return k.trim(); } return ""; }
 let resyncNotes=null;   // set by initNotes so the passphrase button can re-sync
-function setDashKeyInteractive(){
-  const k=prompt("🔒 Dashboard passphrase\n\nMust match the Worker's DASH_KEY secret. Stored only on this device.\nLeave blank to clear it.", getDashKey());
-  if(k===null) return;                  // cancelled
-  setDashKey(k.trim());
-  if(resyncNotes) resyncNotes();
+
+/* Live passphrase tester — type it, hit Test, see 200/401 straight from the Worker.
+   Uses a real <input> (autocapitalize/autocorrect OFF) so mobile keyboards can't mangle
+   the value the way prompt() does on iOS. */
+function showKeyMeta(){
+  const el=document.getElementById("key-meta"); if(!el) return;
+  const cur=getDashKey();
+  el.textContent = cur ? `Stored on this device: ${cur.length} character(s).` : "Nothing stored on this device yet.";
+}
+async function testKey(val){
+  const r=document.getElementById("key-result"); if(!r) return false;
+  r.className="key-result"; r.textContent="Testing…";
+  if(!NOTES_URL){ r.textContent="No backend configured."; r.className="key-result bad"; return false; }
+  try{
+    const res=await fetch(NOTES_URL,{headers: val?{Authorization:"Bearer "+val}:{}});
+    if(res.status===200){ r.textContent="✅ Match — this passphrase works. Hit “Save & use”."; r.className="key-result ok"; return true; }
+    if(res.status===401){ r.textContent=`❌ 401 — this doesn’t match the Worker’s DASH_KEY (you sent ${val.length} char${val.length===1?"":"s"}). Check for a typo, a stray space, or wrong capitalisation; or re-run \`wrangler secret put DASH_KEY\` with this exact value.`; r.className="key-result bad"; return false; }
+    r.textContent="⚠️ Unexpected status "+res.status; r.className="key-result bad"; return false;
+  }catch(e){ r.textContent="⚠️ Network error: "+e.message; r.className="key-result bad"; return false; }
+}
+function openKeyModal(){
+  const m=document.getElementById("key-modal"), inp=document.getElementById("key-input"); if(!m) return;
+  inp.value=getDashKey();
+  const r=document.getElementById("key-result"); r.textContent=""; r.className="key-result";
+  showKeyMeta(); m.style.display="flex"; setTimeout(()=>inp.focus(),50);
+}
+function initKeyModal(){
+  const m=document.getElementById("key-modal"); if(!m) return;
+  const inp=document.getElementById("key-input");
+  document.getElementById("key-test").onclick=()=>testKey(inp.value.trim());
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); testKey(inp.value.trim()); } });
+  document.getElementById("key-save").onclick=async()=>{
+    const v=inp.value.trim(); const ok=await testKey(v);
+    setDashKey(v); showKeyMeta();
+    if(ok){ if(resyncNotes) resyncNotes();
+      const r=document.getElementById("key-result"); r.textContent="✅ Saved & in use — the agent and Notes will work now."; r.className="key-result ok"; }
+  };
+  document.getElementById("key-clear2").onclick=()=>{ setDashKey(""); inp.value=""; showKeyMeta();
+    const r=document.getElementById("key-result"); r.textContent="Cleared the locally stored passphrase."; r.className="key-result"; };
+  const close=()=>{ m.style.display="none"; };
+  document.getElementById("key-done").onclick=close;
+  document.getElementById("key-close-bg").onclick=close;
 }
 
 function notesHeaders(extra){ return {...(extra||{}), ...dashAuthHeader()}; }
@@ -1588,13 +1644,10 @@ function initNotes(){
   if(sync) sync.style.display="none";   // passphrase is managed from the gear menu, not here
   ta.value=getNotes();   // show cached immediately
   const SYNC_MSG={ key:"🔒 locked — enter passphrase", route:"sync off — redeploy Worker", kv:"add KV namespace (README)", net:"offline (local)", http:"sync error" };
-  async function loadNotesRemote(retried){
+  async function loadNotesRemote(){
     if(!NOTES_URL) return;
     st.textContent="syncing…";
     const res=await fetchNotes();
-    if(res.error==="key" && !retried){   // 401 → ask for the passphrase, then retry once
-      if(promptDashKey()) return loadNotesRemote(true);
-    }
     if(res.error){ st.textContent=SYNC_MSG[res.error]||"offline (local)"; st.title=res.status?("HTTP "+res.status):""; return; }
     ta.value=res.notes; cacheNotes(res.notes); st.textContent="synced"; st.title="";
   }
@@ -1778,7 +1831,7 @@ function renderNotesFocus(body){
 function isStandalone(){ return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true; }
 function initPWA(){
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
-  const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); setDashKeyInteractive(); };
+  const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openKeyModal(); };
   const btn=document.getElementById("pwa-install"); if(!btn) return;
   let deferred=null;
   if(isStandalone()) return;   // already installed → no button
@@ -1794,7 +1847,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
