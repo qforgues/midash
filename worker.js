@@ -34,8 +34,15 @@ const SMART_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
 const SYSTEM = `You are the assistant embedded in Q's personal dashboard (miDash).
 You can read Q's Google Calendar (across ALL of his connected Google accounts and ALL
 calendars), create calendar events, delete events, read/reply/trash/archive/mark-read his
-Gmail, send new emails, and read his Notes scratchpad — via the provided tools. Tools run
-in Q's browser using his own Google logins. Be concise and friendly.
+Gmail, send new emails, read/create/complete his Google Tasks, and read his Notes scratchpad
+— via the provided tools. Tools run in Q's browser using his own Google logins. Be concise
+and friendly.
+
+Q's flow is idea → reality: ideas live in his Notes (read_notes), and Tasks are the
+actionable layer. When he says things like "turn my notes into tasks", "make these ideas
+real", or "what should I do next", read_notes first, then create a task per actionable item
+with create_task. To mark something done, list_tasks to find its listId/taskId, then
+complete_task.
 
 Multiple accounts:
 - Q may connect more than one Google account (e.g. a personal gmail and a work address).
@@ -95,6 +102,15 @@ const TOOLS = [
   { name: "send_email",
     description: "Send a NEW email (not a reply — use reply_email for replies). Q confirms on screen before it sends. Sends from his primary account unless 'account' is set.",
     input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, cc: { type: "string" }, account: { type: "string" } }, required: ["to", "subject", "body"] } },
+  { name: "list_tasks",
+    description: "List Q's open Google Tasks across ALL connected accounts. Each item has title, account, listId, taskId, due. Use listId+taskId to complete a task.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "create_task",
+    description: "Add a NEW Google Task (a to-do). This is how you turn an idea or a note into an actionable task. Optional 'due' as YYYY-MM-DD. Goes to Q's default task list on his primary account unless 'account' is set. Acts immediately — no confirmation needed.",
+    input_schema: { type: "object", properties: { title: { type: "string" }, due: { type: "string" }, account: { type: "string" } }, required: ["title"] } },
+  { name: "complete_task",
+    description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
+    input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },
 ];
 
 function cors() {

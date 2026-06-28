@@ -104,6 +104,15 @@
   .col h3 { font-size:13px; font-weight:600; color:var(--muted); margin-bottom:10px; display:flex; align-items:center; gap:6px; }
   .item { padding:8px 0; border-bottom:1px solid var(--border); font-size:14px; }
   .item:last-child { border-bottom:none; }
+  .taskrow { display:flex; align-items:center; gap:9px; }
+  .taskrow .s { flex:1; min-width:0; }
+  .tcheck { width:19px; height:19px; flex:none; border:1.5px solid color-mix(in srgb, var(--p,var(--accent)) 55%, var(--border)); border-radius:50%;
+            cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--accent); transition:all .12s; }
+  .tcheck:hover { border-color:var(--accent); background:var(--accent-soft); }
+  .task-add { display:flex; gap:7px; margin:2px 0 12px; }
+  .task-add input { flex:1; min-width:0; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:9px; padding:7px 11px; font-size:13.5px; outline:none; }
+  .task-add input:focus { border-color:var(--accent); }
+  .task-add button { border:none; background:var(--accent-soft); color:var(--accent); border-radius:9px; padding:0 13px; font-size:13px; font-weight:600; cursor:pointer; }
   .item .t { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; font-size:13px; }
   .item .s { display:block; }
   .item .from { color:var(--muted); font-size:12.5px; }
@@ -381,6 +390,7 @@
         <div class="card" id="tasks-card">
           <h2><span class="dot">✅</span>Tasks
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
           <div id="tasks-pager" class="pager" style="display:none"></div>
         </div>
@@ -476,7 +486,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.12.2",
+  version: "1.13.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -655,7 +665,7 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks.readonly";
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -1229,9 +1239,18 @@ function renderDraftPreview(c, draft){
 }
 
 /* ============================================================
-   GOOGLE TASKS (#8) — read-only across all connected accounts.
-   Needs the tasks.readonly scope (same one-time reconnect).
+   GOOGLE TASKS — read + write across all connected accounts.
+   Needs the `tasks` scope (full); reconnect once to grant write.
+   Powers the idea→task flow: capture/agent create tasks, tap to complete.
    ============================================================ */
+function defaultAcct(){ return accounts[0]||null; }
+async function createTask(acct, title, dueISO){
+  const body={title}; if(dueISO) body.due=dueISO;
+  return fetch("https://www.googleapis.com/tasks/v1/lists/@default/tasks",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+}
+async function completeTaskApi(acct, listId, taskId){
+  return fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({status:"completed"})});
+}
 async function loadTasks(){
   const box=document.getElementById("tasks"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
@@ -1243,7 +1262,7 @@ async function loadTasks(){
       let t; try{ t=await gfetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(tl.id)}/tasks?showCompleted=false&maxResults=100`, acct.token); }catch(e){ continue; }
       if(t && t.error){ continue; }
       (t.items||[]).filter(x=>x.status!=="completed" && x.title).forEach(x=>{
-        out.push({acct:acct.email, title:x.title, due:x.due?new Date(x.due):null});
+        out.push({acct:acct.email, listId:tl.id, taskId:x.id, title:x.title, due:x.due?new Date(x.due):null});
       });
     }
   }
@@ -1273,8 +1292,19 @@ function renderTasksPage(){
     const p=multi?acctColor(t.acct):"var(--accent)";
     const due=t.due?`<span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:`<span class="att" style="opacity:.6">no due date</span>`;
     const tag=multi?acctPill(t.acct):"";
-    return `<div class="item" style="--p:${p}"><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
+    return `<div class="item taskrow" style="--p:${p}" data-acct="${esc(t.acct)}" data-list="${esc(t.listId||"")}" data-task="${esc(t.taskId||"")}">
+      <span class="tcheck" title="Mark done"></span><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
   }).join("")+failNote;
+  box.querySelectorAll(".taskrow .tcheck").forEach(el=>{
+    el.onclick=async()=>{
+      const row=el.closest(".taskrow"), acct=acctByEmail(row.dataset.acct);
+      if(!acct||!row.dataset.task) return;
+      el.textContent="✓"; row.style.opacity=.5;
+      const r=await completeTaskApi(acct, row.dataset.list, row.dataset.task);
+      if(r.ok){ setTimeout(loadTasks,350); }
+      else { el.textContent=""; row.style.opacity=1; alert("Couldn't complete the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google)."); }
+    };
+  });
   if(taskFailed.length) wireReconnect("reconnect-tasks");
   if(pages<=1){ if(pager)pager.style.display="none"; return; }
   pager.style.display="flex";
@@ -1283,6 +1313,19 @@ function renderTasksPage(){
     <button id="t-next"${taskPage>=pages-1?" disabled":""}>next ›</button>`;
   document.getElementById("t-prev").onclick=()=>{ taskPage--; renderTasksPage(); };
   document.getElementById("t-next").onclick=()=>{ taskPage++; renderTasksPage(); };
+}
+function initTasksAdd(){
+  const f=document.getElementById("task-add"); if(!f) return;
+  f.addEventListener("submit",async e=>{
+    e.preventDefault();
+    const inp=document.getElementById("task-add-input"), title=inp.value.trim(); if(!title) return;
+    const acct=defaultAcct(); if(!acct){ alert("Connect Google first."); return; }
+    inp.disabled=true;
+    const r=await createTask(acct, title);
+    inp.disabled=false;
+    if(r.ok){ inp.value=""; loadTasks(); inp.focus(); }
+    else alert("Couldn't add the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google).");
+  });
 }
 
 /* ---------- Chat agent ---------- */
@@ -1556,6 +1599,31 @@ async function executeTool(name,a){
         if(!r.ok) return {error:"create failed "+r.status};
         const created=await r.json(); return {created:true, eventId:created.id, link:created.htmlLink, account:acct.email};
       }
+      case "list_tasks": {
+        let out=[];
+        for(const acct of accounts){
+          let lists; try{ lists=await gfetch("https://www.googleapis.com/tasks/v1/users/@me/lists", acct.token); }catch(e){ continue; }
+          for(const tl of ((lists&&lists.items)||[])){
+            let t; try{ t=await gfetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(tl.id)}/tasks?showCompleted=false&maxResults=100`, acct.token); }catch(e){ continue; }
+            ((t&&t.items)||[]).filter(x=>x.status!=="completed"&&x.title).forEach(x=>out.push({account:acct.email,listId:tl.id,taskId:x.id,title:x.title,due:x.due||null}));
+          }
+        }
+        return out;
+      }
+      case "create_task": {
+        const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
+        if(!a.title) return {error:"need a title"};
+        const dueISO=a.due?new Date(String(a.due).slice(0,10)+"T00:00:00").toISOString():null;
+        const r=await createTask(acct, a.title, dueISO);
+        loadTasks(); if(!r.ok) return {error:"create task failed "+r.status+" — reconnect Google for Tasks write access"};
+        const c=await r.json(); return {created:true, taskId:c.id, account:acct.email};
+      }
+      case "complete_task": {
+        const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
+        if(!a.listId||!a.taskId) return {error:"need listId and taskId (from list_tasks)"};
+        const r=await completeTaskApi(acct, a.listId, a.taskId);
+        loadTasks(); return r.ok?{completed:true}:{error:"complete failed "+r.status};
+      }
       case "send_email": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
         if(!a.to||!a.subject||a.body==null) return {error:"need to, subject and body"};
@@ -1722,7 +1790,9 @@ function initCapture(){
   });
   document.getElementById("cap-form").addEventListener("submit",e=>{
     e.preventDefault(); const text=input.value.trim(); if(!text) return;
-    if(capMode==="draft") captureDraft(text); else captureToNotes(capMode, text);
+    if(capMode==="draft") captureDraft(text);
+    else if(capMode==="remind") captureRemind(text);
+    else captureToNotes("idea", text);
     input.value="";
   });
 }
@@ -1732,15 +1802,23 @@ function capFlash(msg){
   clearTimeout(capFlash._t); capFlash._t=setTimeout(()=>f.classList.remove("show"),3400);
 }
 function capStamp(){ return new Date().toLocaleDateString([],{month:"short",day:"numeric"}); }
-/* Remind + Save-idea both prepend a line to Notes — instant, no API cost, and the
-   chat agent can read it later via read_notes. Reuses the textarea's autosave. */
+/* "Save this idea" → Notes (the incubator; agent reads it via read_notes). */
 function captureToNotes(mode, text){
   const ta=document.getElementById("notes-area"); if(!ta) return;
-  const line = mode==="remind" ? `- [ ] ${text}  · added ${capStamp()}`
-                               : `💡 ${text}  · ${capStamp()}`;
-  ta.value = line + "\n" + ta.value;
+  ta.value = `💡 ${text}  · ${capStamp()}` + "\n" + ta.value;
   ta.dispatchEvent(new Event("input"));   // fire the existing autosave → Worker KV
-  capFlash(mode==="remind" ? "⏰ Reminder saved to Notes" : "💡 Idea saved to Notes");
+  capFlash("💡 Idea saved to Notes");
+}
+/* "Remind me to…" → a REAL Google Task (turning intent into a tracked to-do).
+   Falls back to a Notes checkbox line if Google/Tasks-write isn't available yet. */
+async function captureRemind(text){
+  const acct=defaultAcct();
+  if(acct){
+    try{ const r=await createTask(acct, text); if(r.ok){ capFlash("✅ Added to your Tasks"); loadTasks(); return; } }catch(e){}
+  }
+  const ta=document.getElementById("notes-area");
+  if(ta){ ta.value=`- [ ] ${text}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
+  capFlash(acct ? "⏰ Saved to Notes — reconnect Google for Tasks write access" : "⏰ Reminder saved to Notes");
 }
 /* Draft email → hand it to the chat agent (it resolves the contact, can pull
    context from Notes/mail, and drafts). We prefill + open the panel but leave the
@@ -1863,7 +1941,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); showVersion(); googleBoot();
 </script>
 </body>
 </html>

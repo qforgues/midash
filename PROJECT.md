@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.11.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.13.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-06-28
 
@@ -75,9 +75,9 @@ to be an external retriever that talks to the same Worker via a messaging app
   per token, separate from any Max plan. Cap spend in the Anthropic Console.**
 - **OAuth scopes:** `openid email`, `calendar.events`, `gmail.modify`, `gmail.send`,
   `contacts.readonly` (People API → Contacts dropdown + daily reach-out),
-  `tasks.readonly` (Google Tasks). Scopes added in v1.7.0 require a one-time
-  reconnect, and the **People API + Tasks API must be enabled** in the Google Cloud
-  project behind the OAuth client.
+  **`tasks`** (full read+write — upgraded from `tasks.readonly` in v1.13.0 for the
+  idea→task flow; **requires a one-time reconnect** to grant write). The **People API +
+  Tasks API must be enabled** in the Google Cloud project behind the OAuth client.
 
 ---
 
@@ -113,7 +113,17 @@ to be an external retriever that talks to the same Worker via a messaging app
 ## Agent tools (defined in `worker.js`, executed in `index.html`)
 
 `search_emails`, `get_email`, `reply_email`, `trash_email`, `archive_email`,
-`mark_read`, `list_events`, `create_event`, `delete_event`, `send_email`, `read_notes`.
+`mark_read`, `list_events`, `create_event`, `delete_event`, `send_email`,
+`list_tasks`, `create_task`, `complete_task`, `read_notes`.
+
+**Idea → reality flow (v1.13.0):** ideas incubate in **Notes** (capture box "💡 Save this
+idea" + `read_notes`); **Tasks** are the actionable layer (Google Tasks, now read+write).
+Capture box "⏰ Remind me to…" creates a **real Google Task** (Notes-line fallback if write
+isn't granted); the Tasks card has a **＋ quick-add** and **tap-to-complete** checkbox; the
+agent bridges them (`read_notes` → `create_task`; `list_tasks` → `complete_task`), so
+"turn my notes into tasks" / "mark X done" work in chat. `create_task`/`complete_task` act
+without a confirm (low-stakes); `defaultAcct()` + `@default` list = primary account's
+default Tasks list.
 All are **multi-account aware** (sweep every connected account, tag results with
 `account`). Reply/trash/delete/**create_event**/**send_email** pop an on-screen `confirm()`
 first. `create_event` defaults to the **primary** calendar; `send_email` sends a NEW message
