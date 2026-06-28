@@ -313,6 +313,21 @@
                  background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; margin-bottom:10px; }
   .focus-links { display:flex; flex-wrap:wrap; gap:8px; }
   .focus-links .gbtn { text-decoration:none; font-size:13px; padding:7px 12px; }
+
+  /* ---- Inbox row actions (archive / unsubscribe) ---- */
+  .inboxrow { display:flex; align-items:center; gap:8px; }
+  .inboxrow:hover { background:color-mix(in srgb, var(--p,var(--accent)) 10%, var(--surface)); }
+  .ml-main { flex:1; min-width:0; display:block; text-decoration:none; color:inherit; }
+  .ml-acts { flex:none; display:flex; gap:4px; }
+  .ml-act { border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:8px;
+            width:30px; height:28px; font-size:13px; line-height:1; cursor:pointer; opacity:.6; transition:all .12s; }
+  .ml-act:hover { opacity:1; border-color:var(--accent); }
+  /* ---- Unsubscribe queue panel ---- */
+  .unsub-ent { padding:10px 0; border-bottom:1px solid var(--border); }
+  .unsub-ent:last-child { border-bottom:none; }
+  .unsub-head .s { font-weight:500; font-size:14px; }
+  .unsub-actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; align-items:center; }
+  .unsub-actions .gbtn { font-size:12.5px; padding:6px 11px; }
 </style>
 </head>
 <body>
@@ -326,14 +341,17 @@
       <div class="hright">
         <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
         <img id="avatar" class="avatar" alt="" style="display:none">
-        <button id="gear-btn" class="gbtn" title="Menu & settings" style="padding:8px 11px">⚙️</button>
+        <button id="gear-btn" class="gbtn" title="Profile &amp; settings" style="padding:8px 11px">⚙️</button>
+        <button id="menu-btn" class="gbtn" title="Links &amp; apps" style="padding:8px 12px">☰</button>
         <div id="gear-menu" class="gear-menu" style="display:none">
-          <div id="gear-sections"></div>
-          <div class="gear-foot">
-            <button id="pwa-install" class="gbtn" style="width:100%;display:none;margin-bottom:8px;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
+          <div class="gear-foot" style="border-top:none;margin-top:0;padding-top:0">
+            <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px">👤 Appearance &amp; profile</button>
             <button id="dash-key-btn" class="gbtn" style="width:100%;margin-bottom:8px">🔒 Dashboard passphrase</button>
-            <button id="open-settings" class="gbtn" style="width:100%">⚙️ Appearance &amp; profile</button>
+            <button id="pwa-install" class="gbtn" style="width:100%;display:none;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
           </div>
+        </div>
+        <div id="links-menu" class="gear-menu" style="display:none">
+          <div id="gear-sections"></div>
         </div>
       </div>
     </div>
@@ -361,6 +379,7 @@
           <button type="button" class="focus-pill" data-focus="bills">💳 Bills/payments</button>
           <button type="button" class="focus-pill" data-focus="today">📅 Today’s schedule</button>
           <button type="button" class="focus-pill" data-focus="notes">🗒️ Loose notes/docs</button>
+          <button type="button" class="focus-pill" data-focus="unsub">🚫 Unsubscribe <span id="unsub-count"></span></button>
         </div>
         <div class="focus-panel" id="focus-panel" style="display:none">
           <div class="focus-head"><span id="focus-title"></span>
@@ -486,7 +505,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.13.0",
+  version: "1.14.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -759,11 +778,16 @@ function applyBackground(){
   applyTheme();   // recompute accent-soft against the new surface
 }
 function initGearMenu(){
-  const btn=document.getElementById("gear-btn"), menu=document.getElementById("gear-menu");
-  if(!btn||!menu) return;
-  btn.onclick=(e)=>{ e.stopPropagation(); menu.style.display = menu.style.display==="block" ? "none" : "block"; };
-  menu.addEventListener("click",(e)=>e.stopPropagation());   // clicks inside keep it open (links still navigate)
-  document.addEventListener("click",()=>{ menu.style.display="none"; });
+  // Two dropdowns: ⚙️ gear (profile + passphrase) and ☰ hamburger (all links). One open at a time.
+  const pairs=[["gear-btn","gear-menu"],["menu-btn","links-menu"]];
+  const menus=pairs.map(p=>document.getElementById(p[1])).filter(Boolean);
+  pairs.forEach(([bid,mid])=>{
+    const b=document.getElementById(bid), m=document.getElementById(mid);
+    if(!b||!m) return;
+    b.onclick=(e)=>{ e.stopPropagation(); const open=m.style.display==="block"; menus.forEach(x=>x.style.display="none"); m.style.display=open?"none":"block"; };
+    m.addEventListener("click",(e)=>e.stopPropagation());   // clicks inside keep it open (links still navigate)
+  });
+  document.addEventListener("click",()=>menus.forEach(m=>m.style.display="none"));
 }
 function initSettings(){
   const btn=document.getElementById("open-settings"), modal=document.getElementById("settings-modal");
@@ -1057,20 +1081,26 @@ async function loadMail(){
       let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=15&q="+encodeURIComponent("in:inbox is:unread"), acct.token); }catch(e){ continue; }
       const ids=(list.messages||[]).map(m=>m.id);
       if(!ids.length) continue;
-      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, acct.token)));
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date&metadataHeaders=List-Unsubscribe`, acct.token)));
       msgs.forEach(m=>{
         const h=Object.fromEntries((m.payload.headers||[]).map(x=>[x.name,x.value]));
         const acctTag=multi?acctPill(acct.email):"";
         const p=multi?acctColor(acct.email):"var(--accent)";
         const when=h.Date?new Date(h.Date):new Date(0);
         const age=mailAge(when);
-        rows.push({when, html:`<a class="row mailrow" style="--p:${p}" href="${gmailMsgUrl(acct.email,m.threadId||m.id)}" target="_blank" rel="noopener">
-          <span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span>
-          <span class="from">${esc(cleanFrom(h.From||""))}${age?` · <span class="age">${age}</span>`:""}</span></a>`});
+        const nm=cleanFrom(h.From||""), fe=fromAddr(h.From||""), unsub=h["List-Unsubscribe"]||"";
+        rows.push({when, id:m.id, html:`<div class="row mailrow inboxrow" style="--p:${p}" data-id="${m.id}" data-acct="${escAttr(acct.email)}" data-thread="${escAttr(m.threadId||m.id)}" data-from="${escAttr(fe)}" data-name="${escAttr(nm)}" data-unsub="${escAttr(unsub)}">
+          <a class="ml-main" href="${gmailMsgUrl(acct.email,m.threadId||m.id)}" target="_blank" rel="noopener">
+            <span class="s">${esc(h.Subject||"(no subject)")} ${labelPills(m.labelIds,map)}${acctTag}</span>
+            <span class="from">${esc(nm)}${age?` · <span class="age">${age}</span>`:""}</span></a>
+          <span class="ml-acts">
+            <button class="ml-act ml-arch" title="Archive — remove from inbox">📥</button>
+            <button class="ml-act ml-unsub" title="Mark for unsubscribe">🚫</button>
+          </span></div>`});
       });
     }
     rows.sort((a,b)=>b.when-a.when);
-    mailRows=rows.map(r=>r.html); mailPage=0;
+    mailRows=rows; mailPage=0;
     renderMailPage();
   }catch(err){ if(err.message!=="expired") box.innerHTML=`<div class="empty">Couldn't load mail.</div>`; }
 }
@@ -1080,7 +1110,12 @@ function renderMailPage(){
   const pages=Math.ceil(mailRows.length/MAIL_PER);
   mailPage=Math.max(0,Math.min(mailPage,pages-1));
   const start=mailPage*MAIL_PER;
-  box.innerHTML=mailRows.slice(start,start+MAIL_PER).join("");
+  box.innerHTML=mailRows.slice(start,start+MAIL_PER).map(r=>r.html).join("");
+  box.querySelectorAll(".inboxrow").forEach(row=>{
+    const a=row.querySelector(".ml-arch"), u=row.querySelector(".ml-unsub");
+    if(a) a.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); archiveMailRow(row); };
+    if(u) u.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); unsubMailRow(row); };
+  });
   if(pages<=1){ pager.style.display="none"; return; }
   pager.style.display="flex";
   pager.innerHTML=`<button id="m-prev"${mailPage===0?" disabled":""}>‹ prev</button>
@@ -1092,6 +1127,107 @@ function renderMailPage(){
 
 function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
+function fromAddr(s){ const m=String(s||"").match(/<([^>]+)>/); return (m?m[1]:String(s||"")).trim().toLowerCase(); }
+
+/* ============================================================
+   INBOX ROW ACTIONS + UNSUBSCRIBE WORKFLOW
+   Archive → remove from inbox+unread. Unsub → same, plus queue the sender so you can
+   later pick the best List-Unsubscribe option (aggregated across all their mail) and
+   execute it (open the page, or send the unsubscribe email via gmail.send).
+   ============================================================ */
+function dropMailRow(id){ mailRows=mailRows.filter(r=>r.id!==id); renderMailPage(); loadMail._dirty=true; }
+async function gmodify(acct, id, body){
+  return fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}/modify`,{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+}
+async function archiveMailRow(row){
+  const acct=acctByEmail(row.dataset.acct); if(!acct) return;
+  row.style.opacity=.4; row.style.pointerEvents="none";
+  const r=await gmodify(acct,row.dataset.id,{removeLabelIds:["INBOX","UNREAD"]});
+  if(r.ok) dropMailRow(row.dataset.id);
+  else { row.style.opacity=1; row.style.pointerEvents=""; alert("Archive failed ("+r.status+")."); }
+}
+async function unsubMailRow(row){
+  const acct=acctByEmail(row.dataset.acct); if(!acct) return;
+  addToUnsubQueue({email:row.dataset.from, name:row.dataset.name, unsub:row.dataset.unsub, account:acct.email});
+  row.style.opacity=.4; row.style.pointerEvents="none";
+  const r=await gmodify(acct,row.dataset.id,{removeLabelIds:["INBOX","UNREAD"]});  // out of the inbox view either way
+  if(r.ok) dropMailRow(row.dataset.id); else { row.style.opacity=1; row.style.pointerEvents=""; }
+}
+
+/* ---- Unsub queue (local) ---- */
+function getUnsubQ(){ try{ return JSON.parse(localStorage.getItem("midash_unsub")||"{}"); }catch(e){ return {}; } }
+function saveUnsubQ(q){ try{ localStorage.setItem("midash_unsub", JSON.stringify(q)); }catch(e){} }
+function addToUnsubQueue(item){
+  const q=getUnsubQ(), k=(item.email||item.name||"?").toLowerCase();
+  const e=q[k]||{email:item.email,name:item.name,account:item.account,unsub:[],count:0};
+  if(item.unsub && e.unsub.indexOf(item.unsub)<0) e.unsub.push(item.unsub);
+  e.count++; e.name=e.name||item.name; e.account=e.account||item.account;
+  q[k]=e; saveUnsubQ(q); renderUnsubPill();
+}
+function removeUnsubEntity(k){ const q=getUnsubQ(); delete q[k]; saveUnsubQ(q); renderUnsubPill(); if(activeFocus==="unsub") openFocus("unsub"); }
+function renderUnsubPill(){ const el=document.getElementById("unsub-count"); if(!el) return; const n=Object.keys(getUnsubQ()).length; el.textContent=n?`(${n})`:""; }
+
+/* Parse a List-Unsubscribe header into {urls, mails}. */
+function parseUnsub(raw){
+  const urls=[], mails=[];
+  (raw||"").split(",").forEach(part=>{ const t=part.trim(); const m=t.match(/^<(.+)>$/); const v=m?m[1]:t;
+    if(/^https?:/i.test(v)) urls.push(v); else if(/^mailto:/i.test(v)) mails.push(v); });
+  return {urls, mails};
+}
+function parseMailto(m){
+  const x=String(m).replace(/^mailto:/i,""); const qi=x.indexOf("?"); const to=qi<0?x:x.slice(0,qi);
+  const p=new URLSearchParams(qi<0?"":x.slice(qi+1));
+  return {to:decodeURIComponent(to), subject:p.get("subject")||"unsubscribe", body:p.get("body")||"Please unsubscribe this address from your mailing list."};
+}
+function renderUnsubFocus(body){
+  const q=getUnsubQ(), keys=Object.keys(q);
+  if(!keys.length){ body.innerHTML=`<div class="empty">No senders queued. Hit 🚫 on an unread email to mark it for unsubscribe — it leaves your inbox and lands here.</div>`; return; }
+  body.innerHTML=keys.map(k=>{ const e=q[k];
+    return `<div class="unsub-ent" data-k="${escAttr(k)}">
+      <div class="unsub-head"><span class="s">${esc(e.name||e.email||k)}</span><br><span class="from">${esc(e.email||"")} · ${e.count} marked</span></div>
+      <div class="unsub-actions">
+        <button class="gbtn unsub-find" data-k="${escAttr(k)}" style="border-color:var(--accent);color:var(--accent)">Find best unsubscribe</button>
+        <button class="gbtn unsub-done" data-k="${escAttr(k)}" style="color:var(--muted)">✓ remove</button>
+      </div></div>`;
+  }).join("");
+  body.querySelectorAll(".unsub-find").forEach(b=>b.onclick=()=>findUnsub(b.dataset.k));
+  body.querySelectorAll(".unsub-done").forEach(b=>b.onclick=()=>removeUnsubEntity(b.dataset.k));
+}
+async function findUnsub(k){
+  const q=getUnsubQ(), e=q[k]; if(!e) return;
+  const ent=document.querySelector(`.unsub-ent[data-k="${k.replace(/"/g,'\\"')}"]`); const wrap=ent&&ent.querySelector(".unsub-actions"); if(!wrap) return;
+  wrap.innerHTML=`<span class="from">Searching this sender’s mail…</span>`;
+  let raws=(e.unsub||[]).slice(), n=raws.length;
+  const acct=acctByEmail(e.account)||accounts[0];
+  if(acct && e.email){
+    try{
+      const list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=10&q="+encodeURIComponent("from:"+e.email), acct.token);
+      const ids=((list&&list.messages)||[]).map(m=>m.id).slice(0,10);
+      const msgs=await Promise.all(ids.map(id=>gfetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=List-Unsubscribe`, acct.token)));
+      msgs.forEach(m=>{ const h=Object.fromEntries(((m.payload&&m.payload.headers)||[]).map(x=>[x.name,x.value])); if(h["List-Unsubscribe"]){ raws.push(h["List-Unsubscribe"]); n++; } });
+    }catch(err){}
+  }
+  const urls=[], mails=[]; raws.forEach(r=>{ const p=parseUnsub(r); urls.push(...p.urls); mails.push(...p.mails); });
+  const url=[...new Set(urls)][0], mail=[...new Set(mails)][0];
+  let html=`<div class="from" style="flex-basis:100%;margin-bottom:2px">Best option (from ${n} email${n===1?"":"s"}):</div>`;
+  if(url) html+=`<a class="gbtn" href="${escAttr(url)}" target="_blank" rel="noopener" style="border-color:var(--accent);color:var(--accent);text-decoration:none">↗ Open unsubscribe page</a>`;
+  if(mail) html+=`<button class="gbtn unsub-send" data-k="${escAttr(k)}" data-mail="${escAttr(mail)}">✉️ Send unsubscribe email</button>`;
+  if(!url && !mail) html+=`<span class="from">No one-click option found — <a href="${gmailSearchUrl((acct&&acct.email)||CONFIG.account,'from:'+e.email)}" target="_blank" rel="noopener">open all from this sender ↗</a> and unsubscribe manually.</span>`;
+  html+=`<button class="gbtn unsub-done" data-k="${escAttr(k)}" style="color:var(--muted)">✓ remove</button>`;
+  wrap.innerHTML=html;
+  const sb=wrap.querySelector(".unsub-send"); if(sb) sb.onclick=()=>sendUnsubEmail(k, sb.dataset.mail);
+  const db=wrap.querySelector(".unsub-done"); if(db) db.onclick=()=>removeUnsubEntity(k);
+}
+async function sendUnsubEmail(k, mailto){
+  const q=getUnsubQ(), e=q[k]; const acct=acctByEmail(e&&e.account)||accounts[0]; if(!acct){ alert("Connect Google first."); return; }
+  const p=parseMailto(mailto);
+  if(!confirm(`Send an unsubscribe email from ${acct.email}?\n\nTo: ${p.to}\nSubject: ${p.subject}`)) return;
+  const raw=["To: "+p.to,"Subject: "+p.subject,"Content-Type: text/plain; charset=UTF-8","",p.body].join("\r\n");
+  const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(raw)})});
+  if(r.ok){ alert("Unsubscribe email sent to "+p.to); removeUnsubEntity(k); }
+  else alert("Send failed ("+r.status+").");
+}
 
 /* ============================================================
    CONTACTS (Google People API) — powers the dropdown (#11)
@@ -1194,9 +1330,9 @@ async function generateDraft(c, tone){
     + `Recent email history (most recent first may vary):\n${reachoutHistory}\n\n`
     + `Do not call any tools — everything you need is in this message. `
     + `Respond with ONLY a JSON object, no markdown, no commentary: {"subject": "...", "body": "..."}`;
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:selectedModel(), messages:[{role:"user",content:prompt}]})});
-  const data=await res.json();
-  if(data.error) throw new Error(data.error.message||"model error");
+  // Route through streamModel so it carries the passphrase, records usage, and parses the SSE.
+  const data=await streamModel(null, [{role:"user",content:prompt}]);
+  if(data.usage) recordUsage(data.model||selectedModel(), data.usage);
   let txt=((data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")).trim();
   txt=txt.replace(/^```(?:json)?\s*/i,"").replace(/```$/,"").trim();
   try{ const j=JSON.parse(txt); return {subject:j.subject||"", body:j.body||""}; }
@@ -1378,8 +1514,8 @@ function renderChatHistory(){
 /* Stream one model turn over SSE, calling onText(delta) as the answer arrives, and
    reconstruct the full Anthropic message ({content, stop_reason, usage, model}) so the
    tool loop and the usage meter keep working. The Worker proxies Anthropic's SSE. */
-async function streamModel(onText){
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
+async function streamModel(onText, msgs){
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:msgs||agentMessages, model:selectedModel()})});
   if(res.status===401){
     let body=null; try{ body=await res.json(); }catch(e){}
     if(body && body.error && body.error.code==="auth"){     // the Worker's passphrase gate
@@ -1849,6 +1985,7 @@ function initFocus(){
     b.onclick=()=>{ const f=b.dataset.focus; if(activeFocus===f){ closeFocus(); return; } openFocus(f); };
   });
   const c=document.getElementById("focus-close"); if(c) c.onclick=closeFocus;
+  renderUnsubPill();
 }
 function closeFocus(){
   activeFocus=null;
@@ -1862,6 +1999,7 @@ function openFocus(f){
   panel.style.display="block";
   if(f==="today"){ title.textContent="📅 Today’s schedule"; renderTodayFocus(body); return; }
   if(f==="notes"){ title.textContent="🗒️ Loose notes & docs"; renderNotesFocus(body); return; }
+  if(f==="unsub"){ title.textContent="🚫 Unsubscribe queue"; renderUnsubFocus(body); return; }
   const def=FOCUS_MAIL[f]; title.innerHTML=def.title;
   if(!accounts.length){ body.innerHTML=`<div class="empty">Connect Google to use this view.</div>`; return; }
   body.innerHTML=`<div class="empty">Searching your mail…</div>`;

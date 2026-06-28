@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.13.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.14.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-06-28
 
@@ -128,6 +128,22 @@ All are **multi-account aware** (sweep every connected account, tag results with
 `account`). Reply/trash/delete/**create_event**/**send_email** pop an on-screen `confirm()`
 first. `create_event` defaults to the **primary** calendar; `send_email` sends a NEW message
 (use `reply_email` for replies).
+
+**Inbox row actions + unsubscribe (v1.14.0):** each Unread-inbox row has 📥 Archive and
+🚫 Unsub buttons (`archiveMailRow`/`unsubMailRow` → Gmail `modify` removeLabelIds
+INBOX+UNREAD). Unsub also queues the sender locally (`midash_unsub`). The Show: bar's
+**🚫 Unsubscribe (N)** pill opens the queue; "Find best unsubscribe" live-searches
+`from:<sender>`, aggregates **List-Unsubscribe** headers, and offers the best option — open
+the unsub page (https) or **send the unsubscribe email** via gmail.send (mailto, parsed).
+
+**Menu split (v1.14.0):** header has **⚙️ gear** (Appearance/profile + passphrase + install)
+and a **☰ hamburger** (all the links — `#gear-sections` moved into `#links-menu`).
+`initGearMenu` toggles them mutually-exclusively.
+
+**Gotcha fixed:** `generateDraft` (Stay-connected) called the Worker without
+`dashAuthHeader()` and parsed `res.json()` even though the Worker streams — it now routes
+through `streamModel(null, msgs)`. **Any new Worker call must use `streamModel` or include
+`...dashAuthHeader()`** (the Worker is passphrase-gated and streams SSE).
 
 **Chat is streamed** (v1.11.0): the Worker proxies Anthropic's SSE; the browser
 (`streamModel` in `index.html`) reconstructs the message (text/thinking/tool_use blocks +
