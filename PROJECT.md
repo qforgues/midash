@@ -3,9 +3,36 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.7.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.9.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-28
+
+---
+
+## Strategic direction (decided 2026-06-28 — read before proposing big changes)
+
+The goal is **"a personal dashboard that opens like an app,"** not a production SaaS.
+Optimize the *current* architecture; do **not** build a "v2 backend" unless a real pain
+forces it. The serverless setup (static page + Worker, no DB, no server, no hosting bill)
+is a core strength — protect it.
+
+- **Login once each morning is acceptable.** The hourly Google re-login is a non-problem.
+  The client-side token flow gives no refresh token by design; fixing that means a backend
+  (auth-code flow, refresh tokens, encrypted storage, sessions) — not worth it for one user.
+  Do **not** build refresh-token auth unless the re-login becomes genuinely annoying.
+- **Real risk to fix = the open `/chat` and `/notes` Worker endpoints.** Anyone who finds
+  the URL could spam Anthropic → surprise bill. Lock them with a simple shared passphrase
+  stored locally — not passkeys, not OAuth, not accounts.
+- **Vision:** miDash as the "operating system for Quentin" — every service as just another
+  *card* (Google, Discord, Portal42, La Palma, weather, solar, cameras, recipes, Spanish,
+  daily briefing…). New cards don't touch the login architecture. Keep it simple/fast/cheap.
+
+**Roadmap (in order):**
+1. ✅ **PWA / installable** (v1.9.0) — home-screen icon, standalone, offline shell.
+2. ⏭ **Lock `/chat` + `/notes`** behind a shared passphrase (next up).
+3. Polish UI + mobile.
+4. More cards / integrations.
+5. *Only if re-login becomes annoying:* backend for refresh tokens.
 
 ---
 
@@ -54,6 +81,10 @@ to be an external retriever that talks to the same Worker via a messaging app
 | `index.html`    | The whole dashboard — UI, CSS, JS, CONFIG. **Edit `CONFIG` at the bottom of `<script>`.** |
 | `worker.js`     | Cloudflare Worker: chat agent (Anthropic) + `/notes` KV storage. The "brain." |
 | `wrangler.jsonc`| Worker config incl. KV binding. |
+| `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
+| `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
+| `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
+| `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
 | `llms.txt`      | Tells AI crawlers what the site is. |
 | `README.md`     | Setup docs (Google OAuth, Worker deploy, KV, notes). |

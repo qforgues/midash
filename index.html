@@ -9,6 +9,14 @@
 <title>miDash</title>
 <meta name="description" content="Q's personal command center — calendar, mail, projects, and play in one place." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>" />
+<!-- PWA: installable home-screen app (Android + iPad/iPhone), no app store -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#2d6a4f" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="miDash" />
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
@@ -307,7 +315,10 @@
         <button id="gear-btn" class="gbtn" title="Menu & settings" style="padding:8px 11px">⚙️</button>
         <div id="gear-menu" class="gear-menu" style="display:none">
           <div id="gear-sections"></div>
-          <div class="gear-foot"><button id="open-settings" class="gbtn" style="width:100%">⚙️ Appearance &amp; profile</button></div>
+          <div class="gear-foot">
+            <button id="pwa-install" class="gbtn" style="width:100%;display:none;margin-bottom:8px;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
+            <button id="open-settings" class="gbtn" style="width:100%">⚙️ Appearance &amp; profile</button>
+          </div>
         </div>
       </div>
     </div>
@@ -440,7 +451,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.8.1",
+  version: "1.9.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1636,8 +1647,31 @@ function renderNotesFocus(body){
   if(j) j.onclick=()=>{ const n=document.getElementById("notes"); if(n){ n.scrollIntoView({behavior:"smooth",block:"center"}); const a=document.getElementById("notes-area"); if(a) a.focus(); } };
 }
 
+/* ============================================================
+   PWA — installable home-screen app (v1.9)
+   Registers the service worker and wires the "Install miDash" button.
+   Android/desktop Chrome fire beforeinstallprompt (one-tap install);
+   iOS Safari has no such event, so we show Add-to-Home-Screen steps.
+   ============================================================ */
+function isStandalone(){ return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true; }
+function initPWA(){
+  if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
+  const btn=document.getElementById("pwa-install"); if(!btn) return;
+  let deferred=null;
+  if(isStandalone()) return;   // already installed → no button
+  window.addEventListener("beforeinstallprompt",(e)=>{ e.preventDefault(); deferred=e; btn.style.display=""; btn.textContent="📲 Install miDash"; });
+  window.addEventListener("appinstalled",()=>{ btn.style.display="none"; });
+  const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1);
+  if(isIOS){ btn.style.display=""; btn.textContent="📲 Add to Home Screen"; }   // iOS: surface it with manual steps
+  btn.onclick=async(e)=>{
+    e.stopPropagation();
+    if(deferred){ deferred.prompt(); try{ await deferred.userChoice; }catch(_){} deferred=null; btn.style.display="none"; return; }
+    alert("Install miDash as an app:\n\n• iPhone/iPad (Safari): tap the Share icon, then “Add to Home Screen”.\n• Android (Chrome): tap ⋮ menu, then “Install app / Add to Home screen”.\n• Desktop Chrome/Edge: click the install icon at the right of the address bar.");
+  };
+}
+
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
