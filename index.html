@@ -241,6 +241,11 @@
   .modal label input[type=text] { flex:1; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:7px 10px; font-size:14px; outline:none; }
   .modal label input[type=text]:focus { border-color:var(--accent); }
   .modal label input[type=color] { width:36px; height:26px; border:1px solid var(--border); border-radius:6px; background:none; cursor:pointer; padding:0; flex:0 0 auto; }
+  .modal label.col { flex-direction:column; align-items:stretch; gap:5px; }
+  .modal label.col > span { font-size:12px; color:var(--muted); }
+  .modal label input[type=date], .modal label textarea { width:100%; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:8px 10px; font-size:14px; outline:none; font-family:inherit; }
+  .modal label textarea { resize:vertical; min-height:60px; }
+  .modal label input[type=date]:focus, .modal label textarea:focus { border-color:var(--accent); }
   .set-label { font-size:13px; color:var(--muted); margin:6px 0 4px; }
   .pat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:14px; }
   .pat-btn { font-size:12px; padding:8px 4px; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; cursor:pointer; }
@@ -480,6 +485,24 @@
   </div>
 </div>
 
+<!-- Task editor -->
+<div id="task-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="task-close-bg"></div>
+  <div class="panel">
+    <h2>✅ Edit task</h2>
+    <label class="col"><span>Title</span><input id="task-title" type="text"></label>
+    <label class="col"><span>Due date</span><input id="task-due" type="date"></label>
+    <label class="col"><span>Notes</span><textarea id="task-notes" rows="3" placeholder="Details, links, context…"></textarea></label>
+    <div id="task-msg" class="key-result"></div>
+    <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
+      <button id="task-complete" class="gbtn" style="border-color:var(--accent);color:var(--accent)">✓ Complete</button>
+      <button id="task-save" class="gbtn">Save</button>
+      <button id="task-delete" class="gbtn" style="color:var(--warn)">Delete</button>
+      <button id="task-close" class="gbtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -505,7 +528,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.14.0",
+  version: "1.15.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1398,7 +1421,7 @@ async function loadTasks(){
       let t; try{ t=await gfetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(tl.id)}/tasks?showCompleted=false&maxResults=100`, acct.token); }catch(e){ continue; }
       if(t && t.error){ continue; }
       (t.items||[]).filter(x=>x.status!=="completed" && x.title).forEach(x=>{
-        out.push({acct:acct.email, listId:tl.id, taskId:x.id, title:x.title, due:x.due?new Date(x.due):null});
+        out.push({acct:acct.email, listId:tl.id, taskId:x.id, title:x.title, dueDate:x.due?String(x.due).slice(0,10):null, notes:x.notes||""});
       });
     }
   }
@@ -1410,8 +1433,8 @@ function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
   taskFailed=failedAccts||[];
   if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; if(pager)pager.style.display="none"; wireReconnect("reconnect-tasks"); return; }
-  // sort by due date ascending; undated tasks fall to the bottom
-  items.sort((a,b)=>(a.due?a.due.getTime():Infinity)-(b.due?b.due.getTime():Infinity));
+  // sort by due date ascending (string compare on YYYY-MM-DD); undated tasks fall to the bottom
+  items.sort((a,b)=>{ const av=a.dueDate||"9999-99-99", bv=b.dueDate||"9999-99-99"; return av<bv?-1:av>bv?1:0; });
   taskItems=items; taskPage=0;
   renderTasksPage();
 }
@@ -1426,14 +1449,18 @@ function renderTasksPage(){
   const start=taskPage*TASKS_PER;
   box.innerHTML=taskItems.slice(start,start+TASKS_PER).map(t=>{
     const p=multi?acctColor(t.acct):"var(--accent)";
-    const due=t.due?`<span class="att">📅 ${t.due.toLocaleDateString([],{month:"short",day:"numeric"})}</span>`:`<span class="att" style="opacity:.6">no due date</span>`;
+    const due=t.dueDate?`<span class="att">📅 ${fmtDue(t.dueDate)}</span>`:`<span class="att" style="opacity:.55">add due ›</span>`;
     const tag=multi?acctPill(t.acct):"";
-    return `<div class="item taskrow" style="--p:${p}" data-acct="${esc(t.acct)}" data-list="${esc(t.listId||"")}" data-task="${esc(t.taskId||"")}">
+    return `<div class="item taskrow" style="--p:${p}" data-acct="${escAttr(t.acct)}" data-list="${escAttr(t.listId||"")}" data-task="${escAttr(t.taskId||"")}" title="Tap to edit">
       <span class="tcheck" title="Mark done"></span><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
   }).join("")+failNote;
-  box.querySelectorAll(".taskrow .tcheck").forEach(el=>{
-    el.onclick=async()=>{
-      const row=el.closest(".taskrow"), acct=acctByEmail(row.dataset.acct);
+  box.querySelectorAll(".taskrow").forEach(row=>{
+    row.style.cursor="pointer";
+    row.onclick=()=>openTaskModal(row.dataset.task);
+    const el=row.querySelector(".tcheck");
+    if(el) el.onclick=async(e)=>{
+      e.stopPropagation();   // don't open the editor when ticking it off
+      const acct=acctByEmail(row.dataset.acct);
       if(!acct||!row.dataset.task) return;
       el.textContent="✓"; row.style.opacity=.5;
       const r=await completeTaskApi(acct, row.dataset.list, row.dataset.task);
@@ -1462,6 +1489,54 @@ function initTasksAdd(){
     if(r.ok){ inp.value=""; loadTasks(); inp.focus(); }
     else alert("Couldn't add the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google).");
   });
+}
+
+/* ---- Task editor modal (all task data: title, due date, notes; complete/delete) ---- */
+let editingTask=null;
+function fmtDue(dateStr){ if(!dateStr) return ""; const d=new Date(dateStr+"T12:00:00"); return isNaN(d)?dateStr:d.toLocaleDateString([],{month:"short",day:"numeric"}); }
+function findTask(taskId){ return (taskItems||[]).find(t=>t.taskId===taskId)||null; }
+async function patchTask(t, body){
+  const acct=acctByEmail(t.acct); if(!acct) return {ok:false,status:401};
+  return fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(t.listId)}/tasks/${encodeURIComponent(t.taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+}
+function openTaskModal(taskId){
+  const t=findTask(taskId); if(!t) return;
+  editingTask=t;
+  document.getElementById("task-title").value=t.title||"";
+  document.getElementById("task-due").value=t.dueDate||"";
+  document.getElementById("task-notes").value=t.notes||"";
+  const msg=document.getElementById("task-msg"); msg.textContent=""; msg.className="key-result";
+  document.getElementById("task-modal").style.display="flex";
+}
+function initTaskModal(){
+  const m=document.getElementById("task-modal"); if(!m) return;
+  const close=()=>{ m.style.display="none"; editingTask=null; };
+  const msg=(s,bad)=>{ const e=document.getElementById("task-msg"); e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); };
+  document.getElementById("task-close").onclick=close;
+  document.getElementById("task-close-bg").onclick=close;
+  document.getElementById("task-save").onclick=async()=>{
+    const t=editingTask; if(!t) return;
+    const title=document.getElementById("task-title").value.trim(); if(!title){ msg("Title can’t be empty.",true); return; }
+    const dueStr=document.getElementById("task-due").value, notes=document.getElementById("task-notes").value;
+    const body={title, notes};
+    if(dueStr) body.due=new Date(dueStr+"T00:00:00Z").toISOString();   // Google stores the date part
+    else if(t.dueDate) body.due=null;                                  // best-effort clear (API may keep it)
+    msg("Saving…");
+    const r=await patchTask(t, body);
+    if(r.ok){ msg("Saved ✓"); setTimeout(()=>{ close(); loadTasks(); },300); }
+    else msg("Save failed ("+r.status+"). Reconnect Google for Tasks write access.",true);
+  };
+  document.getElementById("task-complete").onclick=async()=>{
+    const t=editingTask; if(!t) return; msg("Completing…");
+    const r=await patchTask(t,{status:"completed"});
+    if(r.ok){ close(); loadTasks(); } else msg("Couldn’t complete ("+r.status+").",true);
+  };
+  document.getElementById("task-delete").onclick=async()=>{
+    const t=editingTask; if(!t) return; if(!confirm("Delete this task permanently?")) return;
+    const acct=acctByEmail(t.acct); if(!acct) return;
+    const r=await fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(t.listId)}/tasks/${encodeURIComponent(t.taskId)}`,{method:"DELETE",headers:{Authorization:"Bearer "+acct.token}});
+    if(r.ok||r.status===204){ close(); loadTasks(); } else msg("Delete failed ("+r.status+").",true);
+  };
 }
 
 /* ---------- Chat agent ---------- */
@@ -2079,7 +2154,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
