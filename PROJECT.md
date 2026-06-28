@@ -29,7 +29,10 @@ is a core strength — protect it.
 
 **Roadmap (in order):**
 1. ✅ **PWA / installable** (v1.9.0) — home-screen icon, standalone, offline shell.
-2. ⏭ **Lock `/chat` + `/notes`** behind a shared passphrase (next up).
+2. ✅ **Lock `/chat` + `/notes`** behind a shared passphrase (v1.10.0) — Worker
+   `authed()` gate vs. the `DASH_KEY` secret; fails open until the secret is set.
+   Set it with `wrangler secret put DASH_KEY`; enter the same value on each device
+   (⚙️ → 🔒 Dashboard passphrase, or when prompted after a 401).
 3. Polish UI + mobile.
 4. More cards / integrations.
 5. *Only if re-login becomes annoying:* backend for refresh tokens.
@@ -60,6 +63,10 @@ to be an external retriever that talks to the same Worker via a messaging app
   `quentin@portal42.us` (alias "Portal42")
 - **Anthropic key:** lives ONLY as a Wrangler secret on the Worker
   (`wrangler secret put ANTHROPIC_API_KEY`). Never in the repo.
+- **Dashboard passphrase:** `DASH_KEY` Wrangler secret gates `/chat` + `/notes`
+  (`wrangler secret put DASH_KEY`). The dashboard sends it as `Authorization:
+  Bearer <key>`, stored only on-device (localStorage `midash_dash_key`). Worker
+  **fails open** if unset. `wrangler secret delete DASH_KEY` to disable.
 - **KV namespace:** `NOTES`, id `f095586747ee4a47b524082986e8f725` (in `wrangler.jsonc`)
 - **Model:** switchable from the chat header (picker). Default `claude-haiku-4-5`
   (cheapest); options `claude-sonnet-4-6`, `claude-opus-4-8`. The dashboard sends
