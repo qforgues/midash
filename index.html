@@ -476,7 +476,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.12.1",
+  version: "1.12.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1338,8 +1338,15 @@ function renderChatHistory(){
 async function streamModel(onText){
   const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:agentMessages, model:selectedModel()})});
   if(res.status===401){
-    openKeyModal();   // robust tester — avoids the iOS prompt() autocapitalize trap
-    throw new Error("🔒 Locked — set & test your passphrase in the panel that just opened, then resend your message.");
+    let body=null; try{ body=await res.json(); }catch(e){}
+    if(body && body.error && body.error.code==="auth"){     // the Worker's passphrase gate
+      openKeyModal();   // robust tester — avoids the iOS prompt() autocapitalize trap
+      throw new Error("🔒 Locked — set & test your passphrase in the panel that just opened, then resend your message.");
+    }
+    // A 401 WITHOUT code:"auth" is an UPSTREAM error (almost always a bad/revoked
+    // ANTHROPIC_API_KEY on the Worker) — NOT your passphrase. Surface it; don't loop.
+    const msg=(body && body.error && (body.error.message||body.error.type)) || (body && body.message) || ("HTTP "+res.status);
+    throw new Error("Worker → Anthropic 401: "+msg+"\n\nThis is the Worker's ANTHROPIC_API_KEY (not your passphrase). Re-install the NEW key:  wrangler secret put ANTHROPIC_API_KEY");
   }
   const ct=res.headers.get("Content-Type")||"";
   if(!ct.includes("text/event-stream")){           // worker returned a JSON error (not a stream)
