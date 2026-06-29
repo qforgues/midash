@@ -17,6 +17,12 @@
 
 const ALLOWED_ORIGIN = "https://qforgues.github.io"; // only your site may call this
 
+// 42payments — Q's business finance app (FreshBooks-backed invoicing/expenses/income).
+// The browser's finance_* tools call this Worker's /finance proxy, which attaches the
+// X-API-Key secret server-side and forwards here. The key NEVER reaches the browser.
+//   wrangler secret put PAYMENTS_API_KEY
+const PAYMENTS_BASE = "https://42payments.myeasyapp.com/api/ext";
+
 // Models the dashboard may pick from (the picker sends one of these strings).
 // Haiku is the default — it's ~5x cheaper than Sonnet for the same chat.
 // NOTE: this is the metered Anthropic API (billed per token, separate from any
@@ -66,7 +72,20 @@ Guidelines:
   To email someone new, call send_email; for a reply to an existing thread, use reply_email.
 - read_notes returns Q's free-form scratchpad; use it as context when he references
   "my notes", "my ideas", or asks you to draft from what he jotted down.
-- After acting, briefly confirm what you did. Draft replies in Q's voice: warm, brief, direct.`;
+- After acting, briefly confirm what you did. Draft replies in Q's voice: warm, brief, direct.
+
+Business finances (42payments):
+- You can see and act on Q's business money via the finance_* tools (FreshBooks-backed):
+  finance_summary (start here for "how's the business doing?"), finance_list
+  (invoices/expenses/clients/payments), finance_profit_loss, and the writes
+  finance_create_invoice, finance_log_expense, finance_add_client, finance_mark_invoice_paid.
+- Money comes back as { amount, code } (e.g. {"amount":"500.00","code":"USD"}).
+- The write tools pop an on-screen confirm, so just call them when asked — don't ask again in
+  text; if a tool returns cancelled:true, respect it and don't retry.
+- If a finance tool returns not_ready:true, the app is running but FreshBooks isn't connected
+  yet — tell Q to sign in once at 42payments. If it returns offline:true, the app isn't
+  reachable right now — say finances are temporarily unavailable and to retry later. Neither
+  is your fault; don't treat them as errors.`;
 
 const TOOLS = [
   { name: "search_emails",
@@ -111,6 +130,33 @@ const TOOLS = [
   { name: "complete_task",
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },
+
+  // ---- 42payments (Q's business finances) ----
+  // Money in results is { amount, code }, e.g. {"amount":"500.00","code":"USD"}. The tool may
+  // return {not_ready:true} (app up but FreshBooks not connected — Q must sign in once at
+  // 42payments) or {offline:true} (app not reachable) — treat both as "finances unavailable",
+  // not a failure, and tell Q plainly. Writes pop an on-screen confirm before they fire.
+  { name: "finance_summary",
+    description: "One-call rollup of Q's business: revenue, outstanding, expenses, netProfit, currency, counts. Use this first for 'how's the business doing?'.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "finance_list",
+    description: "List finance records. 'type' picks the dataset: invoices | expenses | clients | payments. For invoices you may pass 'status' (FreshBooks v3_status, e.g. 'paid','outstanding') and 'limit' (<=100).",
+    input_schema: { type: "object", properties: { type: { type: "string", enum: ["invoices","expenses","clients","payments"] }, status: { type: "string" }, limit: { type: "integer" } }, required: ["type"] } },
+  { name: "finance_profit_loss",
+    description: "Profit & Loss report between two dates (YYYY-MM-DD). Pass 'start' and 'end'.",
+    input_schema: { type: "object", properties: { start: { type: "string" }, end: { type: "string" } }, required: ["start","end"] } },
+  { name: "finance_create_invoice",
+    description: "Create an invoice for a client. Needs clientId and amount (a plain number; currency defaults USD). Optional description, dueDate (YYYY-MM-DD). Q confirms on screen before it's created.",
+    input_schema: { type: "object", properties: { clientId: { type: "string" }, amount: { type: "number" }, description: { type: "string" }, dueDate: { type: "string" }, currency: { type: "string" } }, required: ["clientId","amount"] } },
+  { name: "finance_log_expense",
+    description: "Log a business expense. Needs amount (plain number; currency defaults USD). Optional vendor, date (YYYY-MM-DD), notes, categoryid. Q confirms on screen.",
+    input_schema: { type: "object", properties: { amount: { type: "number" }, vendor: { type: "string" }, date: { type: "string" }, notes: { type: "string" }, categoryid: { type: "string" }, currency: { type: "string" } }, required: ["amount"] } },
+  { name: "finance_add_client",
+    description: "Add a client. Provide at least one of organization, firstName, lastName, email. Q confirms on screen.",
+    input_schema: { type: "object", properties: { organization: { type: "string" }, firstName: { type: "string" }, lastName: { type: "string" }, email: { type: "string" } }, required: [] } },
+  { name: "finance_mark_invoice_paid",
+    description: "Record payment on an invoice — pays its FULL outstanding balance. Needs invoiceId (from finance_list type:invoices). Optional method (e.g. 'Check'). Q confirms on screen.",
+    input_schema: { type: "object", properties: { invoiceId: { type: "string" }, method: { type: "string" } }, required: ["invoiceId"] } },
 ];
 
 function cors() {
@@ -152,6 +198,34 @@ async function handleNotes(request, env) {
     return json({ ok: true, chars: text.length });
   }
   return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
+// Finance proxy → 42payments. The browser sends { path, method, body }; we attach the
+// X-API-Key secret (never exposed to the browser) and forward to PAYMENTS_BASE + path.
+// Upstream status/JSON passes straight through (incl. 401 bad-key, 409 not-connected) so the
+// browser/agent can react. A network failure (app offline / tunnel down) → 503 {offline:true}.
+async function handleFinance(request, env) {
+  if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
+  if (!env.PAYMENTS_API_KEY) return json({ error: "Finance not configured — set the PAYMENTS_API_KEY secret on the Worker." }, 501);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad json" }, 400); }
+  let path = typeof body.path === "string" ? body.path : "";
+  // Only relative paths under the ext surface — no absolute URLs, no traversal.
+  if (!path.startsWith("/") || path.includes("://") || path.includes("..")) return json({ error: "bad finance path" }, 400);
+  const method = body.method === "POST" ? "POST" : "GET";
+  let r;
+  try {
+    r = await fetch(PAYMENTS_BASE + path, {
+      method,
+      headers: { "X-API-Key": env.PAYMENTS_API_KEY, "Content-Type": "application/json", "Accept": "application/json" },
+      body: method === "POST" ? JSON.stringify(body.body || {}) : undefined,
+    });
+  } catch {
+    return json({ error: "finance tool offline — 42payments isn't reachable right now.", offline: true }, 503);
+  }
+  const text = await r.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text || ("upstream " + r.status) }; }
+  return json(data, r.status);
 }
 
 async function handleChat(request, env) {
@@ -199,6 +273,7 @@ export default {
     if (!authed(request, env)) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
     const url = new URL(request.url);
     if (url.pathname === "/notes") return handleNotes(request, env);
+    if (url.pathname === "/finance") return handleFinance(request, env);
     return handleChat(request, env);
   },
 };

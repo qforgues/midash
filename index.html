@@ -528,7 +528,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.15.0",
+  version: "1.16.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1718,8 +1718,24 @@ async function msgAccount(id, prefer){
   return null;
 }
 
+/* Finance proxy — talks to the Worker's /finance, which holds the 42payments key server-side.
+   We never see the key. Network failure here = the Worker (or this device) is offline; an
+   {offline}/not_ready result means 42payments itself isn't ready (see SYSTEM prompt). */
+const FINANCE_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/finance" : "";
+async function finance(path, method, payload){
+  if(!FINANCE_URL) return {error:"Finance tool not configured (no chatEndpoint)."};
+  let res;
+  try{ res=await fetch(FINANCE_URL,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({path,method:method||"GET",body:payload||undefined})}); }
+  catch(e){ return {error:"finance tool offline — 42payments isn't reachable right now. Retry later.",offline:true}; }
+  let data; try{ data=await res.json(); }catch(e){ data={error:"finance returned non-JSON ("+res.status+")"}; }
+  if(res.status===409) return {error:"42payments is running but FreshBooks isn't connected yet — Q needs to sign in once at https://42payments.myeasyapp.com.",not_ready:true};
+  if(res.status===503 && data && data.offline) return {error:data.error||"finance tool offline — retry later.",offline:true};
+  if(!res.ok && data && data.error==null) data.error="finance error "+res.status;
+  return data;
+}
+
 async function executeTool(name,a){
-  const noGoogle = (name==="read_notes");
+  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0);
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
@@ -1843,6 +1859,40 @@ async function executeTool(name,a){
         const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(lines.join("\r\n"))})});
         return r.ok?{sent:true,account:acct.email}:{error:"send failed "+r.status};
       }
+      case "finance_summary": return await finance("/summary");
+      case "finance_list": {
+        const t=String(a.type||"").toLowerCase();
+        if(!["invoices","expenses","clients","payments"].includes(t)) return {error:"type must be invoices, expenses, clients or payments"};
+        let q="";
+        if(t==="invoices"){ const p=[]; if(a.status)p.push("status="+encodeURIComponent(a.status)); if(a.limit)p.push("limit="+encodeURIComponent(a.limit)); if(p.length)q="?"+p.join("&"); }
+        return await finance("/"+t+q);
+      }
+      case "finance_profit_loss": {
+        if(!a.start||!a.end) return {error:"need start and end (YYYY-MM-DD)"};
+        return await finance("/reports/profit-loss?start="+encodeURIComponent(a.start)+"&end="+encodeURIComponent(a.end));
+      }
+      case "finance_create_invoice": {
+        if(a.clientId==null||a.amount==null) return {error:"need clientId and amount"};
+        if(!confirm(`Create this invoice in 42payments?\n\nClient: ${a.clientId}\nAmount: ${a.amount} ${a.currency||"USD"}${a.dueDate?"\nDue: "+a.dueDate:""}${a.description?"\n"+a.description:""}`)) return {cancelled:true,note:"User declined — do not retry."};
+        return await finance("/invoices","POST",{clientId:a.clientId,amount:a.amount,description:a.description,dueDate:a.dueDate,currency:a.currency});
+      }
+      case "finance_log_expense": {
+        if(a.amount==null) return {error:"need amount"};
+        if(!confirm(`Log this expense in 42payments?\n\nAmount: ${a.amount} ${a.currency||"USD"}${a.vendor?"\nVendor: "+a.vendor:""}${a.date?"\nDate: "+a.date:""}${a.notes?"\n"+a.notes:""}`)) return {cancelled:true,note:"User declined — do not retry."};
+        return await finance("/expenses","POST",{amount:a.amount,vendor:a.vendor,date:a.date,notes:a.notes,categoryid:a.categoryid,currency:a.currency});
+      }
+      case "finance_add_client": {
+        if(!a.organization&&!a.firstName&&!a.lastName&&!a.email) return {error:"need at least one of organization, firstName, lastName, email"};
+        const who=[a.organization,[a.firstName,a.lastName].filter(Boolean).join(" "),a.email].filter(Boolean).join("\n");
+        if(!confirm(`Add this client to 42payments?\n\n${who}`)) return {cancelled:true,note:"User declined — do not retry."};
+        return await finance("/clients","POST",{organization:a.organization,firstName:a.firstName,lastName:a.lastName,email:a.email});
+      }
+      case "finance_mark_invoice_paid": {
+        if(a.invoiceId==null) return {error:"need invoiceId (from finance_list type:invoices)"};
+        if(!confirm(`Mark invoice ${a.invoiceId} PAID in 42payments?\nThis records payment for the FULL outstanding balance${a.method?" via "+a.method:""}.`)) return {cancelled:true,note:"User declined — do not retry."};
+        return await finance("/invoices/"+encodeURIComponent(a.invoiceId)+"/mark-paid","POST",{method:a.method});
+      }
+
       default: return {error:"unknown tool "+name};
     }
   }catch(err){ if(err.message==="expired") return {error:"Google session expired — click Connect Google again."}; return {error:String(err.message||err)}; }
