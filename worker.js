@@ -228,6 +228,25 @@ async function handleFinance(request, env) {
   return json(data, r.status);
 }
 
+// Credit-card payoff plan — a tiny JSON blob (strategy/target/monthly) the dashboard's
+// debt card owns and edits. Stored in the NOTES KV under "ccplan" so it syncs across
+// Q's devices. Gated upstream by authed() like everything else.
+async function handleCCPlan(request, env) {
+  if (!env.NOTES) return json({ error: "storage not configured" }, 501);
+  if (request.method === "GET") {
+    const v = await env.NOTES.get("ccplan");
+    let plan = null; try { plan = v ? JSON.parse(v) : null; } catch { plan = null; }
+    return json({ plan });
+  }
+  if (request.method === "PUT") {
+    const t = await request.text();
+    try { JSON.parse(t); } catch { return json({ error: "bad json" }, 400); }
+    await env.NOTES.put("ccplan", t);
+    return json({ ok: true });
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
 async function handleChat(request, env) {
   if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
   let body;
@@ -274,6 +293,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/notes") return handleNotes(request, env);
     if (url.pathname === "/finance") return handleFinance(request, env);
+    if (url.pathname === "/ccplan") return handleCCPlan(request, env);
     return handleChat(request, env);
   },
 };

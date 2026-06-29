@@ -139,7 +139,8 @@
   @keyframes ledpulse { 0%,100%{opacity:.4} 50%{opacity:1} }
   .fin-state { font-size:11px; font-weight:600; letter-spacing:.02em; color:var(--muted); text-transform:none; }
   .fin-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
-  @media (max-width:640px){ .fin-grid { grid-template-columns:repeat(2,1fr); } }
+  .fin-grid-3 { grid-template-columns:repeat(3,1fr); }
+  @media (max-width:640px){ .fin-grid, .fin-grid-3 { grid-template-columns:repeat(2,1fr); } }
   .kpi { background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:13px 14px; min-width:0; }
   .kpi .kl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
   .kpi .kv { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-top:5px; overflow-wrap:anywhere;
@@ -147,6 +148,19 @@
   .kpi .kv.pos { color:var(--accent); }
   .kpi .kv.neg { color:var(--warn); }
   .fin-counts { color:var(--muted); font-size:12.5px; margin-top:13px; }
+  .fin-note { color:var(--muted); font-size:12.5px; margin-top:3px; }
+  /* Payoff plan editor */
+  .plan-box { margin-top:16px; padding-top:15px; border-top:1px solid var(--border); }
+  .plan-head { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:11px; }
+  .plan-row { display:grid; grid-template-columns:1.4fr 1.2fr .8fr; gap:12px; }
+  @media (max-width:640px){ .plan-row { grid-template-columns:1fr; } }
+  .plan-row label { display:flex; flex-direction:column; gap:5px; font-size:11px; font-weight:600;
+                    text-transform:uppercase; letter-spacing:.04em; color:var(--muted); min-width:0; }
+  .plan-row select, .plan-row input { border:1px solid var(--border); background:var(--bg); color:var(--text);
+                    border-radius:9px; padding:8px 10px; font-size:14px; outline:none; font-family:inherit; text-transform:none; letter-spacing:0; font-weight:400; }
+  .plan-row select:focus, .plan-row input:focus { border-color:var(--accent); }
+  .plan-foot { margin-top:10px; min-height:16px; }
+  .plan-status { font-size:12.5px; color:var(--muted); }
 
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
@@ -437,6 +451,30 @@
         <div id="finance-body"><div class="empty">—</div></div>
       </div>
 
+      <!-- Credit-card debt — balances (from 42payments) + your payoff plan (miDash-owned) -->
+      <div class="card" id="debt-card" style="margin-bottom:20px">
+        <h2><span class="led" id="debt-led" title="Card balances"></span>Credit Card Debt
+          <span class="fin-state" id="debt-state">checking…</span>
+          <span class="refresh" id="debt-refresh"><span class="ricon">↻</span> refresh</span></h2>
+        <div id="debt-body"><div class="empty">—</div></div>
+        <div class="plan-box" id="plan-box">
+          <div class="plan-head">🎯 Payoff plan</div>
+          <div class="plan-row">
+            <label>Strategy
+              <select id="plan-strategy">
+                <option value="avalanche">Avalanche (highest APR first)</option>
+                <option value="snowball">Snowball (smallest balance first)</option>
+                <option value="custom">Custom</option>
+              </select></label>
+            <label>Attacking
+              <input id="plan-target" placeholder="which card / account" autocomplete="off"></label>
+            <label>Monthly
+              <input id="plan-monthly" type="number" min="0" step="50" placeholder="$ / mo" autocomplete="off"></label>
+          </div>
+          <div class="plan-foot"><span id="plan-status" class="plan-status"></span></div>
+        </div>
+      </div>
+
       <!-- Google Tasks (#8) + daily reach-out (#6) -->
       <div class="split live" id="tasks-row" style="margin-bottom:20px;display:none">
         <div class="card" id="tasks-card">
@@ -556,7 +594,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.17.0",
+  version: "1.18.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1763,11 +1801,12 @@ async function finance(path, method, payload){
 }
 
 /* ---------- Finance card (42payments) — status LED + summary panel ---------- */
-function setLed(state,label){
-  const led=document.getElementById("fin-led"), st=document.getElementById("fin-state");
-  if(led){ led.className="led "+({on:"on",warn:"warn",off:"off",check:"check"}[state]||"check"); led.title="42payments — "+(label||state); }
+function setLedEl(led,st,state,label,prefix){
+  if(led){ led.className="led "+({on:"on",warn:"warn",off:"off",check:"check"}[state]||"check"); led.title=(prefix||"")+(label||state); }
   if(st) st.textContent=label||"";
 }
+function setLed(state,label){ setLedEl(document.getElementById("fin-led"),document.getElementById("fin-state"),state,label,"42payments — "); }
+function setDebtLed(state,label){ setLedEl(document.getElementById("debt-led"),document.getElementById("debt-state"),state,label,"Card balances — "); }
 function fmtMoney(m){
   if(m==null) return "—";
   let amt, code="USD";
@@ -1806,8 +1845,7 @@ function renderFinance(s){
   let html=`<div class="fin-grid">`+kpis.map(([l,v,cls])=>`<div class="kpi"><div class="kl">${l}</div><div class="kv ${cls}">${esc(fmtMoney(v))}</div></div>`).join("")+`</div>`;
   if(s.counts && typeof s.counts==="object"){
     const parts=Object.entries(s.counts).map(([k,v])=>`${v} ${esc(String(k))}`);
-    const capped=Object.values(s.counts).some(v=>Number(v)>=100);
-    html+=`<div class="fin-counts">${parts.join(" · ")}${capped?` · <span style="color:var(--warn)">⚠ capped at 100/type — totals are directional, not exact</span>`:""}</div>`;
+    html+=`<div class="fin-counts">${parts.join(" · ")}</div>`;
   }
   body.innerHTML=html;
 }
@@ -1817,6 +1855,69 @@ function initFinance(){
   loadFinance();
   // catch the app coming online when you return to the tab (throttled)
   window.addEventListener("focus", ()=>{ if(document.getElementById("finance-card") && Date.now()-finLastLoad>30000) loadFinance(); });
+}
+
+/* ---------- Credit Card Debt card (balances from 42payments + miDash-owned payoff plan) ---------- */
+function pickMoney(v){ if(v==null) return null; if(typeof v==="object"){ if("amount" in v) return v; if("balance" in v) return v.balance; } return v; }
+function pickAmt(v){ const m=pickMoney(v); if(m==null) return NaN; return Number(typeof m==="object"?m.amount:m); }
+function wireDebtRetry(){ const b=document.getElementById("debt-retry"); if(b) b.onclick=loadDebt; }
+async function loadDebt(){
+  const body=document.getElementById("debt-body"); if(!body) return;
+  if(!FINANCE_URL){ setDebtLed("off","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
+  setDebtLed("check","checking…");
+  let d; try{ d=await finance("/cards"); }catch(e){ d={offline:true}; }
+  if(d && d.offline){ setDebtLed("off","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
+  if(d && d.error && d.error.code==="auth"){ setDebtLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+  if(d && d.not_ready){ setDebtLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
+  if(!d || d.error){ setDebtLed("warn","endpoint pending"); body.innerHTML=`<div class="needsauth">Card balances aren’t exposed by 42payments yet — they’re adding a <code>/cards</code> endpoint (personal / business / total). Your payoff plan below works now and the totals will fill in automatically once it’s live.</div>`; return; }
+  setDebtLed("on","live"); renderDebt(d);
+}
+function renderDebt(d){
+  const body=document.getElementById("debt-body"); if(!body||!d) return;
+  const totN=Number(pickAmt(d.total));
+  const tiles=[["Personal",pickMoney(d.personal),""],["Business",pickMoney(d.business),""],["Total",pickMoney(d.total),isNaN(totN)?"":(totN>0?"neg":"pos")]];
+  let html=`<div class="fin-grid fin-grid-3">`+tiles.map(([l,v,cls])=>`<div class="kpi"><div class="kl">${l}</div><div class="kv ${cls}">${esc(fmtMoney(v))}</div></div>`).join("")+`</div>`;
+  if(d.updatedAt) html+=`<div class="fin-note">balances as of ${esc(String(d.updatedAt))}</div>`;
+  body.innerHTML=html;
+}
+
+/* Payoff plan — miDash-owned, stored in the Worker KV (/ccplan) so it syncs across devices;
+   localStorage is the offline cache. */
+const CC_PLAN_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/ccplan" : "";
+let planSaveTimer=null;
+function planStatus(m){ const el=document.getElementById("plan-status"); if(el) el.textContent=m||""; }
+function applyPlan(p){
+  p=p||{};
+  const s=document.getElementById("plan-strategy"), t=document.getElementById("plan-target"), m=document.getElementById("plan-monthly");
+  if(s&&p.strategy) s.value=p.strategy;
+  if(t) t.value=p.target||"";
+  if(m) m.value=(p.monthly!=null?p.monthly:"");
+}
+function readPlan(){
+  const sv=id=>{ const el=document.getElementById(id); return el?el.value:""; };
+  const mv=sv("plan-monthly");
+  return { strategy:sv("plan-strategy")||"avalanche", target:(sv("plan-target")||"").trim(), monthly:mv!==""?Number(mv):null };
+}
+async function loadCCPlan(){
+  let plan=null;
+  if(CC_PLAN_URL){ try{ const r=await fetch(CC_PLAN_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); plan=j.plan||null; } }catch(e){} }
+  if(!plan){ try{ plan=JSON.parse(localStorage.getItem("midash_ccplan")||"null"); }catch(e){} }
+  applyPlan(plan);
+}
+async function savePlan(){
+  const plan=readPlan();
+  try{ localStorage.setItem("midash_ccplan", JSON.stringify(plan)); }catch(e){}
+  if(!CC_PLAN_URL){ planStatus("saved on this device"); return; }
+  try{ const r=await fetch(CC_PLAN_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(plan)});
+       planStatus(r.ok?"saved ✓ synced":"saved here (sync failed "+r.status+")"); }
+  catch(e){ planStatus("saved on this device (offline)"); }
+}
+function schedulePlanSave(){ planStatus("saving…"); clearTimeout(planSaveTimer); planSaveTimer=setTimeout(savePlan,700); }
+function initDebt(){
+  const r=document.getElementById("debt-refresh"); if(r) r.onclick=loadDebt;
+  const led=document.getElementById("debt-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadDebt; }
+  ["plan-strategy","plan-target","plan-monthly"].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener("change",schedulePlanSave); el.addEventListener("input",schedulePlanSave); } });
+  loadCCPlan(); loadDebt();
 }
 
 async function executeTool(name,a){
@@ -2289,7 +2390,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initFinance(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initFinance(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
