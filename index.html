@@ -127,6 +127,26 @@
   .mailrow .age { color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .needsauth { color:var(--muted); font-size:14px; }
   .needsauth button { margin-top:10px; }
+  .needsauth a { color:var(--accent); text-decoration:none; font-weight:600; }
+
+  /* Finance card — status LED + KPI grid */
+  .led { width:11px; height:11px; border-radius:50%; flex:none; background:#9aa0a6;
+         box-shadow:0 0 0 0 transparent; transition:background .2s, box-shadow .2s; }
+  .led.on    { background:#16a34a; box-shadow:0 0 7px #16a34a88; }
+  .led.warn  { background:#d9a400; box-shadow:0 0 7px #d9a40088; }
+  .led.off   { background:#dc2626; box-shadow:0 0 7px #dc262688; }
+  .led.check { background:#9aa0a6; animation:ledpulse 1.1s ease-in-out infinite; }
+  @keyframes ledpulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+  .fin-state { font-size:11px; font-weight:600; letter-spacing:.02em; color:var(--muted); text-transform:none; }
+  .fin-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  @media (max-width:640px){ .fin-grid { grid-template-columns:repeat(2,1fr); } }
+  .kpi { background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:13px 14px; min-width:0; }
+  .kpi .kl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .kpi .kv { font-size:21px; font-weight:700; letter-spacing:-.02em; margin-top:5px; overflow-wrap:anywhere;
+             font-variant-numeric:tabular-nums; }
+  .kpi .kv.pos { color:var(--accent); }
+  .kpi .kv.neg { color:var(--warn); }
+  .fin-counts { color:var(--muted); font-size:12.5px; margin-top:13px; }
 
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
@@ -409,6 +429,14 @@
       </div>
       <div id="auth-note" class="needsauth" style="display:none;margin-bottom:20px"></div>
 
+      <!-- 42payments — business finances (read + act via the agent's finance_* tools) -->
+      <div class="card" id="finance-card" style="margin-bottom:20px">
+        <h2><span class="led" id="fin-led" title="42payments connection"></span>Finance
+          <span class="fin-state" id="fin-state">checking…</span>
+          <span class="refresh" id="finance-refresh"><span class="ricon">↻</span> refresh</span></h2>
+        <div id="finance-body"><div class="empty">—</div></div>
+      </div>
+
       <!-- Google Tasks (#8) + daily reach-out (#6) -->
       <div class="split live" id="tasks-row" style="margin-bottom:20px;display:none">
         <div class="card" id="tasks-card">
@@ -528,7 +556,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.16.0",
+  version: "1.17.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1734,6 +1762,63 @@ async function finance(path, method, payload){
   return data;
 }
 
+/* ---------- Finance card (42payments) — status LED + summary panel ---------- */
+function setLed(state,label){
+  const led=document.getElementById("fin-led"), st=document.getElementById("fin-state");
+  if(led){ led.className="led "+({on:"on",warn:"warn",off:"off",check:"check"}[state]||"check"); led.title="42payments — "+(label||state); }
+  if(st) st.textContent=label||"";
+}
+function fmtMoney(m){
+  if(m==null) return "—";
+  let amt, code="USD";
+  if(typeof m==="object"){ amt=m.amount; code=m.code||m.currency||"USD"; } else amt=m;
+  const n=Number(amt); if(isNaN(n)) return String(amt);
+  try{ return n.toLocaleString(undefined,{style:"currency",currency:code}); }
+  catch(e){ return n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})+" "+code; }
+}
+let financeBusy=false, finLastLoad=0;
+function wireFinRetry(){ const b=document.getElementById("fin-retry"); if(b) b.onclick=loadFinance; }
+async function loadFinance(){
+  const body=document.getElementById("finance-body"); if(!body) return;
+  if(!FINANCE_URL){ setLed("off","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
+  if(financeBusy) return; financeBusy=true;
+  try{
+    setLed("check","checking…");
+    let ping; try{ ping=await finance("/ping"); }catch(e){ ping={offline:true}; }
+    if(ping && ping.offline){ setLed("off","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now — it’s only up while the app runs behind its tunnel. <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
+    if(ping && ping.error && ping.error.code==="auth"){ setLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+    if(ping && (ping.connected===false || ping.not_ready)){ setLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
+    if(ping && ping.error){ setLed("off","error"); body.innerHTML=`<div class="empty">${esc(typeof ping.error==="string"?ping.error:(ping.error.message||JSON.stringify(ping.error)))}</div>`; return; }
+    setLed("on","connected"); body.innerHTML=`<div class="empty">Loading summary…</div>`;
+    let sum; try{ sum=await finance("/summary"); }catch(e){ sum={error:"summary failed"}; }
+    if(!sum || sum.offline || sum.not_ready || sum.error){
+      const msg = sum && sum.error ? (typeof sum.error==="string"?sum.error:JSON.stringify(sum.error)) : "Summary unavailable.";
+      body.innerHTML=`<div class="empty">${esc(msg)} <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return;
+    }
+    renderFinance(sum);
+  } finally { finLastLoad=Date.now(); financeBusy=false; }
+}
+function renderFinance(s){
+  const body=document.getElementById("finance-body"); if(!body||!s) return;
+  const netN=Number(s.netProfit&&typeof s.netProfit==="object"?s.netProfit.amount:s.netProfit);
+  const kpis=[["Revenue",s.revenue,""],["Outstanding",s.outstanding,""],["Expenses",s.expenses,""],
+              ["Net profit",s.netProfit,isNaN(netN)?"":(netN>=0?"pos":"neg")]];
+  let html=`<div class="fin-grid">`+kpis.map(([l,v,cls])=>`<div class="kpi"><div class="kl">${l}</div><div class="kv ${cls}">${esc(fmtMoney(v))}</div></div>`).join("")+`</div>`;
+  if(s.counts && typeof s.counts==="object"){
+    const parts=Object.entries(s.counts).map(([k,v])=>`${v} ${esc(String(k))}`);
+    const capped=Object.values(s.counts).some(v=>Number(v)>=100);
+    html+=`<div class="fin-counts">${parts.join(" · ")}${capped?` · <span style="color:var(--warn)">⚠ capped at 100/type — totals are directional, not exact</span>`:""}</div>`;
+  }
+  body.innerHTML=html;
+}
+function initFinance(){
+  const r=document.getElementById("finance-refresh"); if(r) r.onclick=loadFinance;
+  const led=document.getElementById("fin-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadFinance; }
+  loadFinance();
+  // catch the app coming online when you return to the tab (throttled)
+  window.addEventListener("focus", ()=>{ if(document.getElementById("finance-card") && Date.now()-finLastLoad>30000) loadFinance(); });
+}
+
 async function executeTool(name,a){
   const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0);
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
@@ -2204,7 +2289,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initFinance(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
