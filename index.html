@@ -594,7 +594,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.18.0",
+  version: "1.18.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1869,8 +1869,9 @@ async function loadDebt(){
   if(d && d.offline){ setDebtLed("off","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
   if(d && d.error && d.error.code==="auth"){ setDebtLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
   if(d && d.not_ready){ setDebtLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
-  if(!d || d.error){ setDebtLed("warn","endpoint pending"); body.innerHTML=`<div class="needsauth">Card balances aren’t exposed by 42payments yet — they’re adding a <code>/cards</code> endpoint (personal / business / total). Your payoff plan below works now and the totals will fill in automatically once it’s live.</div>`; return; }
-  setDebtLed("on","live"); renderDebt(d);
+  if(!d || d.error){ setDebtLed("off","error"); body.innerHTML=`<div class="empty">Couldn’t load card balances${d&&d.error?` (${esc(typeof d.error==="string"?d.error:JSON.stringify(d.error))})`:""}. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
+  if(d.available===false){ setDebtLed("warn","not synced"); body.innerHTML=`<div class="needsauth">Open the <b>Debt</b> tab in <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">42payments</a> once to sync your tracker${d.reason?` — ${esc(String(d.reason))}`:""}, then hit ↻ refresh. Balances fill in automatically. Your payoff plan below works now.</div>`; return; }
+  setDebtLed("on","synced"); renderDebt(d);
 }
 function renderDebt(d){
   const body=document.getElementById("debt-body"); if(!body||!d) return;
