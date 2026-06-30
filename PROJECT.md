@@ -191,13 +191,15 @@ in `index.html` (search `PROJECTS — idea→shipped`), backed by the Worker's
 ## Version-driven look + menu lock (v1.21.0)
 
 - **Look refresh on upgrade** (`applyVersionTheme()` in index.html, runs at boot before
-  `applyBackground()`): a **MAJOR** version bump rolls a fresh background **design** +
-  colors; a **MINOR** bump rolls fresh **colors**, keeping the design; a **PATCH** bump
-  changes nothing. Tracked via `midash_theme_ver` (separate from the version-highlight's
+  `applyBackground()`). Q's versioning, NOT strict semver: the **middle** segment
+  (`1.21→1.22`) is the "major" bump → fresh background **design** + colors; the **last**
+  segment (`1.22.0→1.22.1`) is the "minor" bump → fresh **colors**, same design; the first
+  segment (if it ever moves) is a design bump too; no increase changes nothing.
+  Tracked via `midash_theme_ver` (separate from the version-highlight's
   `midash_ver_*`). First run only showcases it if appearance is still default — manual
   themes are respected until the next bump; **Settings → Reset appearance** clears it and
   the next bump re-rolls. Colors come from `randomThemeColors()` (HSL→hex), pattern from
-  `randomPattern()`. **So: bump MINOR for a color refresh, MAJOR for a new design.**
+  `randomPattern()`. **So: bump the LAST segment for a color refresh, the MIDDLE segment for a new design.**
 - **Hamburger (☰) gated by the passphrase:** `refreshMenuLock()` shows 🔒 and routes a
   click to the passphrase modal when no `DASH_KEY` is held on the device; the ⚙️ gear menu
   stays open (that's where you set the key). Re-evaluated on save/clear in the key modal.

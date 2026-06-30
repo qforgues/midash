@@ -710,7 +710,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.22.0",
+  version: "1.22.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1234,10 +1234,13 @@ function applyBackground(){
   applyTheme();   // recompute accent-soft against the new surface
 }
 /* ---------- Version-driven look ----------
-   Each upgrade refreshes the appearance so a new build *feels* new:
-   • a MAJOR bump (X in vX.Y.Z) rolls a fresh background DESIGN (+ colors),
-   • a MINOR bump (Y) rolls fresh COLORS, keeping the design,
-   • a PATCH bump (Z) changes nothing.
+   Each upgrade refreshes the appearance so a new build *feels* new. Q's versioning:
+   • a "major" bump — the MIDDLE segment (1.21 → 1.22) — rolls a fresh background
+     DESIGN (+ colors),
+   • a "minor" bump — the LAST segment (1.22.0 → 1.22.1) — rolls fresh COLORS,
+     keeping the design,
+   • the first segment, if it ever moves, counts as a design bump too; no increase
+     changes nothing.
    We track the version we last themed for (midash_theme_ver). On the very first
    run we only showcase it if the user hasn't already customised appearance —
    manual themes are respected until the next real bump. "Reset appearance" in
@@ -1279,11 +1282,12 @@ function applyVersionTheme(){
     rec(); return;
   }
   const p=last.split(".").map(n=>parseInt(n,10)||0);
-  const majorUp = c[0]>p[0];
-  const minorUp = majorUp || (c[0]===p[0] && c[1]>p[1]);
-  if(majorUp) rollTheme(true,true);          // new design + colors
-  else if(minorUp) rollTheme(false,true);    // new colors, same design
-  rec();                                      // patch-only: nothing
+  // "major" = first OR middle segment increased → new design; "minor" = last segment → new colors.
+  const designUp = (c[0]>p[0]) || (c[0]===p[0] && c[1]>p[1]);
+  const colorsUp = designUp || (c[0]===p[0] && c[1]===p[1] && c[2]>p[2]);
+  if(designUp) rollTheme(true,true);          // new design + colors
+  else if(colorsUp) rollTheme(false,true);    // new colors, same design
+  rec();                                       // no increase: nothing
 }
 
 function initGearMenu(){
