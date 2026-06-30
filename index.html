@@ -839,7 +839,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.24.0",
+  version: "1.24.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2471,6 +2471,7 @@ async function tracker(action, params, body){
   try{ res=await fetch(TRACKER_URL+"?"+qs.toString(), opts); }
   catch(e){ return {offline:true, error:"Tracker42 offline — retry later."}; }
   let data; try{ data=await res.json(); }catch(e){ data={success:false, error:"tracker returned non-JSON ("+res.status+")"}; }
+  if(body!==undefined){ try{ console.log("[miDash tracker write]",action,"→ HTTP",res.status,"| sent:",body,"| got:",data); }catch(e){} }   // diagnostic for write actions
   if(res.status===503 && data && data.offline) return {offline:true, error:data.error||"Tracker42 offline — retry later."};
   return data;
 }
