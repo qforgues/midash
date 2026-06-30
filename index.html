@@ -839,7 +839,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.24.3",
+  version: "1.24.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2729,6 +2729,7 @@ const SB_CONNS = [
   { id:"google",  label:"Google",     check:sbCheckGoogle,  fix:{label:"🔓 Connect Google", run:()=>{ if(tokenClient) tokenClient.requestAccessToken({prompt:"select_account consent"}); }} },
   { id:"finance", label:"42pay",      check:sbCheckFinance, fix:{label:"↻ Retry", run:()=>{ if(typeof loadFinance==="function") loadFinance(); if(typeof loadDebt==="function") loadDebt(); }} },
   { id:"tracker", label:"Tracker42",  check:sbCheckTracker, fix:{label:"↻ Retry", run:()=>{ tkTickets=null; tkNotifs=null; if(typeof loadTracker==="function") loadTracker(); }} },
+  { id:"discord", label:"Discord",    check:sbCheckDiscord },
   { id:"notes",   label:"Notes",      check:sbCheckNotes,   fix:{label:"↻ Re-sync", run:()=>{ if(resyncNotes) resyncNotes(); }} },
 ];
 const sbState={}; let sbLastRun=0;
@@ -2816,6 +2817,18 @@ async function sbCheckTracker(){
   if(p&&(p.success===false||p.error)) return {state:"off",summary:"error",detail:cleanErr(p.error||p)};
   const who=p&&p.data&&p.data.user, scopes=p&&p.data&&p.data.scopes;
   return {state:"on",summary:who?("@"+who.username):"connected",detail:`Tracker42 reachable + token valid.${scopes?"\nScopes: "+scopes.join(", "):""}`};
+}
+async function sbCheckDiscord(){
+  const url = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/discord-status" : "";
+  if(!url) return {state:"idle",summary:"not configured",detail:"No chatEndpoint."};
+  let r; try{ r=await fetch(url,{headers:{...dashAuthHeader()}}); }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker."}; }
+  if(r.status===401) return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed."};
+  let d; try{ d=await r.json(); }catch(e){ d=null; }
+  const s=d&&d.status;
+  if(!s||!s.at) return {state:"off",summary:"never seen",detail:"The Discord bot hasn’t checked in yet. Start it: double-click ~/midash-discord/setup.command."};
+  const age=Date.now()-Number(s.at);
+  if(age<180000) return {state:"on",summary:"online",detail:`Discord bot is online${s.tag?" as "+s.tag:""}. Last heartbeat ${Math.max(0,Math.round(age/1000))}s ago.`};
+  return {state:"off",summary:"offline",detail:`Discord bot last checked in ${Math.round(age/60000)} min ago — it isn’t running. Start it: ~/midash-discord/setup.command (or its LaunchAgent).`};
 }
 async function sbCheckNotes(){
   if(!NOTES_URL) return {state:"idle",summary:"n/a",detail:"No backend."};

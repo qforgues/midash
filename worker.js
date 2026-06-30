@@ -351,6 +351,22 @@ async function handleTracker(request, env) {
   }
 }
 
+// Discord bot heartbeat. The local bot POSTs here every minute; the dashboard GETs it to
+// show a live green/red "Discord" light. The Worker stamps the receive time (its own clock),
+// so the dashboard just checks freshness. Stored in the NOTES KV. Gated by authed().
+async function handleDiscordStatus(request, env) {
+  if (!env.NOTES) return json({ error: "storage not configured" }, 501);
+  if (request.method === "POST") {
+    let b = {}; try { b = await request.json(); } catch {}
+    const rec = { online: true, tag: b && b.tag ? String(b.tag).slice(0, 64) : null, at: Date.now() };
+    await env.NOTES.put("discord_status", JSON.stringify(rec));
+    return json({ ok: true });
+  }
+  const v = await env.NOTES.get("discord_status");
+  let status = null; try { status = v ? JSON.parse(v) : null; } catch {}
+  return json({ status });
+}
+
 // Agent over external channels (Discord now, SMS/Twilio later) — CHAT-ONLY MVP, no tools.
 // Takes { messages:[{role,content}] } or { message:"..." }, returns { reply, usage }.
 // NON-streaming (a bot wants the whole reply). Gated by authed() like everything else.
@@ -437,6 +453,7 @@ export default {
       if (url.pathname === "/projects") return handleProjects(request, env);
       if (url.pathname === "/tracker") return handleTracker(request, env);
       if (url.pathname === "/agent") return handleAgent(request, env);
+      if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
       return handleChat(request, env);
     } catch (e) {
       return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
