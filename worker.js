@@ -351,6 +351,37 @@ async function handleTracker(request, env) {
   }
 }
 
+// Agent over external channels (Discord now, SMS/Twilio later) — CHAT-ONLY MVP, no tools.
+// Takes { messages:[{role,content}] } or { message:"..." }, returns { reply, usage }.
+// NON-streaming (a bot wants the whole reply). Gated by authed() like everything else.
+async function handleAgent(request, env) {
+  if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
+  let body;
+  try { body = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
+  const messages = Array.isArray(body.messages) ? body.messages
+    : (body.message != null ? [{ role: "user", content: String(body.message) }] : []);
+  if (!messages.length) return json({ error: { message: "no message" } }, 400);
+  const model = (typeof body.model === "string" && ALLOWED_MODELS.has(body.model)) ? body.model : DEFAULT_MODEL;
+  const payload = {
+    model,
+    max_tokens: 1200,
+    system: "You are Q's personal assistant, reachable over Discord (and later SMS). You're in a chat — be concise, warm, and direct, and keep replies short enough to read comfortably in a messaging app. You don't have tools in this conversation, so answer from what you know; if Q asks for something that needs his email/calendar/finances, say it's coming to Discord soon but for now he can do it in the miDash dashboard.",
+    messages,
+  };
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    let e; try { e = await r.json(); } catch { e = { error: { message: "upstream " + r.status } }; }
+    return json(e, r.status);
+  }
+  const data = await r.json();
+  const reply = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+  return json({ reply, usage: data.usage || null });
+}
+
 async function handleChat(request, env) {
   if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
   let body;
@@ -405,6 +436,7 @@ export default {
       if (url.pathname === "/ccplan") return handleCCPlan(request, env);
       if (url.pathname === "/projects") return handleProjects(request, env);
       if (url.pathname === "/tracker") return handleTracker(request, env);
+      if (url.pathname === "/agent") return handleAgent(request, env);
       return handleChat(request, env);
     } catch (e) {
       return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
