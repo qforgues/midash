@@ -50,6 +50,15 @@ real", or "what should I do next", read_notes first, then create a task per acti
 with create_task. To mark something done, list_tasks to find its listId/taskId, then
 complete_task.
 
+Projects (the bigger picture): Q tracks his software/website/app projects on a board that
+runs idea → validate → plan → build → test → ship → grow. Use list_projects to see them
+(it returns each project's stage, progressPct, its "next" action, and lastTouchedDays — a
+high lastTouchedDays means it's being neglected). His north star is "keep every project
+moving, leave none behind", so for "what should I work on / what's stalling / how are my
+projects" call list_projects and steer him to the most neglected ones and their next action.
+Use update_project to advance a stage or set the next action (e.g. "move La Palma to ship"),
+and add_project when he wants to start tracking a new idea. These act immediately (no confirm).
+
 Multiple accounts:
 - Q may connect more than one Google account (e.g. a personal gmail and a work address).
   Tools that read (search_emails, list_events) automatically cover EVERY connected
@@ -130,6 +139,17 @@ const TOOLS = [
   { name: "complete_task",
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },
+
+  // ---- Projects board (Q's idea→shipped tracker, miDash-owned) ----
+  { name: "list_projects",
+    description: "List Q's tracked projects (his software/website/app ideas → shipped products), most-neglected-first. Each item has name, stage (idea|validate|plan|build|test|ship|grow), progressPct, next (the next action to push it forward, may be null), lastTouchedDays (days since last touched; high = neglected), stale (boolean), url, repo. Use for 'what should I work on / what's stalling / how are my projects'.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "update_project",
+    description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial match ok). Set any of: stage (one of idea|validate|plan|build|test|ship|grow), next (the single next action), notes. Touches its last-updated so it stops looking neglected. Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow"] }, next: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
+  { name: "add_project",
+    description: "Add a NEW project to Q's tracker. Needs name. Optional stage (default idea), next (next action), url (live site), repo (owner/repo). Use when Q wants to start tracking a new idea. Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" } }, required: ["name"] } },
 
   // ---- 42payments (Q's business finances) ----
   // Money in results is { amount, code }, e.g. {"amount":"500.00","code":"USD"}. The tool may
@@ -247,6 +267,26 @@ async function handleCCPlan(request, env) {
   return new Response("method not allowed", { status: 405, headers: cors() });
 }
 
+// Projects board — the dashboard's idea→shipped tracker. A JSON array of project
+// records, stored in the NOTES KV under "projects" so it syncs across Q's devices.
+// Gated upstream by authed() like everything else.
+async function handleProjects(request, env) {
+  if (!env.NOTES) return json({ error: "storage not configured" }, 501);
+  if (request.method === "GET") {
+    const v = await env.NOTES.get("projects");
+    let projects = null; try { projects = v ? JSON.parse(v) : null; } catch { projects = null; }
+    return json({ projects });
+  }
+  if (request.method === "PUT") {
+    const t = await request.text();
+    try { if (!Array.isArray(JSON.parse(t))) return json({ error: "expected a JSON array" }, 400); }
+    catch { return json({ error: "bad json" }, 400); }
+    await env.NOTES.put("projects", t);
+    return json({ ok: true });
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
 async function handleChat(request, env) {
   if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
   let body;
@@ -294,6 +334,7 @@ export default {
     if (url.pathname === "/notes") return handleNotes(request, env);
     if (url.pathname === "/finance") return handleFinance(request, env);
     if (url.pathname === "/ccplan") return handleCCPlan(request, env);
+    if (url.pathname === "/projects") return handleProjects(request, env);
     return handleChat(request, env);
   },
 };

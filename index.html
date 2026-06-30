@@ -162,6 +162,53 @@
   .plan-foot { margin-top:10px; min-height:16px; }
   .plan-status { font-size:12.5px; color:var(--muted); }
 
+  /* Projects — idea→shipped progress tracker */
+  .proj-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:13px; }
+  .pbtn { border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:9px;
+          padding:7px 11px; font-size:13px; font-family:inherit; cursor:pointer; outline:none; transition:border-color .15s, color .15s; }
+  .pbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .pbtn.ghost { padding:4px 9px; font-size:12px; background:transparent; }
+  .pbtn:disabled { opacity:.5; cursor:default; }
+  .proj-sort { margin-left:auto; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted);
+               display:flex; align-items:center; gap:6px; }
+  .proj-sort select { border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px;
+               padding:6px 8px; font-size:13px; font-family:inherit; text-transform:none; letter-spacing:0; outline:none; }
+  .proj-summary { margin-bottom:15px; }
+  .proj-summary-row { display:flex; flex-wrap:wrap; gap:6px; }
+  .proj-spill { display:inline-flex; align-items:center; gap:4px; font-size:12.5px; padding:3px 9px; border-radius:20px;
+                background:var(--bg); border:1px solid var(--border); color:var(--text); }
+  .proj-spill b { font-variant-numeric:tabular-nums; }
+  .proj-spill.zero { opacity:.38; }
+  .proj-summary-meta { font-size:12.5px; color:var(--muted); margin-top:9px; }
+  .proj-need { color:var(--warn); font-weight:600; }
+  .proj { border:1px solid var(--border); border-radius:13px; padding:13px 15px; margin-bottom:11px; background:var(--bg);
+          cursor:pointer; transition:border-color .15s, box-shadow .15s; min-width:0; }
+  .proj:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow:var(--shadow); }
+  .proj:last-child { margin-bottom:0; }
+  .proj.stale { border-left:3px solid var(--warn); }
+  .proj.done { opacity:.9; }
+  .proj-top { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:9px; }
+  .proj-name { font-size:15px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:7px; min-width:0;
+               overflow-wrap:anywhere; }
+  .proj-pin { font-size:12px; flex:0 0 auto; }
+  .proj-link { color:var(--muted); text-decoration:none; font-weight:600; flex:0 0 auto; }
+  .proj-link:hover { color:var(--accent); }
+  .proj-stage { font-size:11.5px; font-weight:600; color:var(--accent); background:var(--accent-soft);
+                padding:3px 10px; border-radius:20px; white-space:nowrap; flex:0 0 auto; }
+  .proj-prog { height:7px; border-radius:6px; background:color-mix(in srgb, var(--border) 70%, transparent); overflow:hidden; }
+  .proj-prog-fill { height:100%; border-radius:6px; background:var(--accent); transition:width .25s ease; }
+  .proj-next { font-size:13.5px; color:var(--text); margin-top:10px; overflow-wrap:anywhere; }
+  .proj-next-lbl { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+                   background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:1px 5px; margin-right:6px; }
+  .proj-next-empty { color:var(--muted); font-style:italic; }
+  .proj-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:11px; }
+  .proj-age { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .proj-age.warn { color:var(--warn); } .proj-age.bad { color:#d1453b; font-weight:600; }
+  .proj-acts { display:flex; gap:6px; flex:0 0 auto; }
+  .modal label.col select { width:100%; border:1px solid var(--border); background:var(--bg); color:var(--text);
+          border-radius:8px; padding:8px 10px; font-size:14px; outline:none; font-family:inherit; }
+  @media (max-width:560px){ .proj-stage { display:none; } .proj-foot { flex-wrap:wrap; } }
+
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
   .refresh.spin .ricon { animation:spin .7s linear infinite; }
@@ -443,6 +490,27 @@
       </div>
       <div id="auth-note" class="needsauth" style="display:none;margin-bottom:20px"></div>
 
+      <!-- Projects — idea→shipped progress tracker (miDash-owned, syncs via /projects KV).
+           Keep every project moving; the "last touched" age flags neglected ones. -->
+      <div class="card" id="projects-card" style="margin-bottom:20px">
+        <h2><span class="dot">🚀</span>Projects
+          <span class="fin-state" id="proj-state">—</span>
+          <span class="refresh" id="projects-refresh"><span class="ricon">↻</span> refresh</span></h2>
+        <div class="proj-toolbar">
+          <button type="button" class="pbtn" id="proj-add">＋ Add project</button>
+          <button type="button" class="pbtn" id="proj-import">⇪ Import GitHub repos</button>
+          <span class="proj-sort">Sort
+            <select id="proj-sort">
+              <option value="neglected">Most neglected</option>
+              <option value="stage">By stage</option>
+              <option value="name">A–Z</option>
+              <option value="manual">Manual</option>
+            </select></span>
+        </div>
+        <div id="proj-summary" class="proj-summary"></div>
+        <div id="projects-body"><div class="empty">—</div></div>
+      </div>
+
       <!-- 42payments — business finances (read + act via the agent's finance_* tools) -->
       <div class="card" id="finance-card" style="margin-bottom:20px">
         <h2><span class="led" id="fin-led" title="42payments connection"></span>Finance
@@ -569,6 +637,26 @@
   </div>
 </div>
 
+<!-- Project editor -->
+<div id="proj-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="proj-close-bg"></div>
+  <div class="panel">
+    <h2>🚀 Project</h2>
+    <label class="col"><span>Name</span><input id="proj-f-name" type="text" placeholder="e.g. La Palma TV"></label>
+    <label class="col"><span>Stage</span><select id="proj-f-stage"></select></label>
+    <label class="col"><span>Next action — the one thing to push it forward</span><input id="proj-f-next" type="text" placeholder="e.g. wire up the EPG feed"></label>
+    <label class="col"><span>Live URL (optional)</span><input id="proj-f-url" type="text" placeholder="https://…"></label>
+    <label class="col"><span>GitHub repo (optional)</span><input id="proj-f-repo" type="text" placeholder="owner/repo"></label>
+    <label class="col"><span>Notes (optional)</span><textarea id="proj-f-notes" rows="3" placeholder="Context, links, what's blocking it…"></textarea></label>
+    <div id="proj-f-msg" class="key-result"></div>
+    <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
+      <button id="proj-f-save" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Save</button>
+      <button id="proj-f-delete" class="gbtn" style="color:var(--warn)">Delete</button>
+      <button id="proj-f-close" class="gbtn">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -594,7 +682,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.19.0",
+  version: "1.20.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -776,6 +864,242 @@ async function loadProjects() {
 }
 function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
   return d<1?"today":d<2?"yesterday":d<30?Math.floor(d)+"d ago":Math.floor(d/30)+"mo ago"; }
+
+/* ============================================================
+   PROJECTS — idea→shipped progress tracker (miDash-owned)
+   One record per project carries every value: name, url, repo, stage,
+   next action, notes, last-touched. Stored in the Worker KV (/projects)
+   so it syncs across Q's devices — mirrors the /ccplan pattern; localStorage
+   is the offline cache. The "last touched" age surfaces neglected projects
+   so none get left behind. The chat agent reads/writes it via list_projects /
+   update_project / add_project.
+   ============================================================ */
+const PROJ_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/projects" : "";
+const PIPELINE = [
+  { key:"idea",     label:"Idea",     emoji:"💡" },
+  { key:"validate", label:"Validate", emoji:"🔬" },
+  { key:"plan",     label:"Plan",     emoji:"📝" },
+  { key:"build",    label:"Build",    emoji:"🛠️" },
+  { key:"test",     label:"Test",     emoji:"🧪" },
+  { key:"ship",     label:"Ship",     emoji:"🚀" },
+  { key:"grow",     label:"Grow",     emoji:"📈" },
+];
+const PROJ_LAST = PIPELINE.length-1;   // index of the final stage
+const PROJ_SHIP = 5;                    // stages >= this are "live" — never flagged neglected
+let projects = [];
+let projSaveTimer=null, projLastLoad=0, editingProjId=null;
+
+function projPct(stage){ return Math.round((Math.max(0,Math.min(PROJ_LAST,stage))/PROJ_LAST)*100); }
+function projAgeDays(p){ return p.updated ? (Date.now()-p.updated)/86400000 : null; }
+function projAgeLabel(p){ const d=projAgeDays(p); if(d==null) return "—"; if(d<1) return "today"; if(d<2) return "yesterday"; if(d<30) return Math.floor(d)+"d ago"; return Math.floor(d/30)+"mo ago"; }
+/* 0 = fresh, 1 = amber (>14d), 2 = red (>30d). Shipped/Grow are live, never "stale". */
+function projStale(p){ const d=projAgeDays(p); if(d==null || p.stage>=PROJ_SHIP) return 0; return d>30?2:d>14?1:0; }
+
+function normalizeProject(p){
+  p=p||{};
+  let stage = typeof p.stage==="number" ? p.stage : PIPELINE.findIndex(s=>s.key===p.stage);
+  if(!(stage>=0)) stage=0;
+  stage = Math.max(0, Math.min(PROJ_LAST, Math.round(stage)));
+  return {
+    id: p.id || ("p_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),
+    name: String(p.name||"Untitled"),
+    url: String(p.url||"").trim(),
+    repo: String(p.repo||"").trim().replace(/^https?:\/\/github\.com\//i,"").replace(/\/+$/,""),
+    stage,
+    next: String(p.next||""),
+    notes: String(p.notes||""),
+    updated: p.updated || Date.now(),
+    pinned: !!p.pinned,
+    order: typeof p.order==="number" ? p.order : 0,
+  };
+}
+function nextOrder(){ return projects.reduce((m,p)=>Math.max(m,p.order),0)+1; }
+
+function cacheProjects(){ try{ localStorage.setItem("midash_projects", JSON.stringify(projects)); }catch(e){} }
+async function loadProjectsState(){
+  const rb=document.getElementById("projects-refresh"); if(rb) rb.classList.add("spin");
+  let list=null;
+  if(PROJ_URL){ try{ const r=await fetch(PROJ_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); if(Array.isArray(j.projects)) list=j.projects; } }catch(e){} }
+  if(!list){ try{ const v=JSON.parse(localStorage.getItem("midash_projects")||"null"); if(Array.isArray(v)) list=v; }catch(e){} }
+  if(list){ projects = list.map(normalizeProject); renderProjects(); }
+  else { seedProjects(); }   // nothing stored anywhere → first-run seed
+  projLastLoad=Date.now();
+  if(rb) setTimeout(()=>rb.classList.remove("spin"),400);
+}
+function seedProjects(){
+  const seed=(CONFIG.pinnedProjects||[]).map((p,i)=>normalizeProject({
+    name:p.label, url:p.url, stage: /live/i.test(p.meta||"")?PROJ_SHIP:3, updated:Date.now()-i*1000, order:i+1 }));
+  if(!seed.some(s=>/midash/i.test(s.name))) seed.unshift(normalizeProject({
+    name:"miDash", url:"https://qforgues.github.io", repo:"qforgues/midash", stage:PROJ_SHIP,
+    next:"Keep shipping cards", updated:Date.now(), order:0 }));
+  projects=seed;
+  renderProjects();
+  saveProjects();   // persist the seed so it's there next time
+}
+async function saveProjects(){
+  cacheProjects();
+  renderProjSummary(); projState();
+  if(!PROJ_URL) return;
+  try{ const r=await fetch(PROJ_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(projects)});
+       projState(r.ok?"synced ✓":"saved here (sync "+r.status+")"); }
+  catch(e){ projState("saved on this device"); }
+}
+function scheduleProjSave(){ clearTimeout(projSaveTimer); projSaveTimer=setTimeout(saveProjects,500); }
+
+function projState(msg){
+  const el=document.getElementById("proj-state"); if(!el) return;
+  if(msg){ el.textContent=msg; clearTimeout(projState._t); projState._t=setTimeout(()=>projState(),1900); return; }
+  const need=projects.filter(projStale).length;
+  el.textContent = projects.length ? (need?need+" need a push":"all on track ✓") : "—";
+}
+function projSorted(){
+  const sel=document.getElementById("proj-sort");
+  const mode=(sel&&sel.value)||"neglected";
+  const arr=projects.slice();
+  const pin=(a,b)=>(b.pinned?1:0)-(a.pinned?1:0);
+  if(mode==="stage") arr.sort((a,b)=>pin(a,b) || (a.stage-b.stage) || a.name.localeCompare(b.name));
+  else if(mode==="name") arr.sort((a,b)=>pin(a,b) || a.name.localeCompare(b.name));
+  else if(mode==="manual") arr.sort((a,b)=>pin(a,b) || (a.order-b.order));
+  else arr.sort((a,b)=>pin(a,b) || (projStale(b)-projStale(a)) || ((projAgeDays(b)||0)-(projAgeDays(a)||0)));
+  return arr;
+}
+function renderProjSummary(){
+  const el=document.getElementById("proj-summary"); if(!el) return;
+  if(!projects.length){ el.innerHTML=""; return; }
+  const counts=PIPELINE.map((s,i)=>projects.filter(p=>p.stage===i).length);
+  const need=projects.filter(projStale).length;
+  const shipped=projects.filter(p=>p.stage>=PROJ_SHIP).length;
+  el.innerHTML =
+    `<div class="proj-summary-row">`+
+      PIPELINE.map((s,i)=>`<span class="proj-spill${counts[i]?"":" zero"}" title="${esc(s.label)}">${s.emoji}<b>${counts[i]}</b></span>`).join("")+
+    `</div>`+
+    `<div class="proj-summary-meta">${projects.length} project${projects.length===1?"":"s"} · ${shipped} live`+
+      (need?` · <span class="proj-need">${need} need a push</span>`:` · all on track ✓`)+`</div>`;
+}
+function renderProjects(){
+  const body=document.getElementById("projects-body"); if(!body) return;
+  renderProjSummary(); projState();
+  if(!projects.length){ body.innerHTML=`<div class="empty">No projects yet. Tap <b>＋ Add project</b> or <b>⇪ Import GitHub repos</b> to start tracking.</div>`; return; }
+  body.innerHTML = projSorted().map(p=>{
+    const st=PIPELINE[p.stage]||PIPELINE[0];
+    const pct=projPct(p.stage), sc=projStale(p);
+    const ageCls = sc===2?"bad":sc===1?"warn":"";
+    const href = p.url || (p.repo?("https://github.com/"+p.repo):"");
+    const link = href ? `<a class="proj-link" href="${esc(href)}" target="_blank" rel="noopener" data-act="open" title="${esc(href)}">↗</a>` : "";
+    return `<div class="proj${sc?" stale":""}${p.stage>=PROJ_LAST?" done":""}" data-id="${p.id}">
+      <div class="proj-top">
+        <div class="proj-name">${p.pinned?'<span class="proj-pin" title="pinned">📌</span>':""}${esc(p.name)}${link}</div>
+        <div class="proj-stage">${st.emoji} ${esc(st.label)}</div>
+      </div>
+      <div class="proj-prog" title="${pct}% — ${esc(st.label)}"><div class="proj-prog-fill" style="width:${pct}%"></div></div>
+      <div class="proj-next">${p.next?('<span class="proj-next-lbl">next</span>'+esc(p.next)):'<span class="proj-next-empty">set the next action to push this forward</span>'}</div>
+      <div class="proj-foot">
+        <span class="proj-age ${ageCls}" title="last touched">${sc?"⚠ ":""}${projAgeLabel(p)}</span>
+        <span class="proj-acts">
+          <button type="button" class="pbtn ghost" data-act="back" title="move back a stage">◀</button>
+          <button type="button" class="pbtn ghost" data-act="fwd" title="advance a stage">advance ▶</button>
+          <button type="button" class="pbtn ghost" data-act="edit" title="edit">edit</button>
+        </span>
+      </div>
+    </div>`;
+  }).join("");
+  body.querySelectorAll(".proj").forEach(row=>{
+    const id=row.dataset.id;
+    row.onclick=(e)=>{
+      const t=e.target.closest("[data-act]");
+      const act=t?t.dataset.act:null;
+      if(act==="open") return;                  // let the link open normally
+      e.preventDefault();
+      if(act==="fwd"){ e.stopPropagation(); return advanceProject(id,1); }
+      if(act==="back"){ e.stopPropagation(); return advanceProject(id,-1); }
+      openProjModal(id);                         // edit button or row body
+    };
+  });
+}
+function advanceProject(id,delta){
+  const p=projects.find(x=>x.id===id); if(!p) return;
+  const ns=Math.max(0,Math.min(PROJ_LAST,p.stage+delta));
+  if(ns===p.stage) return;
+  p.stage=ns; p.updated=Date.now();
+  renderProjects(); scheduleProjSave();
+}
+function fillStageSelect(sel){ if(sel) sel.innerHTML=PIPELINE.map((s,i)=>`<option value="${i}">${s.emoji} ${esc(s.label)} · ${projPct(i)}%</option>`).join(""); }
+function openProjModal(id){
+  editingProjId = id||null;
+  const p = id ? projects.find(x=>x.id===id) : {name:"",url:"",repo:"",stage:0,next:"",notes:""};
+  if(id && !p) return;
+  const set=(k,v)=>{ const el=document.getElementById(k); if(el) el.value=v; };
+  fillStageSelect(document.getElementById("proj-f-stage"));
+  set("proj-f-name",p.name); set("proj-f-stage",p.stage); set("proj-f-next",p.next);
+  set("proj-f-url",p.url); set("proj-f-repo",p.repo); set("proj-f-notes",p.notes);
+  const msg=document.getElementById("proj-f-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
+  const del=document.getElementById("proj-f-delete"); if(del) del.style.display = id?"":"none";
+  document.getElementById("proj-modal").style.display="flex";
+  setTimeout(()=>{ const n=document.getElementById("proj-f-name"); if(n) n.focus(); },50);
+}
+function initProjModal(){
+  const m=document.getElementById("proj-modal"); if(!m) return;
+  const close=()=>{ m.style.display="none"; editingProjId=null; };
+  const msg=(s,bad)=>{ const e=document.getElementById("proj-f-msg"); if(e){ e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); } };
+  document.getElementById("proj-f-close").onclick=close;
+  document.getElementById("proj-close-bg").onclick=close;
+  document.getElementById("proj-f-save").onclick=()=>{
+    const name=document.getElementById("proj-f-name").value.trim();
+    if(!name){ msg("Name can’t be empty.",true); return; }
+    const fields={ name,
+      stage: Number(document.getElementById("proj-f-stage").value)||0,
+      next: document.getElementById("proj-f-next").value.trim(),
+      url: document.getElementById("proj-f-url").value.trim(),
+      repo: document.getElementById("proj-f-repo").value.trim(),
+      notes: document.getElementById("proj-f-notes").value };
+    if(editingProjId){
+      const p=projects.find(x=>x.id===editingProjId); if(!p){ close(); return; }
+      Object.assign(p, normalizeProject({...p, ...fields}));
+      p.updated=Date.now();
+    } else {
+      projects.push(normalizeProject({...fields, order:nextOrder(), updated:Date.now()}));
+    }
+    close(); renderProjects(); saveProjects();
+  };
+  document.getElementById("proj-f-delete").onclick=()=>{
+    if(!editingProjId) return;
+    const p=projects.find(x=>x.id===editingProjId);
+    if(!confirm("Remove “"+(p?p.name:"this project")+"” from the tracker?")) return;
+    projects=projects.filter(x=>x.id!==editingProjId);
+    close(); renderProjects(); saveProjects();
+  };
+}
+async function importRepos(){
+  const btn=document.getElementById("proj-import");
+  if(btn){ btn.disabled=true; btn.textContent="⇪ Importing…"; }
+  try{
+    const r=await fetch(`https://api.github.com/users/${CONFIG.githubUser}/repos?sort=updated&per_page=30`);
+    const repos=await r.json();
+    if(!Array.isArray(repos)) throw 0;
+    let added=0;
+    repos.forEach(rp=>{
+      const full=String(rp.full_name||"").toLowerCase(), nm=String(rp.name||"").toLowerCase();
+      if(projects.some(p=>(p.repo||"").toLowerCase()===full || p.name.toLowerCase()===nm)) return;
+      projects.push(normalizeProject({ name:rp.name, repo:rp.full_name, url:rp.homepage||"", stage:0,
+        updated:new Date(rp.pushed_at).getTime()||Date.now(), order:nextOrder() }));
+      added++;
+    });
+    renderProjects();
+    if(added) saveProjects();
+    projState(added?("+"+added+" imported"):"all repos already tracked");
+  }catch(e){ projState("GitHub import failed"); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent="⇪ Import GitHub repos"; } }
+}
+function initProjects(){
+  const r=document.getElementById("projects-refresh"); if(r) r.onclick=loadProjectsState;
+  const add=document.getElementById("proj-add"); if(add) add.onclick=()=>openProjModal(null);
+  const imp=document.getElementById("proj-import"); if(imp) imp.onclick=importRepos;
+  const sort=document.getElementById("proj-sort");
+  if(sort){ try{ sort.value=localStorage.getItem("midash_proj_sort")||"neglected"; }catch(e){} sort.onchange=()=>{ try{ localStorage.setItem("midash_proj_sort",sort.value); }catch(e){} renderProjects(); }; }
+  initProjModal();
+  loadProjectsState();
+  window.addEventListener("focus", ()=>{ if(document.getElementById("projects-card") && Date.now()-projLastLoad>60000) loadProjectsState(); });
+}
 
 /* ---------- Clock & greeting ---------- */
 function tick() {
@@ -1937,7 +2261,7 @@ function initDebt(){
 }
 
 async function executeTool(name,a){
-  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0);
+  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name));
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
@@ -2060,6 +2384,31 @@ async function executeTool(name,a){
         const lines=["To: "+a.to]; if(a.cc) lines.push("Cc: "+a.cc); lines.push("Subject: "+a.subject,"Content-Type: text/plain; charset=UTF-8","",a.body);
         const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(lines.join("\r\n"))})});
         return r.ok?{sent:true,account:acct.email}:{error:"send failed "+r.status};
+      }
+      case "list_projects": {
+        const list=projSorted().map(p=>({
+          name:p.name, stage:(PIPELINE[p.stage]||PIPELINE[0]).key, progressPct:projPct(p.stage),
+          next:p.next||null, lastTouchedDays: projAgeDays(p)!=null?Math.round(projAgeDays(p)):null,
+          stale:!!projStale(p), url:p.url||null, repo:p.repo||null }));
+        return { projects:list, pipeline:PIPELINE.map(s=>s.key) };
+      }
+      case "add_project": {
+        if(!a.name) return {error:"need a name"};
+        const si=a.stage?PIPELINE.findIndex(s=>s.key===String(a.stage).toLowerCase()):0;
+        const np=normalizeProject({ name:a.name, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"", updated:Date.now(), order:nextOrder() });
+        projects.push(np); renderProjects(); saveProjects();
+        return { added:true, name:np.name, stage:(PIPELINE[np.stage]||PIPELINE[0]).key };
+      }
+      case "update_project": {
+        if(!a.name) return {error:"need the project name"};
+        const q=String(a.name).toLowerCase();
+        const p=projects.find(x=>x.name.toLowerCase()===q) || projects.find(x=>x.name.toLowerCase().includes(q));
+        if(!p) return {error:"no project matching “"+a.name+"” — call list_projects to see the names."};
+        if(a.stage!=null){ const si=PIPELINE.findIndex(s=>s.key===String(a.stage).toLowerCase()); if(si<0) return {error:"bad stage — use one of "+PIPELINE.map(s=>s.key).join(", ")}; p.stage=si; }
+        if(a.next!=null) p.next=String(a.next);
+        if(a.notes!=null) p.notes=String(a.notes);
+        p.updated=Date.now(); renderProjects(); saveProjects();
+        return { updated:true, name:p.name, stage:(PIPELINE[p.stage]||PIPELINE[0]).key, progressPct:projPct(p.stage) };
       }
       case "finance_summary": return await finance("/summary");
       case "finance_list": {
@@ -2406,7 +2755,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initFinance(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initFinance(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
