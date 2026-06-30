@@ -259,8 +259,13 @@ async function handleFinance(request, env) {
     return json({ error: "finance tool offline — 42payments isn't reachable right now.", offline: true }, 503);
   }
   const text = await r.text();
-  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text || ("upstream " + r.status) }; }
-  return json(data, r.status);
+  // Clean JSON passes through; a non-JSON body (e.g. an HTML error page) becomes one tidy line
+  // instead of a wall of markup reaching the dashboard.
+  try {
+    return json(JSON.parse(text || "{}"), r.status);
+  } catch {
+    return json({ error: "42payments returned a non-JSON response (HTTP " + r.status + ") — it may be mid-setup or behind an error page.", code: "upstream_nonjson", upstream_status: r.status }, 502);
+  }
 }
 
 // Credit-card payoff plan — a tiny JSON blob (strategy/target/monthly) the dashboard's
@@ -311,19 +316,32 @@ async function handleTracker(request, env) {
   if (!env.PORTAL42_TOKEN) return json({ error: "Tracker42 not configured — set the PORTAL42_TOKEN secret on the Worker.", code: "not_configured" }, 501);
   const url = new URL(request.url);
   const action = url.searchParams.get("action") || "ping";
-  const ALLOWED = new Set(["ping", "notifications", "tickets", "ticket"]);
-  if (!ALLOWED.has(action)) return json({ success: false, error: "unknown action: " + action }, 400);
+  const READ = new Set(["ping", "notifications", "tickets", "ticket", "statuses", "ticket_events"]);
+  const WRITE = new Set(["mark_read", "mark_all_read"]);
+  if (!READ.has(action) && !WRITE.has(action)) return json({ success: false, error: "unknown action: " + action }, 400);
   const params = new URLSearchParams({ action });
-  for (const k of ["since", "limit", "id"]) { const v = url.searchParams.get(k); if (v != null) params.set(k, v); }
+  for (const k of ["since", "limit", "id", "offset", "status", "order", "ticket_id"]) { const v = url.searchParams.get(k); if (v != null) params.set(k, v); }
+  const method = WRITE.has(action) ? "POST" : "GET";   // mark_read / mark_all_read are POSTs upstream
   let r;
   try {
-    r = await fetch(TRACKER_BASE + "?" + params.toString(), { headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } });
+    r = await fetch(TRACKER_BASE + "?" + params.toString(), { method, headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } });
   } catch {
     return json({ offline: true, error: "Tracker42 isn't reachable right now." }, 503);
   }
   const text = await r.text();
-  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { success: false, error: text || ("upstream " + r.status) }; }
-  return json(data, r.status);
+  // Forward clean JSON straight through. If the upstream returns non-JSON (e.g. an HTML error
+  // page — which Tracker42 does when a token is present but the api_tokens table/migration isn't
+  // in place), don't relay a wall of HTML: surface one actionable line.
+  try {
+    return json(JSON.parse(text || "{}"), r.status);
+  } catch {
+    return json({
+      success: false,
+      code: "upstream_nonjson",
+      upstream_status: r.status,
+      error: "Tracker42 returned a non-JSON response (HTTP " + r.status + ") — its API may not be fully set up yet. Run the api_tokens migration on Tracker42, then retry.",
+    }, 502);
+  }
 }
 
 async function handleChat(request, env) {

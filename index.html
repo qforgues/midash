@@ -137,6 +137,7 @@
   .led.warn  { background:#d9a400; box-shadow:0 0 7px #d9a40088; }
   .led.off   { background:#dc2626; box-shadow:0 0 7px #dc262688; }
   .led.check { background:#9aa0a6; animation:ledpulse 1.1s ease-in-out infinite; }
+  .led.idle  { background:#9aa0a6; box-shadow:none; }   /* calm grey — expected-unavailable, not an alarm */
   @keyframes ledpulse { 0%,100%{opacity:.4} 50%{opacity:1} }
   .fin-state { font-size:11px; font-weight:600; letter-spacing:.02em; color:var(--muted); text-transform:none; }
   .fin-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
@@ -710,7 +711,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.22.1",
+  version: "1.22.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1657,6 +1658,16 @@ function renderMailPage(){
 function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
+/* Turn any upstream error (string, {message}, object, or a stray HTML error page) into one
+   tidy line — so a card never dumps a wall of markup or a giant JSON blob. */
+function cleanErr(x){
+  let m = (x && x.message!=null) ? x.message : x;
+  if(m==null) m="error";
+  if(typeof m!=="string"){ try{ m=JSON.stringify(m); }catch(e){ m=String(m); } }
+  if(/^\s*<(?:!doctype|html|head|body|div|span|p\b|table)/i.test(m)) return "the service returned a server error page (it may not be fully set up yet)";
+  m=m.replace(/\s+/g," ").trim();
+  return m.length>200 ? m.slice(0,200)+"…" : m;
+}
 function fromAddr(s){ const m=String(s||"").match(/<([^>]+)>/); return (m?m[1]:String(s||"")).trim().toLowerCase(); }
 
 /* ============================================================
@@ -2242,7 +2253,7 @@ async function finance(path, method, payload){
 
 /* ---------- Finance card (42payments) — status LED + summary panel ---------- */
 function setLedEl(led,st,state,label,prefix){
-  if(led){ led.className="led "+({on:"on",warn:"warn",off:"off",check:"check"}[state]||"check"); led.title=(prefix||"")+(label||state); }
+  if(led){ led.className="led "+({on:"on",warn:"warn",off:"off",check:"check",idle:"idle"}[state]||"check"); led.title=(prefix||"")+(label||state); }
   if(st) st.textContent=label||"";
 }
 function setLed(state,label){ setLedEl(document.getElementById("fin-led"),document.getElementById("fin-state"),state,label,"42payments — "); }
@@ -2259,19 +2270,19 @@ let financeBusy=false, finLastLoad=0;
 function wireFinRetry(){ const b=document.getElementById("fin-retry"); if(b) b.onclick=loadFinance; }
 async function loadFinance(){
   const body=document.getElementById("finance-body"); if(!body) return;
-  if(!FINANCE_URL){ setLed("off","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
+  if(!FINANCE_URL){ setLed("idle","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
   if(financeBusy) return; financeBusy=true;
   try{
     setLed("check","checking…");
     let ping; try{ ping=await finance("/ping"); }catch(e){ ping={offline:true}; }
-    if(ping && ping.offline){ setLed("off","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now — it’s only up while the app runs behind its tunnel. <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
-    if(ping && ping.error && ping.error.code==="auth"){ setLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+    if(ping && ping.offline){ setLed("idle","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now — it’s only up while the app runs behind its tunnel. <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
+    if(ping && ping.error && ping.error.code==="auth"){ setLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
     if(ping && (ping.connected===false || ping.not_ready)){ setLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
-    if(ping && ping.error){ setLed("off","error"); body.innerHTML=`<div class="empty">${esc(typeof ping.error==="string"?ping.error:(ping.error.message||JSON.stringify(ping.error)))}</div>`; return; }
+    if(ping && ping.error){ setLed(ping.code==="upstream_nonjson"?"warn":"off", ping.code==="upstream_nonjson"?"setup pending":"error"); body.innerHTML=`<div class="empty">${esc(cleanErr(ping.error))} <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
     setLed("on","connected"); body.innerHTML=`<div class="empty">Loading summary…</div>`;
     let sum; try{ sum=await finance("/summary"); }catch(e){ sum={error:"summary failed"}; }
     if(!sum || sum.offline || sum.not_ready || sum.error){
-      const msg = sum && sum.error ? (typeof sum.error==="string"?sum.error:JSON.stringify(sum.error)) : "Summary unavailable.";
+      const msg = sum && sum.error ? cleanErr(sum.error) : "Summary unavailable.";
       body.innerHTML=`<div class="empty">${esc(msg)} <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return;
     }
     renderFinance(sum);
@@ -2330,21 +2341,22 @@ function setTrackerBadge(n){ const b=document.getElementById("tracker-badge"); i
 function wireTkRetry(){ const b=document.getElementById("tk-retry"); if(b) b.onclick=loadTracker; }
 async function loadTracker(){
   const body=document.getElementById("tracker-body"); if(!body) return;
-  if(!TRACKER_URL){ setTrackerLed("off","not configured"); body.innerHTML=`<div class="empty">Tracker42 backend not configured.</div>`; return; }
+  if(!TRACKER_URL){ setTrackerLed("idle","not configured"); body.innerHTML=`<div class="empty">Tracker42 backend not configured.</div>`; return; }
   if(trackerBusy) return; trackerBusy=true;
   try{
     setTrackerLed("check","checking…");
     let ping; try{ ping=await tracker("ping"); }catch(e){ ping={offline:true}; }
-    if(ping && ping.offline){ setTrackerLed("off","offline"); body.innerHTML=`<div class="empty">Tracker42 isn’t reachable right now. <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
-    if(ping && ping.error && ping.error.code==="auth"){ setTrackerLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach Tracker42 (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
-    if(ping && ping.code==="not_configured"){ setTrackerLed("off","not configured"); body.innerHTML=`<div class="needsauth">Tracker42 token isn’t set on the Worker yet — run <code>wrangler secret put PORTAL42_TOKEN</code>, then refresh.</div>`; return; }
-    if(ping && (ping.success===false || ping.error)){ setTrackerLed("off","error"); const m=ping.error&&(ping.error.message||ping.error)||"token/scope error"; body.innerHTML=`<div class="empty">${esc(typeof m==="string"?m:JSON.stringify(m))}</div>`; return; }
+    if(ping && ping.offline){ setTrackerLed("idle","offline"); body.innerHTML=`<div class="empty">Tracker42 isn’t reachable right now. <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
+    if(ping && ping.error && ping.error.code==="auth"){ setTrackerLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach Tracker42 (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+    if(ping && ping.code==="not_configured"){ setTrackerLed("idle","token not set"); body.innerHTML=`<div class="needsauth">Tracker42 token isn’t set on the Worker yet — run <code>wrangler secret put PORTAL42_TOKEN</code>, then refresh.</div>`; return; }
+    if(ping && ping.code==="upstream_nonjson"){ setTrackerLed("warn","setup pending"); body.innerHTML=`<div class="needsauth">Connected to Tracker42, but its API returned a server error — the <code>api_tokens</code> migration may still need to run on Tracker42 (Admin → Migrations). The card lights up automatically once it returns data. <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
+    if(ping && (ping.success===false || ping.error)){ setTrackerLed("off","error"); body.innerHTML=`<div class="empty">${esc(cleanErr(ping.error||ping))} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
     const who=ping&&ping.data&&ping.data.user;
     setTrackerLed("on", who?("@"+(who.username||"connected")):"connected");
     body.innerHTML=`<div class="empty">Loading notifications…</div>`;
     let nd; try{ nd=await tracker("notifications",{since:0,limit:20}); }catch(e){ nd={error:"notifications failed"}; }
     if(!nd || nd.offline || nd.success===false || nd.error){
-      const m=nd&&nd.error?(typeof nd.error==="string"?nd.error:JSON.stringify(nd.error)):"Notifications unavailable.";
+      const m = nd&&nd.code==="upstream_nonjson" ? "Tracker42’s API isn’t fully set up yet (run the api_tokens migration)." : (nd&&nd.error ? cleanErr(nd.error) : "Notifications unavailable.");
       body.innerHTML=`<div class="empty">${esc(m)} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return;
     }
     renderTrackerNotifs(nd);
@@ -2377,9 +2389,8 @@ function initTracker(){
   const led=document.getElementById("tk-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadTracker; }
   loadTracker();
   window.addEventListener("focus", ()=>{ if(document.getElementById("tracker-card") && Date.now()-trackerLastLoad>30000) loadTracker(); });
-  // Gentle background poll so new tickets surface without a manual refresh (interval tunable
-  // once Tracker42 confirms its rate limit — see the open questions).
-  setInterval(()=>{ if(!document.hidden && document.getElementById("tracker-card") && Date.now()-trackerLastLoad>60000) loadTracker(); }, 120000);
+  // Background poll — Tracker42 recommends 60s + on-focus (no rate limit today, keep ≥30s).
+  setInterval(()=>{ if(!document.hidden && document.getElementById("tracker-card") && Date.now()-trackerLastLoad>45000) loadTracker(); }, 60000);
 }
 
 /* ---------- Credit Card Debt card (balances from 42payments + miDash-owned payoff plan) ---------- */
@@ -2388,13 +2399,13 @@ function pickAmt(v){ const m=pickMoney(v); if(m==null) return NaN; return Number
 function wireDebtRetry(){ const b=document.getElementById("debt-retry"); if(b) b.onclick=loadDebt; }
 async function loadDebt(){
   const body=document.getElementById("debt-body"); if(!body) return;
-  if(!FINANCE_URL){ setDebtLed("off","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
+  if(!FINANCE_URL){ setDebtLed("idle","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
   setDebtLed("check","checking…");
   let d; try{ d=await finance("/cards"); }catch(e){ d={offline:true}; }
-  if(d && d.offline){ setDebtLed("off","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
-  if(d && d.error && d.error.code==="auth"){ setDebtLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+  if(d && d.offline){ setDebtLed("idle","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
+  if(d && d.error && d.error.code==="auth"){ setDebtLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
   if(d && d.not_ready){ setDebtLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
-  if(!d || d.error){ setDebtLed("off","error"); body.innerHTML=`<div class="empty">Couldn’t load card balances${d&&d.error?` (${esc(typeof d.error==="string"?d.error:JSON.stringify(d.error))})`:""}. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
+  if(!d || d.error){ setDebtLed(d&&d.code==="upstream_nonjson"?"warn":"off", d&&d.code==="upstream_nonjson"?"setup pending":"error"); body.innerHTML=`<div class="empty">Couldn’t load card balances${d&&d.error?` (${esc(cleanErr(d.error))})`:""}. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
   if(d.available===false){ setDebtLed("warn","not synced"); body.innerHTML=`<div class="needsauth">Open the <b>Debt</b> tab in <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">42payments</a> once to sync your tracker${d.reason?` — ${esc(String(d.reason))}`:""}, then hit ↻ refresh. Balances fill in automatically. Your payoff plan below works now.</div>`; return; }
   setDebtLed("on","synced"); renderDebt(d);
 }
