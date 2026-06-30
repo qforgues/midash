@@ -594,7 +594,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.18.1",
+  version: "1.19.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -612,6 +612,12 @@ const CONFIG = {
 
   // Your GitHub username — Projects auto-populate from your recent repos.
   githubUser: "qforgues",
+
+  // Pinned project links — shown at the top of the Projects section, above the
+  // auto-loaded GitHub repos. Use for live sites / deploys you want one tap away.
+  pinnedProjects: [
+    { label:"La Palma TV", url:"https://lapalma-dashboard.quentin-forgues.workers.dev", meta:"live site" },
+  ],
 
   // ---- Live data (today's events + important mail) ----
   // One-time setup: create a Google OAuth "Web" client ID (see README),
@@ -748,14 +754,23 @@ async function loadProjects() {
   const box = document.getElementById("projects");
   const rb=document.getElementById("proj-refresh"); if(rb) rb.classList.add("spin");
   try {
+    const pinned = (CONFIG.pinnedProjects||[]).map(p => `
+      <a href="${p.url}" target="_blank" rel="noopener">
+        <span class="lhs"><span class="ldot" data-url="${p.url}"></span>${p.label}</span>
+        <span>${p.meta?`<span class="meta">${p.meta}</span> `:""}<span class="arrow">↗</span></span>
+      </a>`).join("");
     const r = await fetch(`https://api.github.com/users/${CONFIG.githubUser}/repos?sort=updated&per_page=6`);
     const repos = await r.json();
-    if (!Array.isArray(repos) || !repos.length) { box.innerHTML = `<div class="empty">No public repos.</div>`; return; }
-    box.innerHTML = repos.map(r => `
-      <a href="${r.html_url}" target="_blank" rel="noopener">
-        <span>${r.name}</span>
-        <span><span class="meta">${rel(r.pushed_at)}</span> <span class="arrow">↗</span></span>
-      </a>`).join("");
+    if (!Array.isArray(repos) || !repos.length) {
+      box.innerHTML = pinned || `<div class="empty">No public repos.</div>`;
+    } else {
+      box.innerHTML = pinned + repos.map(r => `
+        <a href="${r.html_url}" target="_blank" rel="noopener">
+          <span>${r.name}</span>
+          <span><span class="meta">${rel(r.pushed_at)}</span> <span class="arrow">↗</span></span>
+        </a>`).join("");
+    }
+    pingLinks();
   } catch { box.innerHTML = `<div class="empty">Couldn't load GitHub.</div>`; }
   finally { if(rb) setTimeout(()=>rb.classList.remove("spin"),400); }
 }
