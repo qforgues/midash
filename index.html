@@ -711,7 +711,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.22.2",
+  version: "1.22.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2350,7 +2350,12 @@ async function loadTracker(){
     if(ping && ping.error && ping.error.code==="auth"){ setTrackerLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach Tracker42 (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
     if(ping && ping.code==="not_configured"){ setTrackerLed("idle","token not set"); body.innerHTML=`<div class="needsauth">Tracker42 token isn’t set on the Worker yet — run <code>wrangler secret put PORTAL42_TOKEN</code>, then refresh.</div>`; return; }
     if(ping && ping.code==="upstream_nonjson"){ setTrackerLed("warn","setup pending"); body.innerHTML=`<div class="needsauth">Connected to Tracker42, but its API returned a server error — the <code>api_tokens</code> migration may still need to run on Tracker42 (Admin → Migrations). The card lights up automatically once it returns data. <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
-    if(ping && (ping.success===false || ping.error)){ setTrackerLed("off","error"); body.innerHTML=`<div class="empty">${esc(cleanErr(ping.error||ping))} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
+    if(ping && (ping.success===false || ping.error)){
+      const et=cleanErr(ping.error||ping);
+      const setupish=/not initiali|migration|not set up|setup|not configured/i.test(et);   // a known "getting ready" state, not a crash
+      setTrackerLed(setupish?"warn":"off", setupish?"setup pending":"error");
+      body.innerHTML=`<div class="${setupish?"needsauth":"empty"}">${esc(et)} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return;
+    }
     const who=ping&&ping.data&&ping.data.user;
     setTrackerLed("on", who?("@"+(who.username||"connected")):"connected");
     body.innerHTML=`<div class="empty">Loading notifications…</div>`;
