@@ -317,14 +317,21 @@ async function handleTracker(request, env) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action") || "ping";
   const READ = new Set(["ping", "notifications", "tickets", "ticket", "statuses", "ticket_events"]);
-  const WRITE = new Set(["mark_read", "mark_all_read"]);
+  const WRITE = new Set(["mark_read", "mark_all_read", "set_status", "add_comment", "create_ticket"]);
   if (!READ.has(action) && !WRITE.has(action)) return json({ success: false, error: "unknown action: " + action }, 400);
   const params = new URLSearchParams({ action });
   for (const k of ["since", "limit", "id", "offset", "status", "order", "ticket_id"]) { const v = url.searchParams.get(k); if (v != null) params.set(k, v); }
-  const method = WRITE.has(action) ? "POST" : "GET";   // mark_read / mark_all_read are POSTs upstream
+  const isWrite = WRITE.has(action);
+  // Write actions (set_status / add_comment / create_ticket / mark_*) POST to the upstream;
+  // forward the dashboard's JSON body through untouched so the token-side does the work.
+  const init = { method: isWrite ? "POST" : "GET", headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } };
+  if (isWrite && request.method === "POST") {
+    let fwd; try { fwd = await request.text(); } catch { fwd = ""; }
+    if (fwd) { init.headers["Content-Type"] = "application/json"; init.body = fwd; }
+  }
   let r;
   try {
-    r = await fetch(TRACKER_BASE + "?" + params.toString(), { method, headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } });
+    r = await fetch(TRACKER_BASE + "?" + params.toString(), init);
   } catch {
     return json({ offline: true, error: "Tracker42 isn't reachable right now." }, 503);
   }

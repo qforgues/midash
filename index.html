@@ -276,7 +276,30 @@
   .tkd-history { display:flex; flex-direction:column; gap:4px; }
   .tkd-hrow { font-size:12.5px; color:var(--muted); }
   .tkd-soon { margin-top:15px; padding-top:12px; border-top:1px solid var(--border); font-size:12.5px; color:var(--muted); }
-  @media (max-width:560px){ .tkd-fields { grid-template-columns:1fr; } .tkt-title { white-space:normal; } }
+  .tkd-write { margin-top:15px; padding-top:13px; border-top:1px solid var(--border); }
+  .tkd-soon-tag { font-size:9.5px; font-weight:700; letter-spacing:.04em; color:var(--muted); background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:1px 5px; margin-left:6px; vertical-align:middle; }
+  .tkd-write-row { display:flex; align-items:center; gap:8px; margin:8px 0; flex-wrap:wrap; }
+  .tkd-status-sel { border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:7px 9px; font-size:13px; font-family:inherit; }
+  .tkd-reply { width:100%; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:8px 10px; font-size:13.5px; font-family:inherit; resize:vertical; }
+  .tkd-write [disabled] { opacity:.5; cursor:not-allowed; }
+  .tkd-soon-note { font-size:12px; color:var(--muted); }
+  .tkd-note { width:100%; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:7px 10px; font-size:13px; font-family:inherit; margin-top:2px; }
+  .tkd-internal { display:inline-flex; align-items:center; gap:6px; font-size:13px; color:var(--muted); }
+  .tkn-row { display:flex; gap:12px; }
+  @media (max-width:560px){ .tkn-row { flex-direction:column; gap:0; } }
+
+  /* Switchboard — connection/API status lights */
+  .switchboard { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .sb-chip { display:inline-flex; align-items:center; gap:7px; border:1px solid var(--border); background:var(--bg); color:var(--text);
+             border-radius:20px; padding:6px 13px 6px 11px; font-size:13px; font-family:inherit; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+  .sb-chip:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow:var(--shadow); }
+  .sb-label { font-weight:500; }
+  .sb-green { color:#1c7a45; } .sb-amber { color:#9a6a00; } .sb-red { color:#b4231a; font-weight:600; }
+  .sb-state { font-size:15px; font-weight:600; margin-bottom:10px; }
+  .sb-detail { font-size:13.5px; color:var(--text); line-height:1.5; background:var(--bg); border:1px solid var(--border);
+               border-radius:9px; padding:11px 13px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
+  .sb-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+  .sb-copied { font-size:12.5px; color:var(--accent); min-height:16px; margin-top:8px; }
 
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
@@ -514,6 +537,15 @@
 
   <div id="layout">
     <main class="main">
+      <!-- Switchboard: one light per connection/API. Click a light for a copyable
+           diagnostic + a fix button. Goal: click the reds, watch them go green. -->
+      <div class="card" id="switchboard-card" style="margin-bottom:20px">
+        <h2><span class="dot">🎛️</span>Switchboard
+          <span class="fin-state" id="sb-summary">checking…</span>
+          <span class="refresh" id="sb-refresh"><span class="ricon">↻</span> re-check</span></h2>
+        <div class="switchboard" id="switchboard"></div>
+      </div>
+
       <!-- Command bar: universal capture box + "Show:" focus filters -->
       <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
         <div class="cap-row">
@@ -571,6 +603,7 @@
         <div class="tk-tabs" id="tk-tabs">
           <button type="button" class="tk-tab" data-tab="tickets">🎫 Tickets</button>
           <button type="button" class="tk-tab" data-tab="notifs">🔔 Notifications</button>
+          <button type="button" class="pbtn" id="tk-new-btn" style="margin-left:auto">＋ New ticket</button>
         </div>
         <div id="tracker-body"><div class="empty">—</div></div>
       </div>
@@ -742,6 +775,35 @@
   </div>
 </div>
 
+<!-- New Tracker42 ticket -->
+<div id="tk-new-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="tk-new-bg"></div>
+  <div class="panel" style="max-width:520px">
+    <h2>🎫 New ticket</h2>
+    <label class="col"><span>Title</span><input id="tkn-title" type="text" placeholder="Short summary"></label>
+    <label class="col"><span>Description</span><textarea id="tkn-desc" rows="3" placeholder="Details (optional)"></textarea></label>
+    <div class="tkn-row">
+      <label class="col" style="flex:1"><span>Priority</span><select id="tkn-priority"><option>low</option><option selected>medium</option><option>high</option><option>critical</option></select></label>
+      <label class="col" style="flex:1"><span>Type</span><select id="tkn-type"><option selected>general</option><option>feature</option><option>bug</option><option>support</option></select></label>
+    </div>
+    <label class="tkd-internal" style="margin-top:6px"><input type="checkbox" id="tkn-critical"> mark critical</label>
+    <div id="tkn-msg" class="key-result"></div>
+    <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
+      <button id="tkn-create" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Create ticket</button>
+      <button id="tkn-close" class="gbtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Switchboard connection detail -->
+<div id="sb-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="sb-modal-bg"></div>
+  <div class="panel" style="max-width:520px">
+    <h2 id="sb-modal-title">Connection</h2>
+    <div id="sb-modal-body"><div class="empty">—</div></div>
+  </div>
+</div>
+
 <!-- Ticket detail (Tracker42, read-only) -->
 <div id="tk-ticket-modal" class="modal" style="display:none">
   <div class="modal-backdrop" id="tk-ticket-bg"></div>
@@ -777,7 +839,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.23.0",
+  version: "1.24.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2399,12 +2461,14 @@ function statusChip(k,label){ return `<span class="tk-status tk-${statusClass(k)
 /* GET /tracker?action=…; params forwarded: since, limit, id. Returns parsed JSON, or
    {offline:true} on a Worker/network failure. Passphrase-401 surfaces as {error:{code:"auth"}}
    (Worker), a bad-token 401 surfaces as the upstream {success:false,error:…}. */
-async function tracker(action, params){
+async function tracker(action, params, body){
   if(!TRACKER_URL) return {error:"Tracker not configured (no chatEndpoint).", code:"not_configured"};
   const qs=new URLSearchParams({action:action||"ping"});
   if(params) for(const k of ["since","limit","id","offset","status","order","ticket_id"]) if(params[k]!=null) qs.set(k, params[k]);
+  const opts={ headers:{...dashAuthHeader()} };
+  if(body!==undefined){ opts.method="POST"; opts.headers["Content-Type"]="application/json"; opts.body=JSON.stringify(body); }   // write actions
   let res;
-  try{ res=await fetch(TRACKER_URL+"?"+qs.toString(), {headers:{...dashAuthHeader()}}); }
+  try{ res=await fetch(TRACKER_URL+"?"+qs.toString(), opts); }
   catch(e){ return {offline:true, error:"Tracker42 offline — retry later."}; }
   let data; try{ data=await res.json(); }catch(e){ data={success:false, error:"tracker returned non-JSON ("+res.status+")"}; }
   if(res.status===503 && data && data.offline) return {offline:true, error:data.error||"Tracker42 offline — retry later."};
@@ -2478,11 +2542,15 @@ function renderTrackerNotifs(d){
     body.innerHTML = head + list.map(n=>{
       const isNew = Number(n.id) > trackerSeen;              // local "since you last looked" flag
       const ic=TK_ICON[n.type]||"🔔";
+      // The pill already shows the ticket number, so swap the number in the title for the
+      // ticket's NAME (e.g. "Status Changed: TKT-0069" → "Status Changed: Checkout rounding").
+      let dispTitle=n.title||"(untitled)";
+      if(n.ticket_title && n.ticket_number && dispTitle.indexOf(n.ticket_number)>=0) dispTitle=dispTitle.split(n.ticket_number).join(n.ticket_title);
       const tkt = n.ticket_number?`<span class="tk-tkt" title="${escAttr(n.ticket_title||"")}">${esc(n.ticket_number)}</span>`:"";
       const readBtn = n.is_read?"":`<button type="button" class="tk-read" data-id="${n.id}" title="Mark read">✓</button>`;
       return `<div class="tk-row${isNew?" new":""}" data-tid="${n.ticket_id!=null?n.ticket_id:""}">
         <span class="tk-ic">${ic}</span>
-        <span class="tk-main"><span class="tk-title">${esc(n.title||"(untitled)")}${tkt}</span>
+        <span class="tk-main"><span class="tk-title">${esc(dispTitle)}${tkt}</span>
           <span class="tk-msg">${esc(n.message||"")}</span></span>
         <span class="tk-side"><span class="tk-age" title="${escAttr(n.created_at||"")}">${n.created_at?rel(n.created_at):""}</span>${readBtn}</span>
       </div>`;
@@ -2528,8 +2596,59 @@ function renderTicketDetail(t){
       `<div class="tkd-hrow"><span class="tkd-when">${x.created_at?rel(x.created_at):""}</span> · ${esc(x.user||"")} — ${esc(x.action||"")}${x.old_value!=null?` (${esc(x.old_value)} → ${esc(x.new_value)})`:""}</div>`).join("")+`</div>`;
   }
   if(t.pr_url) h+=`<div class="tkd-bk">PR</div><div class="tkd-bv"><a href="${esc(t.pr_url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(t.branch_name||t.pr_url)} ↗</a></div>`;
-  h+=`<div class="tkd-soon">✍️ Status changes & replies are coming once Tracker42 ships a tickets:write scope — this view is read-only for now.</div>`;
+  // Write controls (live — tickets:write). admin_bypass → every status offered.
+  const statuses=(tkStatuses&&tkStatuses.length)?tkStatuses:[{key:t.status,label:t.status_label||t.status}];
+  h+=`<div class="tkd-write">
+    <div class="tkd-bk">Change status</div>
+    <div class="tkd-write-row">
+      <select class="tkd-status-sel" id="tkd-status">${statuses.map(s=>`<option value="${escAttr(s.key)}" ${s.key===t.status?"selected":""}>${esc(s.label)}</option>`).join("")}</select>
+      <button type="button" class="gbtn" id="tkd-status-btn">Update</button>
+    </div>
+    <input class="tkd-note" id="tkd-status-note" placeholder="note (required for failed / released)" style="display:none">
+    <div class="tkd-bk" style="margin-top:14px">Reply</div>
+    <textarea class="tkd-reply" id="tkd-reply" rows="2" placeholder="Add a comment…"></textarea>
+    <div class="tkd-write-row">
+      <label class="tkd-internal"><input type="checkbox" id="tkd-internal" checked> internal</label>
+      <button type="button" class="gbtn" id="tkd-reply-btn">Post reply</button>
+    </div>
+    <div id="tkd-write-msg" class="key-result"></div>
+  </div>`;
   m.innerHTML=h;
+  wireTicketWrite(t);
+}
+/* note_required comes from action=statuses now; fall back to the known failed/released set. */
+function noteReqFor(key){ const s=(tkStatuses||[]).find(x=>x.key===key); if(s&&typeof s.note_required==="boolean") return s.note_required; return /^failed_|^released$/.test(String(key||"")); }
+function tkWriteErr(d){
+  if(d&&d.offline) return "Tracker42 is offline — try again shortly.";
+  if(d&&d.error&&d.error.code==="auth") return "Dashboard passphrase needed (⚙️ → 🔒).";
+  const e=d&&d.error?cleanErr(d.error):"write failed";
+  if(/scope|permission|forbidden|403/i.test(e)) return "Your token can't write yet — Tracker42 needs to add tickets:write.";
+  return e;
+}
+function wireTicketWrite(t){
+  const sel=document.getElementById("tkd-status"), noteI=document.getElementById("tkd-status-note"), btn=document.getElementById("tkd-status-btn");
+  const msg=(s,bad)=>{ const e=document.getElementById("tkd-write-msg"); if(e){ e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); } };
+  if(sel&&noteI){ const upd=()=>{ noteI.style.display=noteReqFor(sel.value)?"":"none"; }; sel.onchange=upd; upd(); }
+  if(btn) btn.onclick=async()=>{
+    const status=sel?sel.value:""; if(!status){ return; }
+    if(status===t.status){ msg("That’s already the status.",true); return; }
+    const note=noteI?noteI.value.trim():"";
+    if(noteReqFor(status)&&!note){ msg("A note is required to set “"+status+"”.",true); if(noteI) noteI.focus(); return; }
+    msg("Updating…"); btn.disabled=true;
+    const d=await tracker("set_status", null, {id:t.id, status, note:note||undefined});
+    btn.disabled=false;
+    if(!d || d.success===false || d.error){ msg(tkWriteErr(d),true); return; }
+    msg("Status updated ✓"); tkTickets=null; refreshNotifs(); setTimeout(()=>openTicket(t.id),450);
+  };
+  const rbtn=document.getElementById("tkd-reply-btn"), rta=document.getElementById("tkd-reply"), internal=document.getElementById("tkd-internal");
+  if(rbtn) rbtn.onclick=async()=>{
+    const comment=rta?rta.value.trim():""; if(!comment){ msg("Write a comment first.",true); return; }
+    msg("Posting…"); rbtn.disabled=true;
+    const d=await tracker("add_comment", null, {ticket_id:t.id, comment, is_internal: internal?internal.checked:undefined});
+    rbtn.disabled=false;
+    if(!d || d.success===false || d.error){ msg(tkWriteErr(d),true); return; }
+    msg("Reply posted ✓"); setTimeout(()=>openTicket(t.id),450);
+  };
 }
 function openTicketModal(){ const m=document.getElementById("tk-ticket-modal"); if(m) m.style.display="flex"; }
 function initTicketModal(){
@@ -2537,6 +2656,33 @@ function initTicketModal(){
   const close=()=>{ m.style.display="none"; };
   document.getElementById("tk-ticket-close").onclick=close;
   document.getElementById("tk-ticket-bg").onclick=close;
+}
+function openNewTicket(){
+  const m=document.getElementById("tk-new-modal"); if(!m) return;
+  ["tkn-title","tkn-desc"].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=""; });
+  const cr=document.getElementById("tkn-critical"); if(cr) cr.checked=false;
+  const msg=document.getElementById("tkn-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
+  m.style.display="flex"; setTimeout(()=>{ const t=document.getElementById("tkn-title"); if(t) t.focus(); },50);
+}
+function initNewTicketModal(){
+  const m=document.getElementById("tk-new-modal"); if(!m) return;
+  const close=()=>m.style.display="none";
+  document.getElementById("tkn-close").onclick=close; document.getElementById("tk-new-bg").onclick=close;
+  document.getElementById("tkn-create").onclick=async()=>{
+    const msg=(s,bad)=>{ const e=document.getElementById("tkn-msg"); if(e){ e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); } };
+    const title=(document.getElementById("tkn-title").value||"").trim();
+    if(!title){ msg("Title is required.",true); return; }
+    const body={ title,
+      description:(document.getElementById("tkn-desc").value||"").trim()||undefined,
+      priority:document.getElementById("tkn-priority").value,
+      ticket_type:document.getElementById("tkn-type").value,
+      is_critical:document.getElementById("tkn-critical").checked||undefined };
+    msg("Creating…");
+    const d=await tracker("create_ticket", null, body);
+    if(!d || d.success===false || d.error){ msg(tkWriteErr(d),true); return; }
+    msg("Created ✓"); tkTickets=null; close();
+    const id=d.data&&d.data.id; if(id) setTimeout(()=>openTicket(id),300); else loadTracker();
+  };
 }
 function initTracker(){
   const r=document.getElementById("tracker-refresh"); if(r) r.onclick=()=>{ tkTickets=null; tkNotifs=null; loadTracker(); };
@@ -2547,11 +2693,125 @@ function initTracker(){
       if((tkTab==="tickets"&&!tkTickets)||(tkTab==="notifs"&&!tkNotifs)) loadTracker();
     };
   });
-  initTicketModal();
+  initTicketModal(); initNewTicketModal();
+  const nb=document.getElementById("tk-new-btn"); if(nb) nb.onclick=openNewTicket;
   loadTracker();
   window.addEventListener("focus", ()=>{ if(document.getElementById("tracker-card") && Date.now()-trackerLastLoad>30000) loadTracker(); });
   // Background poll — Tracker42 recommends 60s + on-focus (no rate limit today, keep ≥30s).
   setInterval(()=>{ if(!document.hidden && document.getElementById("tracker-card") && Date.now()-trackerLastLoad>45000) loadTracker(); }, 60000);
+}
+
+/* ============================================================
+   SWITCHBOARD — one light per connection/API. Click a light for a
+   copyable diagnostic + a fix button. Goal: click the reds, watch them
+   go green. Each check reuses the same probes the cards use.
+   ============================================================ */
+const SB_CONNS = [
+  { id:"worker",  label:"Brain",      check:sbCheckWorker },
+  { id:"pass",    label:"Passphrase", check:sbCheckPass,    fix:{label:"🔒 Enter passphrase", run:()=>openKeyModal()} },
+  { id:"google",  label:"Google",     check:sbCheckGoogle,  fix:{label:"🔓 Connect Google", run:()=>{ if(tokenClient) tokenClient.requestAccessToken({prompt:"select_account consent"}); }} },
+  { id:"finance", label:"42pay",      check:sbCheckFinance, fix:{label:"↻ Retry", run:()=>{ if(typeof loadFinance==="function") loadFinance(); if(typeof loadDebt==="function") loadDebt(); }} },
+  { id:"tracker", label:"Tracker42",  check:sbCheckTracker, fix:{label:"↻ Retry", run:()=>{ tkTickets=null; tkNotifs=null; if(typeof loadTracker==="function") loadTracker(); }} },
+  { id:"notes",   label:"Notes",      check:sbCheckNotes,   fix:{label:"↻ Re-sync", run:()=>{ if(resyncNotes) resyncNotes(); }} },
+];
+const sbState={}; let sbLastRun=0;
+function sbStateClass(s){ return ({on:"on",warn:"warn",off:"off",idle:"idle",check:"check"}[s]||"check"); }
+function renderSwitchboard(){
+  const bar=document.getElementById("switchboard"); if(!bar) return;
+  bar.innerHTML=SB_CONNS.map(c=>{ const s=sbState[c.id]||{state:"check",summary:"…"};
+    return `<button type="button" class="sb-chip" data-id="${c.id}" title="${escAttr(c.label+" — "+(s.summary||s.state))}"><span class="led ${sbStateClass(s.state)}"></span><span class="sb-label">${esc(c.label)}</span></button>`;
+  }).join("");
+  bar.querySelectorAll(".sb-chip").forEach(b=>b.onclick=()=>openSbDetail(b.dataset.id));
+  const sum=document.getElementById("sb-summary");
+  if(sum){ const reds=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="off").length, ambers=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="warn").length, checking=SB_CONNS.some(c=>!sbState[c.id]||sbState[c.id].state==="check");
+    sum.textContent = checking?"checking…": reds?`${reds} down`: ambers?`${ambers} need attention`:"all systems go ✓";
+    sum.className="fin-state "+(reds?"sb-red":ambers?"sb-amber":checking?"":"sb-green");
+  }
+}
+async function sbCheckOne(c){
+  sbState[c.id]={state:"check",summary:"checking…"}; renderSwitchboard();
+  let r; try{ r=await c.check(); }catch(e){ r={state:"off",summary:"error",detail:String(e&&e.message||e)}; }
+  r._at=Date.now(); sbState[c.id]=r; renderSwitchboard(); return r;
+}
+async function runSwitchboard(){ sbLastRun=Date.now(); await Promise.all(SB_CONNS.map(sbCheckOne)); }
+function sbCopyText(c,s){ return `[miDash switchboard · v${CONFIG.version}] ${c.label} = ${(s.state||"?").toUpperCase()}${s.summary?" ("+s.summary+")":""}\n${s.detail||""}\nchecked: ${s._at?new Date(s._at).toISOString():"n/a"}`; }
+function openSbDetail(id){
+  const c=SB_CONNS.find(x=>x.id===id), s=sbState[id]||{}; if(!c) return;
+  const m=document.getElementById("sb-modal"), body=document.getElementById("sb-modal-body"), title=document.getElementById("sb-modal-title");
+  if(title) title.textContent="🎛️ "+c.label;
+  const word={on:"🟢 Green — healthy",warn:"🟡 Amber — needs attention",off:"🔴 Red — down",idle:"⚪ Grey — not set up",check:"… checking"}[s.state]||s.state||"…";
+  body.innerHTML=`<div class="sb-state">${word}${s.summary?` · ${esc(s.summary)}`:""}</div>
+    <div class="sb-detail">${esc(s.detail||"No further detail.")}</div>
+    <div class="sb-actions">
+      <button class="gbtn" id="sb-recheck">↻ Re-check</button>
+      ${c.fix?`<button class="gbtn" id="sb-fix" style="border-color:var(--accent);color:var(--accent)">${esc(c.fix.label)}</button>`:""}
+      <button class="gbtn" id="sb-copy">📋 Copy for Claude</button>
+      <button class="gbtn" id="sb-close">Close</button>
+    </div>
+    <div id="sb-copied" class="sb-copied"></div>`;
+  m.style.display="flex";
+  document.getElementById("sb-recheck").onclick=async()=>{ await sbCheckOne(c); openSbDetail(id); };
+  const cl=document.getElementById("sb-close"); if(cl) cl.onclick=()=>m.style.display="none";
+  if(c.fix){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ m.style.display="none"; try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
+  document.getElementById("sb-copy").onclick=()=>{ const txt=sbCopyText(c,s), note=document.getElementById("sb-copied");
+    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>{ if(note) note.textContent="Copied — paste it to Claude."; }).catch(()=>{ if(note) note.textContent=txt; }); }
+    else if(note) note.textContent=txt; };
+}
+async function sbCheckWorker(){
+  if(!CONFIG.chatEndpoint) return {state:"idle",summary:"not configured",detail:"No chatEndpoint set in CONFIG."};
+  try{ const r=await fetch(CONFIG.chatEndpoint,{method:"GET"}); return {state:"on",summary:"reachable",detail:`Worker responded HTTP ${r.status} (any reply = reachable).\n${CONFIG.chatEndpoint}`}; }
+  catch(e){ return {state:"off",summary:"unreachable",detail:`Network error reaching the Worker:\n${CONFIG.chatEndpoint}\n${e.message}\nThe Worker may be down, or your network is blocking it.`}; }
+}
+async function sbCheckPass(){
+  if(!NOTES_URL) return {state:"idle",summary:"n/a",detail:"No backend configured."};
+  const held=getDashKey();
+  try{ const r=await fetch(NOTES_URL,{headers: held?{Authorization:"Bearer "+held}:{}});
+    if(r.status===200) return {state:"on",summary:held?"valid":"open",detail: held?"The passphrase saved on this device matches the Worker's DASH_KEY.":"Worker is open (DASH_KEY not enforced)."};
+    if(r.status===401) return {state:"warn",summary:held?"wrong":"needed",detail:`Worker returned 401.\n${held?"The passphrase saved on this device doesn't match DASH_KEY.":"No passphrase saved on this device."}\nFix: ⚙️ → 🔒 Dashboard passphrase.`};
+    return {state:"warn",summary:"HTTP "+r.status,detail:`Unexpected HTTP ${r.status} from /notes.`};
+  }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker: "+e.message}; }
+}
+function sbCheckGoogle(){
+  if(!accounts||!accounts.length) return {state:"warn",summary:"not connected",detail:"No Google account connected. Click Connect Google."};
+  const now=Date.now(), expired=accounts.filter(a=>!(a.exp>now+60000));
+  if(expired.length===accounts.length) return {state:"warn",summary:"expired",detail:`All ${accounts.length} Google token(s) expired (they last ~1h by design). Reconnect.`};
+  if(expired.length) return {state:"warn",summary:`${expired.length} expired`,detail:`Expired: ${expired.map(a=>a.email).join(", ")}.\nStill valid: ${accounts.filter(a=>a.exp>now+60000).map(a=>a.email).join(", ")}.`};
+  return {state:"on",summary:`${accounts.length} connected`,detail:`Connected: ${accounts.map(a=>a.email).join(", ")}.`};
+}
+async function sbCheckFinance(){
+  if(!FINANCE_URL) return {state:"idle",summary:"not configured",detail:"No chatEndpoint."};
+  let p; try{ p=await finance("/ping"); }catch(e){ p={offline:true}; }
+  if(p&&p.error&&p.error.code==="auth") return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed to reach finance."};
+  if(p&&p.offline) return {state:"off",summary:"offline",detail:"42payments isn't reachable. It's only up while the app runs behind its tunnel — bring the app/tunnel up, then re-check."};
+  if(p&&p.code==="upstream_nonjson") return {state:"warn",summary:"setup",detail:cleanErr(p.error)};
+  if(p&&(p.connected===false||p.not_ready)) return {state:"warn",summary:"not connected",detail:"42payments is up but FreshBooks isn't connected — sign in once at 42payments."};
+  if(p&&(p.success===false||p.error)) return {state:"off",summary:"error",detail:cleanErr(p.error||p)};
+  return {state:"on",summary:"connected",detail:"42payments reachable + connected."};
+}
+async function sbCheckTracker(){
+  if(!TRACKER_URL) return {state:"idle",summary:"not configured",detail:"No chatEndpoint."};
+  let p; try{ p=await tracker("ping"); }catch(e){ p={offline:true}; }
+  if(p&&p.error&&p.error.code==="auth") return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed to reach Tracker42."};
+  if(p&&p.offline) return {state:"off",summary:"offline",detail:"Tracker42 unreachable — retry later."};
+  if(p&&p.code==="not_configured") return {state:"idle",summary:"token not set",detail:"PORTAL42_TOKEN isn't set on the Worker (wrangler secret put PORTAL42_TOKEN)."};
+  if(p&&(p.code==="upstream_nonjson"||(p.error&&/not initiali|migration/i.test(cleanErr(p.error))))) return {state:"warn",summary:"setup pending",detail:"Run the api_tokens migration on Tracker42 (Admin → Migrations)."};
+  if(p&&(p.success===false||p.error)) return {state:"off",summary:"error",detail:cleanErr(p.error||p)};
+  const who=p&&p.data&&p.data.user, scopes=p&&p.data&&p.data.scopes;
+  return {state:"on",summary:who?("@"+who.username):"connected",detail:`Tracker42 reachable + token valid.${scopes?"\nScopes: "+scopes.join(", "):""}`};
+}
+async function sbCheckNotes(){
+  if(!NOTES_URL) return {state:"idle",summary:"n/a",detail:"No backend."};
+  let res; try{ res=await fetchNotes(); }catch(e){ res={error:"net"}; }
+  if(res.error==="key") return {state:"warn",summary:"locked",detail:"Passphrase needed for Notes sync (401)."};
+  if(res.error) return {state:res.error==="net"?"off":"warn",summary:res.error,detail:`Notes sync issue: ${res.error}${res.status?` (HTTP ${res.status})`:""}.`};
+  return {state:"on",summary:"synced",detail:"Notes KV reachable + synced."};
+}
+function initSwitchboard(){
+  const r=document.getElementById("sb-refresh"); if(r) r.onclick=runSwitchboard;
+  const bg=document.getElementById("sb-modal-bg"); if(bg) bg.onclick=()=>{ const m=document.getElementById("sb-modal"); if(m) m.style.display="none"; };
+  renderSwitchboard();
+  runSwitchboard();
+  window.addEventListener("focus", ()=>{ if(document.getElementById("switchboard-card") && Date.now()-sbLastRun>20000) runSwitchboard(); });
 }
 
 /* ---------- Credit Card Debt card (balances from 42payments + miDash-owned payoff plan) ---------- */
@@ -3129,7 +3389,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initFinance(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initSwitchboard(); initFinance(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
