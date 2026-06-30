@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.15.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.21.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-30
 
 ---
 
@@ -54,6 +54,10 @@ to be an external retriever that talks to the same Worker via a messaging app
 - **Worker (brain):** https://midash-chat.quentin-forgues.workers.dev
 - **Worker chat endpoint:** `POST /`  (Anthropic messages + tools)
 - **Notes endpoint:** `GET/PUT /notes`  (Cloudflare KV, currently open/no-auth)
+- **Finance proxy:** `POST /finance`  (42payments/FreshBooks; key held server-side)
+- **CC payoff plan:** `GET/PUT /ccplan`  (KV `ccplan` blob — debt card)
+- **Projects board:** `GET/PUT /projects`  (KV `projects` array — projects tracker, v1.20.0)
+- All non-chat endpoints are gated by the `DASH_KEY` passphrase via `authed()`.
 
 ## Accounts & keys
 
@@ -114,7 +118,9 @@ to be an external retriever that talks to the same Worker via a messaging app
 
 `search_emails`, `get_email`, `reply_email`, `trash_email`, `archive_email`,
 `mark_read`, `list_events`, `create_event`, `delete_event`, `send_email`,
-`list_tasks`, `create_task`, `complete_task`, `read_notes`.
+`list_tasks`, `create_task`, `complete_task`, `read_notes`,
+`list_projects`, `update_project`, `add_project`,
+`finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
 
 **Idea → reality flow (v1.13.0):** ideas incubate in **Notes** (capture box "💡 Save this
 idea" + `read_notes`); **Tasks** are the actionable layer (Google Tasks, now read+write).
@@ -158,6 +164,43 @@ spend from each response's `usage`, accumulated per local day, resetting at midn
 > `worker.js`) would cut that ~90% — a good future optimization, not yet done.
 
 ---
+
+## Projects tracker (v1.20.0)
+
+A main-column **🚀 Projects** card — an idea→shipped progress board so every
+software/website/app project keeps moving and none gets left behind. Lives entirely
+in `index.html` (search `PROJECTS — idea→shipped`), backed by the Worker's
+`GET/PUT /projects` KV blob (mirrors `/ccplan`) with a localStorage cache.
+
+- **Pipeline:** `PIPELINE` const — 💡 Idea → 🔬 Validate → 📝 Plan → 🛠️ Build →
+  🧪 Test → 🚀 Ship → 📈 Grow. Progress % is the stage index over the last stage.
+- **One record = all values:** `{id,name,url,repo,stage,next,notes,updated,pinned,order}`.
+  `normalizeProject()` coerces/clamps; `next` is the single "push it forward" action.
+- **Neglect surfacing:** `projStale()` flags un-shipped projects amber >14d / red >30d
+  (touched = `updated`); the header + summary show "N need a push". Stages ≥ Ship are
+  "live" and never nagged.
+- **Sources:** ＋ Add (manual) and ⇪ Import GitHub repos (pulls `githubUser`'s repos as
+  Idea-stage, de-duped by repo/name — imported repos inherit `pushed_at` so old ones show
+  red on purpose). Sort: most-neglected / stage / A–Z / manual.
+- **Agent:** `list_projects` / `update_project` / `add_project` (worker.js TOOLS +
+  `executeTool` in index.html). They run in the browser like the other tools, need no
+  Google (`noGoogle` exemption: `/projects?$/`), and act without a confirm. So
+  "what's most neglected?", "move La Palma to ship", "track a new idea: …" work in chat.
+- First-run seed: miDash + the `pinnedProjects` entries.
+
+## Version-driven look + menu lock (v1.21.0)
+
+- **Look refresh on upgrade** (`applyVersionTheme()` in index.html, runs at boot before
+  `applyBackground()`): a **MAJOR** version bump rolls a fresh background **design** +
+  colors; a **MINOR** bump rolls fresh **colors**, keeping the design; a **PATCH** bump
+  changes nothing. Tracked via `midash_theme_ver` (separate from the version-highlight's
+  `midash_ver_*`). First run only showcases it if appearance is still default — manual
+  themes are respected until the next bump; **Settings → Reset appearance** clears it and
+  the next bump re-rolls. Colors come from `randomThemeColors()` (HSL→hex), pattern from
+  `randomPattern()`. **So: bump MINOR for a color refresh, MAJOR for a new design.**
+- **Hamburger (☰) gated by the passphrase:** `refreshMenuLock()` shows 🔒 and routes a
+  click to the passphrase modal when no `DASH_KEY` is held on the device; the ⚙️ gear menu
+  stays open (that's where you set the key). Re-evaluated on save/clear in the key modal.
 
 ## Daily workflow
 
@@ -222,12 +265,17 @@ cd ~/miDash && wrangler deploy
 - [ ] **Update `server.js`** (Pi backend) to match `worker.js`: add `/notes`, `delete_event`,
       `read_notes`, multi-account tool behavior, updated SYSTEM prompt.
 - [ ] **Lock Notes** with `NOTES_KEY` when ready (restore the 🔑 sync-key UI).
-- [ ] Optional: scheduled briefings (daily agenda/inbox digest), more agent tools
-      (create_event, send_email), school-portal link for Kids, richer Projects.
+- [ ] Optional: scheduled briefings (daily agenda/inbox digest), school-portal link for Kids.
+- [x] Richer Projects — idea→shipped tracker card (v1.20.0).
 
 ## Quick "where were we" log
 
 - v1.6.x: top menu collapsed to a one-row hover-dropdown bar; agenda 60 / notes 40;
   full-width content; per-account row/badge colors; theme color picker; one-click
   unsubscribe via `List-Unsubscribe`; Gmail 404 + 429 fixes; Notes synced via Worker KV.
+- v1.16–1.19: 42payments finance card + tools; Credit-Card Debt card + payoff plan;
+  La Palma TV pinned atop the Projects quick-links.
+- v1.20.0: **Projects tracker** card (idea→shipped board, `/projects` KV, agent tools).
+- v1.21.0: **version-driven look** (major→design, minor→colors) + **hamburger gated**
+  behind the dashboard passphrase.
 - Next session likely starts on the **Pi/claw42** cleanup.

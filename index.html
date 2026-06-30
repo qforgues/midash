@@ -57,6 +57,7 @@
   .gbtn { border:1px solid var(--border); background:var(--surface); color:var(--text);
           border-radius:10px; padding:9px 14px; font-size:14px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; }
   .gbtn:hover { background:var(--accent-soft); }
+  .gbtn.locked { opacity:.72; }
 
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:20px; }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
@@ -682,7 +683,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.20.0",
+  version: "1.21.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1205,6 +1206,59 @@ function applyBackground(){
   }
   applyTheme();   // recompute accent-soft against the new surface
 }
+/* ---------- Version-driven look ----------
+   Each upgrade refreshes the appearance so a new build *feels* new:
+   • a MAJOR bump (X in vX.Y.Z) rolls a fresh background DESIGN (+ colors),
+   • a MINOR bump (Y) rolls fresh COLORS, keeping the design,
+   • a PATCH bump (Z) changes nothing.
+   We track the version we last themed for (midash_theme_ver). On the very first
+   run we only showcase it if the user hasn't already customised appearance —
+   manual themes are respected until the next real bump. "Reset appearance" in
+   Settings still clears it; the next bump re-rolls. */
+function randInt(n){ return Math.floor(Math.random()*n); }
+function hsl2hex(h,s,l){
+  s/=100; l/=100;
+  const k=n=>(n+h/30)%12, a=s*Math.min(l,1-l);
+  const f=n=>{ const c=l-a*Math.max(-1,Math.min(k(n)-3,9-k(n),1)); return Math.round(255*c); };
+  const hx=v=>v.toString(16).padStart(2,"0");
+  return "#"+hx(f(0))+hx(f(8))+hx(f(4));
+}
+function randomPattern(){ const pool=["gradient","vertical","stripes","dots","grid","checker"]; return pool[randInt(pool.length)]; }
+function randomThemeColors(){
+  const h=randInt(360), h2=(h+150+randInt(80))%360, dark=Math.random()<0.5;
+  return dark
+    ? { a:hsl2hex(h,30+randInt(20),10+randInt(8)),  b:hsl2hex(h2,55+randInt(25),52+randInt(12)), accent:hsl2hex(h2,60+randInt(20),58+randInt(10)) }
+    : { a:hsl2hex(h,25+randInt(25),92+randInt(5)),  b:hsl2hex(h2,50+randInt(25),42+randInt(12)), accent:hsl2hex(h2,55+randInt(20),40+randInt(12)) };
+}
+function rollTheme(newPattern,newColors){
+  const cur=bgSettings()||{}, cols=randomThemeColors();
+  const next={
+    pattern: newPattern ? randomPattern() : ((cur.pattern && cur.pattern!=="default") ? cur.pattern : randomPattern()),
+    a: newColors ? cols.a : (cur.a||"#fafaf9"),
+    b: newColors ? cols.b : (cur.b||"#2d6a4f"),
+  };
+  if(newColors){ try{ localStorage.setItem("midash_theme", cols.accent); }catch(e){} }
+  saveBg(next);   // persists midash_bg + applyBackground() → applyTheme()
+}
+function applyVersionTheme(){
+  const cur=String(CONFIG.version||""); if(!cur) return;
+  let last=null; try{ last=localStorage.getItem("midash_theme_ver"); }catch(e){}
+  if(last===cur) return;
+  const rec=()=>{ try{ localStorage.setItem("midash_theme_ver",cur); }catch(e){} };
+  const c=cur.split(".").map(n=>parseInt(n,10)||0);
+  if(last===null){   // first run with this feature
+    const s=bgSettings(); const custom=s&&s.pattern&&s.pattern!=="default";
+    if(!custom) rollTheme(true,true);   // showcase it for users still on the default look
+    rec(); return;
+  }
+  const p=last.split(".").map(n=>parseInt(n,10)||0);
+  const majorUp = c[0]>p[0];
+  const minorUp = majorUp || (c[0]===p[0] && c[1]>p[1]);
+  if(majorUp) rollTheme(true,true);          // new design + colors
+  else if(minorUp) rollTheme(false,true);    // new colors, same design
+  rec();                                      // patch-only: nothing
+}
+
 function initGearMenu(){
   // Two dropdowns: ⚙️ gear (profile + passphrase) and ☰ hamburger (all links). One open at a time.
   const pairs=[["gear-btn","gear-menu"],["menu-btn","links-menu"]];
@@ -1212,10 +1266,26 @@ function initGearMenu(){
   pairs.forEach(([bid,mid])=>{
     const b=document.getElementById(bid), m=document.getElementById(mid);
     if(!b||!m) return;
-    b.onclick=(e)=>{ e.stopPropagation(); const open=m.style.display==="block"; menus.forEach(x=>x.style.display="none"); m.style.display=open?"none":"block"; };
+    b.onclick=(e)=>{
+      e.stopPropagation();
+      // The ☰ links menu is gated behind the dashboard passphrase, so a device without the
+      // key can't browse your links/apps. Clicking it locked opens the passphrase prompt
+      // instead. The ⚙️ gear menu stays open regardless — that's where you SET the key.
+      if(mid==="links-menu" && !getDashKey()){ menus.forEach(x=>x.style.display="none"); openKeyModal(); return; }
+      const open=m.style.display==="block"; menus.forEach(x=>x.style.display="none"); m.style.display=open?"none":"block";
+    };
     m.addEventListener("click",(e)=>e.stopPropagation());   // clicks inside keep it open (links still navigate)
   });
   document.addEventListener("click",()=>menus.forEach(m=>m.style.display="none"));
+  refreshMenuLock();
+}
+/* Reflect the lock state on the ☰ button: locked (no passphrase on this device) shows 🔒. */
+function refreshMenuLock(){
+  const b=document.getElementById("menu-btn"); if(!b) return;
+  const locked=!getDashKey();
+  b.textContent=locked?"🔒":"☰";
+  b.title=locked?"Links locked — set your dashboard passphrase to unlock":"Links & apps";
+  b.classList.toggle("locked",locked);
 }
 function initSettings(){
   const btn=document.getElementById("open-settings"), modal=document.getElementById("settings-modal");
@@ -2499,14 +2569,14 @@ function initKeyModal(){
   inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); testKey(inp.value.trim()); } });
   document.getElementById("key-save").onclick=async()=>{
     const v=inp.value.trim(); const ok=await testKey(v);
-    setDashKey(v); showKeyMeta();
+    setDashKey(v); showKeyMeta(); refreshMenuLock();
     if(ok){ if(resyncNotes) resyncNotes();
       const r=document.getElementById("key-result");
       if(dashKeyPersists()){ r.textContent="✅ Saved & in use — the agent and Notes work now. Resend your message."; r.className="key-result ok"; }
       else { r.textContent="✅ In use for this session — resend your message now. ⚠️ This browser is blocking local storage (Private Browsing?), so you'll re-enter it next launch. Turn off Private Browsing, or install miDash to your home screen, to make it stick."; r.className="key-result ok"; }
     }
   };
-  document.getElementById("key-clear2").onclick=()=>{ setDashKey(""); inp.value=""; showKeyMeta();
+  document.getElementById("key-clear2").onclick=()=>{ setDashKey(""); inp.value=""; showKeyMeta(); refreshMenuLock();
     const r=document.getElementById("key-result"); r.textContent="Cleared the locally stored passphrase."; r.className="key-result"; };
   const close=()=>{ m.style.display="none"; };
   document.getElementById("key-done").onclick=close;
@@ -2755,7 +2825,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initFinance(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initFinance(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
