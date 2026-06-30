@@ -335,7 +335,7 @@ async function handleTracker(request, env) {
   } catch {
     return json({ offline: true, error: "Tracker42 isn't reachable right now." }, 503);
   }
-  const text = await r.text();
+  let text; try { text = await r.text(); } catch (e) { return json({ success: false, code: "upstream_read", error: "Couldn't read Tracker42's response (HTTP " + r.status + "): " + (e && e.message ? e.message : String(e)) }, 502); }
   // Forward clean JSON straight through. If the upstream returns non-JSON (e.g. an HTML error
   // page — which Tracker42 does when a token is present but the api_tokens table/migration isn't
   // in place), don't relay a wall of HTML: surface one actionable line.
@@ -392,14 +392,22 @@ async function handleChat(request, env) {
 
 export default {
   async fetch(request, env) {
-    if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
-    if (!authed(request, env)) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
-    const url = new URL(request.url);
-    if (url.pathname === "/notes") return handleNotes(request, env);
-    if (url.pathname === "/finance") return handleFinance(request, env);
-    if (url.pathname === "/ccplan") return handleCCPlan(request, env);
-    if (url.pathname === "/projects") return handleProjects(request, env);
-    if (url.pathname === "/tracker") return handleTracker(request, env);
-    return handleChat(request, env);
+    // Wrap everything: an uncaught throw otherwise yields Cloudflare's default error page,
+    // which has NO CORS headers — the browser then reports a misleading "access control checks"
+    // failure instead of the real error. This guarantees a CORS-safe JSON error the dashboard
+    // can read and show.
+    try {
+      if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
+      if (!authed(request, env)) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
+      const url = new URL(request.url);
+      if (url.pathname === "/notes") return handleNotes(request, env);
+      if (url.pathname === "/finance") return handleFinance(request, env);
+      if (url.pathname === "/ccplan") return handleCCPlan(request, env);
+      if (url.pathname === "/projects") return handleProjects(request, env);
+      if (url.pathname === "/tracker") return handleTracker(request, env);
+      return handleChat(request, env);
+    } catch (e) {
+      return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
+    }
   },
 };

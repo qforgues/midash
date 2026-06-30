@@ -839,7 +839,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.24.2",
+  version: "1.24.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2505,8 +2505,8 @@ async function loadTracker(){
     // notifications — always (drives the unread badge + the Notifications tab)
     let nd; try{ nd=await tracker("notifications",{since:0,order:"desc",limit:20}); }catch(e){ nd=null; }
     if(nd && Array.isArray(nd.data)){ tkNotifs=nd; setTrackerBadge(nd.meta&&nd.meta.unread_count); }
-    // tickets — when that tab is showing
-    if(tkTab==="tickets"){ let td; try{ td=await tracker("tickets",{limit:50}); }catch(e){ td=null; } if(td&&Array.isArray(td.data)) tkTickets=td; }
+    // tickets — when that tab is showing (store the full result, incl. errors, so the tab can show them)
+    if(tkTab==="tickets"){ try{ tkTickets=await tracker("tickets",{limit:50}); }catch(e){ tkTickets={error:String(e&&e.message||e)}; } }
     renderTrackerTab();
   } finally { trackerLastLoad=Date.now(); trackerBusy=false; }
 }
@@ -2519,6 +2519,12 @@ function renderTrackerTab(){
 const TK_PER=5; let tkTicketPage=0;   // show 5 tickets at a time, page through the rest
 function renderTickets(d){
   const body=document.getElementById("tracker-body"); if(!body) return;
+  if(!d || d.offline || d.success===false || d.error){
+    const m = d&&d.offline ? "Tracker42 is unreachable right now." : (d&&d.error ? cleanErr(d.error) : "Couldn’t load tickets.");
+    body.innerHTML=`<div class="empty">Couldn’t load tickets — ${esc(m)} <span class="refresh" id="tkt-retry" style="margin-left:6px">↻ retry</span></div>`;
+    const rb=document.getElementById("tkt-retry"); if(rb) rb.onclick=()=>{ tkTickets=null; loadTracker(); };
+    return;
+  }
   const list=Array.isArray(d.data)?d.data.slice():[];
   if(!list.length){ body.innerHTML=`<div class="empty">No tickets.</div>`; return; }
   const pos=statusPos();
