@@ -210,6 +210,22 @@
           border-radius:8px; padding:8px 10px; font-size:14px; outline:none; font-family:inherit; }
   @media (max-width:560px){ .proj-stage { display:none; } .proj-foot { flex-wrap:wrap; } }
 
+  /* Tracker42 — Portal42 ticket notifications */
+  .tk-badge { display:none; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--warn); color:#fff;
+              font-size:11px; font-weight:700; align-items:center; justify-content:center; line-height:18px; text-transform:none; letter-spacing:0; }
+  .tk-badge.show { display:inline-flex; }
+  .tk-row { display:flex; align-items:flex-start; gap:10px; padding:9px 2px; border-bottom:1px solid var(--border); min-width:0; }
+  .tk-row:last-child { border-bottom:none; }
+  .tk-row.new { background:color-mix(in srgb, var(--accent) 6%, transparent); border-radius:8px; }
+  .tk-ic { flex:0 0 auto; font-size:15px; line-height:1.35; }
+  .tk-main { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+  .tk-title { font-size:13.5px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .tk-row.new .tk-title::after { content:"NEW"; font-size:9px; font-weight:800; letter-spacing:.05em; color:#fff;
+              background:var(--accent); padding:1px 5px; border-radius:4px; }
+  .tk-msg { font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .tk-tkt { font-size:10.5px; font-weight:700; letter-spacing:.02em; color:var(--accent); background:var(--accent-soft); padding:1px 6px; border-radius:5px; }
+  .tk-age { flex:0 0 auto; font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
   .refresh.spin .ricon { animation:spin .7s linear infinite; }
@@ -491,6 +507,17 @@
       </div>
       <div id="auth-note" class="needsauth" style="display:none;margin-bottom:20px"></div>
 
+      <!-- Tracker42 — Portal42 ticket notifications. Read via the Worker's /tracker proxy
+           (PORTAL42_TOKEN held server-side, passphrase-gated). Notifications are live now;
+           the ticket view lights up when the tickets:read endpoints ship (additive). -->
+      <div class="card" id="tracker-card" style="margin-bottom:20px">
+        <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Portal42 Tickets
+          <span class="tk-badge" id="tracker-badge">0</span>
+          <span class="fin-state" id="tk-state">checking…</span>
+          <span class="refresh" id="tracker-refresh"><span class="ricon">↻</span> refresh</span></h2>
+        <div id="tracker-body"><div class="empty">—</div></div>
+      </div>
+
       <!-- Projects — idea→shipped progress tracker (miDash-owned, syncs via /projects KV).
            Keep every project moving; the "last touched" age flags neglected ones. -->
       <div class="card" id="projects-card" style="margin-bottom:20px">
@@ -683,7 +710,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.21.0",
+  version: "1.22.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2266,6 +2293,91 @@ function initFinance(){
   window.addEventListener("focus", ()=>{ if(document.getElementById("finance-card") && Date.now()-finLastLoad>30000) loadFinance(); });
 }
 
+/* ============================================================
+   TRACKER42 — Portal42 ticket notifications (read-only)
+   Talks to the Worker's /tracker proxy, which holds the PORTAL42_TOKEN
+   server-side and forwards ?action=… to tracker42.com. Schema is locked
+   (created_at, ticket_id/ticket_number/ticket_title, type enum, meta.*).
+   Cursor (lastSeenId) persists in localStorage so "new since you looked"
+   survives reloads. Ticket endpoints aren't live yet — get_ticket / the
+   ticket view stay dormant and 400-tolerant until they ship.
+   ============================================================ */
+const TRACKER_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/tracker" : "";
+const TK_ICON = { comment:"💬", status_change:"🔁", assignment:"👤", approval:"✅", rejection:"⛔", release:"🚀", qa_pass:"🟢", qa_fail:"🔴" };
+let trackerBusy=false, trackerLastLoad=0;
+let trackerSeen=(()=>{ try{ return Number(localStorage.getItem("midash_tracker_seen"))||0; }catch(e){ return 0; } })();
+
+/* GET /tracker?action=…; params forwarded: since, limit, id. Returns parsed JSON, or
+   {offline:true} on a Worker/network failure. Passphrase-401 surfaces as {error:{code:"auth"}}
+   (Worker), a bad-token 401 surfaces as the upstream {success:false,error:…}. */
+async function tracker(action, params){
+  if(!TRACKER_URL) return {error:"Tracker not configured (no chatEndpoint).", code:"not_configured"};
+  const qs=new URLSearchParams({action:action||"ping"});
+  if(params) for(const k of ["since","limit","id"]) if(params[k]!=null) qs.set(k, params[k]);
+  let res;
+  try{ res=await fetch(TRACKER_URL+"?"+qs.toString(), {headers:{...dashAuthHeader()}}); }
+  catch(e){ return {offline:true, error:"Tracker42 offline — retry later."}; }
+  let data; try{ data=await res.json(); }catch(e){ data={success:false, error:"tracker returned non-JSON ("+res.status+")"}; }
+  if(res.status===503 && data && data.offline) return {offline:true, error:data.error||"Tracker42 offline — retry later."};
+  return data;
+}
+function setTrackerLed(state,label){ setLedEl(document.getElementById("tk-led"),document.getElementById("tk-state"),state,label,"Tracker42 — "); }
+function setTrackerBadge(n){ const b=document.getElementById("tracker-badge"); if(!b) return; const c=Number(n)||0; b.textContent=String(c); b.classList.toggle("show", c>0); b.title=c+" unread"; }
+function wireTkRetry(){ const b=document.getElementById("tk-retry"); if(b) b.onclick=loadTracker; }
+async function loadTracker(){
+  const body=document.getElementById("tracker-body"); if(!body) return;
+  if(!TRACKER_URL){ setTrackerLed("off","not configured"); body.innerHTML=`<div class="empty">Tracker42 backend not configured.</div>`; return; }
+  if(trackerBusy) return; trackerBusy=true;
+  try{
+    setTrackerLed("check","checking…");
+    let ping; try{ ping=await tracker("ping"); }catch(e){ ping={offline:true}; }
+    if(ping && ping.offline){ setTrackerLed("off","offline"); body.innerHTML=`<div class="empty">Tracker42 isn’t reachable right now. <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return; }
+    if(ping && ping.error && ping.error.code==="auth"){ setTrackerLed("off","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach Tracker42 (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
+    if(ping && ping.code==="not_configured"){ setTrackerLed("off","not configured"); body.innerHTML=`<div class="needsauth">Tracker42 token isn’t set on the Worker yet — run <code>wrangler secret put PORTAL42_TOKEN</code>, then refresh.</div>`; return; }
+    if(ping && (ping.success===false || ping.error)){ setTrackerLed("off","error"); const m=ping.error&&(ping.error.message||ping.error)||"token/scope error"; body.innerHTML=`<div class="empty">${esc(typeof m==="string"?m:JSON.stringify(m))}</div>`; return; }
+    const who=ping&&ping.data&&ping.data.user;
+    setTrackerLed("on", who?("@"+(who.username||"connected")):"connected");
+    body.innerHTML=`<div class="empty">Loading notifications…</div>`;
+    let nd; try{ nd=await tracker("notifications",{since:0,limit:20}); }catch(e){ nd={error:"notifications failed"}; }
+    if(!nd || nd.offline || nd.success===false || nd.error){
+      const m=nd&&nd.error?(typeof nd.error==="string"?nd.error:JSON.stringify(nd.error)):"Notifications unavailable.";
+      body.innerHTML=`<div class="empty">${esc(m)} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return;
+    }
+    renderTrackerNotifs(nd);
+  } finally { trackerLastLoad=Date.now(); trackerBusy=false; }
+}
+function renderTrackerNotifs(d){
+  const body=document.getElementById("tracker-body"); if(!body) return;
+  const meta=d.meta||{}, list=Array.isArray(d.data)?d.data:[];
+  setTrackerBadge(meta.unread_count);
+  if(!list.length){ body.innerHTML=`<div class="empty">No notifications 🎉</div>`; }
+  else {
+    body.innerHTML=list.map(n=>{
+      const isNew = Number(n.id) > trackerSeen;              // local "since you last looked" flag
+      const ic=TK_ICON[n.type]||"🔔";
+      const tkt = n.ticket_number?`<span class="tk-tkt" title="${escAttr(n.ticket_title||"")}">${esc(n.ticket_number)}</span>`:"";
+      return `<div class="tk-row${isNew?" new":""}">
+        <span class="tk-ic">${ic}</span>
+        <span class="tk-main"><span class="tk-title">${esc(n.title||"(untitled)")}${tkt}</span>
+          <span class="tk-msg">${esc(n.message||"")}</span></span>
+        <span class="tk-age" title="${escAttr(n.created_at||"")}">${n.created_at?rel(n.created_at):""}</span>
+      </div>`;
+    }).join("");
+  }
+  // advance the local cursor AFTER computing isNew, so new items clear on the next poll
+  const latest=Number(meta.latest_id || (list[0]&&list[0].id) || trackerSeen) || trackerSeen;
+  if(latest>trackerSeen){ trackerSeen=latest; try{ localStorage.setItem("midash_tracker_seen",String(trackerSeen)); }catch(e){} }
+}
+function initTracker(){
+  const r=document.getElementById("tracker-refresh"); if(r) r.onclick=loadTracker;
+  const led=document.getElementById("tk-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadTracker; }
+  loadTracker();
+  window.addEventListener("focus", ()=>{ if(document.getElementById("tracker-card") && Date.now()-trackerLastLoad>30000) loadTracker(); });
+  // Gentle background poll so new tickets surface without a manual refresh (interval tunable
+  // once Tracker42 confirms its rate limit — see the open questions).
+  setInterval(()=>{ if(!document.hidden && document.getElementById("tracker-card") && Date.now()-trackerLastLoad>60000) loadTracker(); }, 120000);
+}
+
 /* ---------- Credit Card Debt card (balances from 42payments + miDash-owned payoff plan) ---------- */
 function pickMoney(v){ if(v==null) return null; if(typeof v==="object"){ if("amount" in v) return v; if("balance" in v) return v.balance; } return v; }
 function pickAmt(v){ const m=pickMoney(v); if(m==null) return NaN; return Number(typeof m==="object"?m.amount:m); }
@@ -2331,7 +2443,7 @@ function initDebt(){
 }
 
 async function executeTool(name,a){
-  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name));
+  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name) || /tracker|ticket/.test(name));
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
@@ -2479,6 +2591,22 @@ async function executeTool(name,a){
         if(a.notes!=null) p.notes=String(a.notes);
         p.updated=Date.now(); renderProjects(); saveProjects();
         return { updated:true, name:p.name, stage:(PIPELINE[p.stage]||PIPELINE[0]).key, progressPct:projPct(p.stage) };
+      }
+      case "list_tracker_notifications": {
+        const d=await tracker("notifications",{ since:(a&&a.since!=null)?a.since:0, limit:(a&&a.limit)?a.limit:20 });
+        if(d&&d.offline) return {error:"Tracker42 is offline right now — retry later."};
+        if(d&&d.error&&d.error.code==="auth") return {error:"Dashboard passphrase needed to reach Tracker42."};
+        if(d&&d.code==="not_configured") return {error:"Tracker42 token isn’t set on the Worker yet (wrangler secret put PORTAL42_TOKEN)."};
+        if(!d||d.success===false||d.error) return {error:(d&&d.error)?(typeof d.error==="string"?d.error:JSON.stringify(d.error)):"tracker error"};
+        return { notifications:d.data||[], meta:d.meta||{} };
+      }
+      case "get_ticket": {
+        if(a.id==null) return {error:"need a ticket id"};
+        const d=await tracker("ticket",{id:a.id});
+        if(d&&d.offline) return {error:"Tracker42 is offline right now — retry later."};
+        if(d&&d.error&&d.error.code==="auth") return {error:"Dashboard passphrase needed to reach Tracker42."};
+        if(!d||d.success===false||d.error){ const m=d&&d.error?(typeof d.error==="string"?d.error:JSON.stringify(d.error)):"tracker error"; return {error:m, note:"Ticket endpoints may not be live yet — tickets:read is shipping soon. Use list_tracker_notifications meanwhile."}; }
+        return d.data||d;
       }
       case "finance_summary": return await finance("/summary");
       case "finance_list": {
@@ -2825,7 +2953,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initFinance(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initFinance(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>

@@ -59,6 +59,13 @@ projects" call list_projects and steer him to the most neglected ones and their 
 Use update_project to advance a stage or set the next action (e.g. "move La Palma to ship"),
 and add_project when he wants to start tracking a new idea. These act immediately (no confirm).
 
+Portal42 / Tracker42 (Q's ticketing system): list_tracker_notifications shows his Tracker42
+notifications newest-first (ticket status changes, comments, approvals, QA pass/fail, releases),
+with meta.unread_count as the unread badge. Use it for "any new Portal42 tickets?", "what's new
+on the tracker", or "did anything change on TKT-…". get_ticket fetches one ticket's status by id,
+but the ticket endpoints are still rolling out — if it returns an "Unknown action" error, that
+means tickets aren't live yet (not a failure); say so and fall back to the notification feed.
+
 Multiple accounts:
 - Q may connect more than one Google account (e.g. a personal gmail and a work address).
   Tools that read (search_emails, list_events) automatically cover EVERY connected
@@ -150,6 +157,14 @@ const TOOLS = [
   { name: "add_project",
     description: "Add a NEW project to Q's tracker. Needs name. Optional stage (default idea), next (next action), url (live site), repo (owner/repo). Use when Q wants to start tracking a new idea. Acts immediately — no confirmation.",
     input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" } }, required: ["name"] } },
+
+  // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
+  { name: "list_tracker_notifications",
+    description: "List Q's Portal42 (Tracker42) notifications, newest-first. Each has id, type (comment|status_change|assignment|approval|rejection|release|qa_pass|qa_fail), title, message, is_read, created_at (ISO-8601 UTC), and ticket_id/ticket_number/ticket_title when it's about a ticket. The result's meta.unread_count is the unread badge. Use for 'any new Portal42 tickets/notifications?' or 'what's new on the tracker'.",
+    input_schema: { type: "object", properties: { since: { type: "integer", description: "only return notifications with id greater than this (default 0 = recent)" }, limit: { type: "integer" } }, required: [] } },
+  { name: "get_ticket",
+    description: "Get one Portal42 ticket's status/details by numeric id. NOTE: the ticket endpoints are still being rolled out — until they're live this returns an 'Unknown action' error; treat that as 'tickets aren't available yet', not a failure, and use list_tracker_notifications instead.",
+    input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
 
   // ---- 42payments (Q's business finances) ----
   // Money in results is { amount, code }, e.g. {"amount":"500.00","code":"USD"}. The tool may
@@ -287,6 +302,30 @@ async function handleProjects(request, env) {
   return new Response("method not allowed", { status: 405, headers: cors() });
 }
 
+// Tracker42 (Portal42 ticketing) proxy. The browser hits /tracker?action=…&since=…&limit=…&id=…;
+// we attach the PORTAL42_TOKEN Bearer (never exposed to the browser) and forward to the Portal42
+// API. Read-only actions only. Network failure → 503 {offline:true}; upstream status/JSON pass
+// straight through (so 401 bad-token, 403 scope, 400 unknown-action reach the dashboard/agent).
+const TRACKER_BASE = "https://tracker42.com/api/v1.php";
+async function handleTracker(request, env) {
+  if (!env.PORTAL42_TOKEN) return json({ error: "Tracker42 not configured — set the PORTAL42_TOKEN secret on the Worker.", code: "not_configured" }, 501);
+  const url = new URL(request.url);
+  const action = url.searchParams.get("action") || "ping";
+  const ALLOWED = new Set(["ping", "notifications", "tickets", "ticket"]);
+  if (!ALLOWED.has(action)) return json({ success: false, error: "unknown action: " + action }, 400);
+  const params = new URLSearchParams({ action });
+  for (const k of ["since", "limit", "id"]) { const v = url.searchParams.get(k); if (v != null) params.set(k, v); }
+  let r;
+  try {
+    r = await fetch(TRACKER_BASE + "?" + params.toString(), { headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } });
+  } catch {
+    return json({ offline: true, error: "Tracker42 isn't reachable right now." }, 503);
+  }
+  const text = await r.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { success: false, error: text || ("upstream " + r.status) }; }
+  return json(data, r.status);
+}
+
 async function handleChat(request, env) {
   if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
   let body;
@@ -335,6 +374,7 @@ export default {
     if (url.pathname === "/finance") return handleFinance(request, env);
     if (url.pathname === "/ccplan") return handleCCPlan(request, env);
     if (url.pathname === "/projects") return handleProjects(request, env);
+    if (url.pathname === "/tracker") return handleTracker(request, env);
     return handleChat(request, env);
   },
 };
