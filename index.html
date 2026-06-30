@@ -839,7 +839,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.24.1",
+  version: "1.24.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2396,6 +2396,8 @@ function fmtMoney(m){
 }
 let financeBusy=false, finLastLoad=0;
 function wireFinRetry(){ const b=document.getElementById("fin-retry"); if(b) b.onclick=loadFinance; }
+/* True when 42payments' tunnel answers but the app behind it is down (gateway 502/503/504). */
+function finGwDown(x){ const us=x&&x.upstream_status; return !!(x && x.code==="upstream_nonjson" && (us===502||us===503||us===504)); }
 async function loadFinance(){
   const body=document.getElementById("finance-body"); if(!body) return;
   if(!FINANCE_URL){ setLed("idle","not configured"); body.innerHTML=`<div class="empty">Finance backend not configured.</div>`; return; }
@@ -2406,7 +2408,7 @@ async function loadFinance(){
     if(ping && ping.offline){ setLed("idle","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now — it’s only up while the app runs behind its tunnel. <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
     if(ping && ping.error && ping.error.code==="auth"){ setLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
     if(ping && (ping.connected===false || ping.not_ready)){ setLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
-    if(ping && ping.error){ setLed(ping.code==="upstream_nonjson"?"warn":"off", ping.code==="upstream_nonjson"?"setup pending":"error"); body.innerHTML=`<div class="empty">${esc(cleanErr(ping.error))} <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
+    if(ping && ping.error){ const gw=finGwDown(ping); setLed(gw?"idle":(ping.code==="upstream_nonjson"?"warn":"off"), gw?"app down":(ping.code==="upstream_nonjson"?"setup pending":"error")); body.innerHTML=`<div class="empty">${esc(gw?("42payments app is down (gateway "+ping.upstream_status+") — start it behind its tunnel, then retry."):cleanErr(ping.error))} <span class="refresh" id="fin-retry" style="margin-left:6px">↻ retry</span></div>`; wireFinRetry(); return; }
     setLed("on","connected"); body.innerHTML=`<div class="empty">Loading summary…</div>`;
     let sum; try{ sum=await finance("/summary"); }catch(e){ sum={error:"summary failed"}; }
     if(!sum || sum.offline || sum.not_ready || sum.error){
@@ -2514,13 +2516,17 @@ function renderTrackerTab(){
   if(tkTab==="notifs"){ tkNotifs ? renderTrackerNotifs(tkNotifs) : body.innerHTML=`<div class="empty">Loading…</div>`; }
   else { tkTickets ? renderTickets(tkTickets) : body.innerHTML=`<div class="empty">Loading…</div>`; }
 }
+const TK_PER=5; let tkTicketPage=0;   // show 5 tickets at a time, page through the rest
 function renderTickets(d){
   const body=document.getElementById("tracker-body"); if(!body) return;
   const list=Array.isArray(d.data)?d.data.slice():[];
   if(!list.length){ body.innerHTML=`<div class="empty">No tickets.</div>`; return; }
   const pos=statusPos();
   list.sort((a,b)=> (pos(a.status)-pos(b.status)) || String(b.updated_at||"").localeCompare(String(a.updated_at||"")) );
-  body.innerHTML=list.map(t=>{
+  const pages=Math.ceil(list.length/TK_PER);
+  tkTicketPage=Math.max(0,Math.min(tkTicketPage,pages-1));
+  const start=tkTicketPage*TK_PER;
+  const rows=list.slice(start,start+TK_PER).map(t=>{
     const crit=t.is_critical?`<span class="tk-crit" title="critical">🔥</span>`:"";
     const pr=t.priority?`<span class="tk-pri tk-pri-${esc(t.priority)}">${esc(t.priority)}</span>`:"";
     const due=t.due_date?`<span class="tk-due" title="due">📅 ${esc(tkDate(t.due_date))}</span>`:"";
@@ -2530,7 +2536,11 @@ function renderTickets(d){
       <div class="tkt-meta">${statusChip(t.status,t.status_label)}${pr}${t.ticket_type?`<span class="tk-type">${esc(t.ticket_type)}</span>`:""}${who}${due}</div>
     </div>`;
   }).join("");
+  const pager = pages>1 ? `<div class="pager"><button id="tkt-prev"${tkTicketPage===0?" disabled":""}>‹ prev</button><span>${start+1}–${Math.min(start+TK_PER,list.length)} of ${list.length}</span><button id="tkt-next"${tkTicketPage>=pages-1?" disabled":""}>next ›</button></div>` : "";
+  body.innerHTML=rows+pager;
   body.querySelectorAll(".tkt-row").forEach(r=>{ r.onclick=()=>openTicket(Number(r.dataset.id)); });
+  const pv=document.getElementById("tkt-prev"); if(pv) pv.onclick=()=>{ tkTicketPage--; renderTickets(d); };
+  const nx=document.getElementById("tkt-next"); if(nx) nx.onclick=()=>{ tkTicketPage++; renderTickets(d); };
 }
 function renderTrackerNotifs(d){
   const body=document.getElementById("tracker-body"); if(!body) return;
@@ -2784,6 +2794,7 @@ async function sbCheckFinance(){
   let p; try{ p=await finance("/ping"); }catch(e){ p={offline:true}; }
   if(p&&p.error&&p.error.code==="auth") return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed to reach finance."};
   if(p&&p.offline) return {state:"off",summary:"offline",detail:"42payments isn't reachable. It's only up while the app runs behind its tunnel — bring the app/tunnel up, then re-check."};
+  if(finGwDown(p)) return {state:"off",summary:"app down",detail:`42payments returned a gateway error (HTTP ${p.upstream_status}). The tunnel answers but the 42payments app behind it isn't running. Start/restart the 42payments app on its host, then ↻ re-check.`};
   if(p&&p.code==="upstream_nonjson") return {state:"warn",summary:"setup",detail:cleanErr(p.error)};
   if(p&&(p.connected===false||p.not_ready)) return {state:"warn",summary:"not connected",detail:"42payments is up but FreshBooks isn't connected — sign in once at 42payments."};
   if(p&&(p.success===false||p.error)) return {state:"off",summary:"error",detail:cleanErr(p.error||p)};
@@ -2827,7 +2838,7 @@ async function loadDebt(){
   if(d && d.offline){ setDebtLed("idle","offline"); body.innerHTML=`<div class="empty">42payments isn’t reachable right now. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
   if(d && d.error && d.error.code==="auth"){ setDebtLed("warn","locked"); body.innerHTML=`<div class="needsauth">Enter your dashboard passphrase to reach finance (⚙️ → 🔒 Dashboard passphrase).</div>`; return; }
   if(d && d.not_ready){ setDebtLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
-  if(!d || d.error){ setDebtLed(d&&d.code==="upstream_nonjson"?"warn":"off", d&&d.code==="upstream_nonjson"?"setup pending":"error"); body.innerHTML=`<div class="empty">Couldn’t load card balances${d&&d.error?` (${esc(cleanErr(d.error))})`:""}. <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
+  if(!d || d.error){ const gw=finGwDown(d); setDebtLed(gw?"idle":(d&&d.code==="upstream_nonjson"?"warn":"off"), gw?"app down":(d&&d.code==="upstream_nonjson"?"setup pending":"error")); body.innerHTML=`<div class="empty">${gw?"42payments app is down (gateway "+d.upstream_status+") — start it, then retry.":("Couldn’t load card balances"+(d&&d.error?` (${esc(cleanErr(d.error))})`:"")+".")} <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
   if(d.available===false){ setDebtLed("warn","not synced"); body.innerHTML=`<div class="needsauth">Open the <b>Debt</b> tab in <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">42payments</a> once to sync your tracker${d.reason?` — ${esc(String(d.reason))}`:""}, then hit ↻ refresh. Balances fill in automatically. Your payoff plan below works now.</div>`; return; }
   setDebtLed("on","synced"); renderDebt(d);
 }
