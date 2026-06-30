@@ -226,6 +226,57 @@
   .tk-msg { font-size:12.5px; color:var(--muted); overflow-wrap:anywhere; }
   .tk-tkt { font-size:10.5px; font-weight:700; letter-spacing:.02em; color:var(--accent); background:var(--accent-soft); padding:1px 6px; border-radius:5px; }
   .tk-age { flex:0 0 auto; font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .tk-side { display:flex; align-items:center; gap:8px; flex:0 0 auto; }
+  .tk-read { border:1px solid var(--border); background:var(--bg); color:var(--muted); border-radius:6px; width:22px; height:22px;
+             font-size:12px; cursor:pointer; line-height:1; padding:0; flex:0 0 auto; }
+  .tk-read:hover { border-color:var(--accent); color:var(--accent); }
+  .tk-head { display:flex; justify-content:flex-end; padding:2px 0 8px; }
+  /* tabs */
+  .tk-tabs { display:flex; gap:6px; margin-bottom:13px; }
+  .tk-tab { border:1px solid var(--border); background:var(--bg); color:var(--muted); border-radius:9px; padding:6px 12px;
+            font-size:13px; font-family:inherit; cursor:pointer; }
+  .tk-tab:hover { border-color:var(--accent); }
+  .tk-tab.active { background:var(--accent-soft); color:var(--accent); border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); font-weight:600; }
+  /* ticket rows */
+  .tkt-row { border:1px solid var(--border); border-radius:11px; padding:11px 13px; margin-bottom:9px; background:var(--bg);
+             cursor:pointer; min-width:0; transition:border-color .15s, box-shadow .15s; }
+  .tkt-row:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow:var(--shadow); }
+  .tkt-row:last-child { margin-bottom:0; }
+  .tkt-top { display:flex; align-items:center; gap:8px; min-width:0; }
+  .tkt-num { font-size:11.5px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:1px 7px; border-radius:5px; flex:0 0 auto; }
+  .tkt-title { font-size:14px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+  .tkt-meta { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:8px; }
+  .tk-crit { flex:0 0 auto; font-size:12px; }
+  .tk-status { font-size:11px; font-weight:600; padding:2px 9px; border-radius:20px; white-space:nowrap; }
+  .tk-status.tk-neutral { color:var(--muted); background:color-mix(in srgb, var(--muted) 14%, transparent); }
+  .tk-status.tk-cur     { color:var(--accent); background:var(--accent-soft); }
+  .tk-status.tk-warn    { color:#9a6a00; background:#f4e3bd66; }
+  .tk-status.tk-ok      { color:#1c7a45; background:#cdeBD799; }
+  .tk-status.tk-bad     { color:#b4231a; background:#f3c9c699; }
+  .tk-pri { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; padding:2px 7px; border-radius:5px; }
+  .tk-pri-low { color:var(--muted); background:color-mix(in srgb,var(--muted) 13%,transparent); }
+  .tk-pri-medium { color:#1c5fa8; background:#cfe0f399; }
+  .tk-pri-high { color:#9a6a00; background:#f4e3bd99; }
+  .tk-pri-critical { color:#b4231a; background:#f3c9c699; }
+  .tk-type, .tk-assignee, .tk-due { font-size:11.5px; color:var(--muted); }
+  /* ticket detail modal */
+  .tkd-meta { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:12px; }
+  .tkd-fields { display:grid; grid-template-columns:1fr 1fr; gap:7px 16px; margin-bottom:12px; }
+  .tkd-field { display:flex; justify-content:space-between; gap:10px; font-size:13px; border-bottom:1px solid var(--border); padding-bottom:5px; min-width:0; }
+  .tkd-k { color:var(--muted); flex:0 0 auto; } .tkd-v { color:var(--text); text-align:right; overflow-wrap:anywhere; }
+  .tkd-bk { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:14px 0 6px; }
+  .tkd-bv { font-size:13.5px; color:var(--text); line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .tkd-comment { border:1px solid var(--border); border-radius:9px; padding:9px 11px; margin-bottom:7px; }
+  .tkd-comment.internal { background:color-mix(in srgb, var(--warn) 6%, transparent); }
+  .tkd-ch { display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); margin-bottom:4px; flex-wrap:wrap; }
+  .tkd-ch b { color:var(--text); }
+  .tkd-role, .tkd-int { font-size:10px; text-transform:uppercase; letter-spacing:.04em; background:var(--bg); border:1px solid var(--border); border-radius:4px; padding:0 5px; }
+  .tkd-when { margin-left:auto; font-variant-numeric:tabular-nums; }
+  .tkd-cbody { font-size:13.5px; color:var(--text); line-height:1.45; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .tkd-history { display:flex; flex-direction:column; gap:4px; }
+  .tkd-hrow { font-size:12.5px; color:var(--muted); }
+  .tkd-soon { margin-top:15px; padding-top:12px; border-top:1px solid var(--border); font-size:12.5px; color:var(--muted); }
+  @media (max-width:560px){ .tkd-fields { grid-template-columns:1fr; } .tkt-title { white-space:normal; } }
 
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
@@ -508,14 +559,19 @@
       </div>
       <div id="auth-note" class="needsauth" style="display:none;margin-bottom:20px"></div>
 
-      <!-- Tracker42 — Portal42 ticket notifications. Read via the Worker's /tracker proxy
-           (PORTAL42_TOKEN held server-side, passphrase-gated). Notifications are live now;
-           the ticket view lights up when the tickets:read endpoints ship (additive). -->
+      <!-- Tracker42 — Portal42 tickets + notifications. Read via the Worker's /tracker proxy
+           (PORTAL42_TOKEN held server-side, passphrase-gated). Tickets list + detail and
+           notifications (with click-to-clear) are live; status-change & replies wait on
+           Tracker42 shipping a tickets:write scope. -->
       <div class="card" id="tracker-card" style="margin-bottom:20px">
         <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Portal42 Tickets
           <span class="tk-badge" id="tracker-badge">0</span>
           <span class="fin-state" id="tk-state">checking…</span>
           <span class="refresh" id="tracker-refresh"><span class="ricon">↻</span> refresh</span></h2>
+        <div class="tk-tabs" id="tk-tabs">
+          <button type="button" class="tk-tab" data-tab="tickets">🎫 Tickets</button>
+          <button type="button" class="tk-tab" data-tab="notifs">🔔 Notifications</button>
+        </div>
         <div id="tracker-body"><div class="empty">—</div></div>
       </div>
 
@@ -686,6 +742,16 @@
   </div>
 </div>
 
+<!-- Ticket detail (Tracker42, read-only) -->
+<div id="tk-ticket-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="tk-ticket-bg"></div>
+  <div class="panel" style="max-width:580px">
+    <h2 id="tk-ticket-title">🎫 Ticket</h2>
+    <div id="tk-ticket-body"><div class="empty">—</div></div>
+    <div class="pat-actions" style="margin-top:14px"><button id="tk-ticket-close" class="gbtn">Close</button></div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -711,7 +777,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.22.3",
+  version: "1.23.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2309,18 +2375,26 @@ function initFinance(){
 }
 
 /* ============================================================
-   TRACKER42 — Portal42 ticket notifications (read-only)
+   TRACKER42 — Portal42 tickets + notifications
    Talks to the Worker's /tracker proxy, which holds the PORTAL42_TOKEN
-   server-side and forwards ?action=… to tracker42.com. Schema is locked
-   (created_at, ticket_id/ticket_number/ticket_title, type enum, meta.*).
-   Cursor (lastSeenId) persists in localStorage so "new since you looked"
-   survives reloads. Ticket endpoints aren't live yet — get_ticket / the
-   ticket view stay dormant and 400-tolerant until they ship.
+   server-side and forwards ?action=… to tracker42.com. Two tabs:
+   🎫 Tickets (action=tickets list → action=ticket detail modal) and
+   🔔 Notifications (action=notifications + click-to-clear via mark_read /
+   mark_all_read). Status pipeline/labels come from action=statuses.
+   Read + notification-write are live; ticket status-change & replies wait on
+   Tracker42 shipping a tickets:write scope.
    ============================================================ */
 const TRACKER_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/tracker" : "";
 const TK_ICON = { comment:"💬", status_change:"🔁", assignment:"👤", approval:"✅", rejection:"⛔", release:"🚀", qa_pass:"🟢", qa_fail:"🔴" };
 let trackerBusy=false, trackerLastLoad=0;
 let trackerSeen=(()=>{ try{ return Number(localStorage.getItem("midash_tracker_seen"))||0; }catch(e){ return 0; } })();
+let tkTab=(()=>{ try{ return localStorage.getItem("midash_tk_tab")||"tickets"; }catch(e){ return "tickets"; } })();
+let tkStatuses=null, tkNotifs=null, tkTickets=null;
+function tkDate(s){ if(!s) return ""; const d=new Date(String(s).length<=10?String(s)+"T00:00:00":s); return isNaN(d)?String(s):d.toLocaleDateString([], {month:"short",day:"numeric"}); }
+function statusPos(){ const m={}; (tkStatuses||[]).forEach(s=>{ m[s.key]=s.position; }); return k=>(k in m? m[k] : 99); }
+function statusClass(k){ k=String(k||""); if(/^failed_/.test(k)) return "bad"; if(k==="released") return "ok"; if(k==="current") return "cur"; if(/^qa_|code_review|pending/.test(k)) return "warn"; return "neutral"; }
+function statusLabel(k,fallback){ const s=(tkStatuses||[]).find(x=>x.key===k); return s?s.label:(fallback||k||"—"); }
+function statusChip(k,label){ return `<span class="tk-status tk-${statusClass(k)}">${esc(statusLabel(k,label))}</span>`; }
 
 /* GET /tracker?action=…; params forwarded: since, limit, id. Returns parsed JSON, or
    {offline:true} on a Worker/network failure. Passphrase-401 surfaces as {error:{code:"auth"}}
@@ -2328,7 +2402,7 @@ let trackerSeen=(()=>{ try{ return Number(localStorage.getItem("midash_tracker_s
 async function tracker(action, params){
   if(!TRACKER_URL) return {error:"Tracker not configured (no chatEndpoint).", code:"not_configured"};
   const qs=new URLSearchParams({action:action||"ping"});
-  if(params) for(const k of ["since","limit","id"]) if(params[k]!=null) qs.set(k, params[k]);
+  if(params) for(const k of ["since","limit","id","offset","status","order","ticket_id"]) if(params[k]!=null) qs.set(k, params[k]);
   let res;
   try{ res=await fetch(TRACKER_URL+"?"+qs.toString(), {headers:{...dashAuthHeader()}}); }
   catch(e){ return {offline:true, error:"Tracker42 offline — retry later."}; }
@@ -2358,40 +2432,122 @@ async function loadTracker(){
     }
     const who=ping&&ping.data&&ping.data.user;
     setTrackerLed("on", who?("@"+(who.username||"connected")):"connected");
-    body.innerHTML=`<div class="empty">Loading notifications…</div>`;
-    let nd; try{ nd=await tracker("notifications",{since:0,limit:20}); }catch(e){ nd={error:"notifications failed"}; }
-    if(!nd || nd.offline || nd.success===false || nd.error){
-      const m = nd&&nd.code==="upstream_nonjson" ? "Tracker42’s API isn’t fully set up yet (run the api_tokens migration)." : (nd&&nd.error ? cleanErr(nd.error) : "Notifications unavailable.");
-      body.innerHTML=`<div class="empty">${esc(m)} <span class="refresh" id="tk-retry" style="margin-left:6px">↻ retry</span></div>`; wireTkRetry(); return;
-    }
-    renderTrackerNotifs(nd);
+    if(!tkTickets && !tkNotifs) body.innerHTML=`<div class="empty">Loading…</div>`;
+    // statuses (once) → labels/order/colors for the board
+    if(!tkStatuses){ let s; try{ s=await tracker("statuses"); }catch(e){} if(s&&Array.isArray(s.data)) tkStatuses=s.data; }
+    // notifications — always (drives the unread badge + the Notifications tab)
+    let nd; try{ nd=await tracker("notifications",{since:0,order:"desc",limit:20}); }catch(e){ nd=null; }
+    if(nd && Array.isArray(nd.data)){ tkNotifs=nd; setTrackerBadge(nd.meta&&nd.meta.unread_count); }
+    // tickets — when that tab is showing
+    if(tkTab==="tickets"){ let td; try{ td=await tracker("tickets",{limit:50}); }catch(e){ td=null; } if(td&&Array.isArray(td.data)) tkTickets=td; }
+    renderTrackerTab();
   } finally { trackerLastLoad=Date.now(); trackerBusy=false; }
+}
+function renderTrackerTab(){
+  document.querySelectorAll("#tk-tabs .tk-tab").forEach(b=>b.classList.toggle("active", b.dataset.tab===tkTab));
+  const body=document.getElementById("tracker-body"); if(!body) return;
+  if(tkTab==="notifs"){ tkNotifs ? renderTrackerNotifs(tkNotifs) : body.innerHTML=`<div class="empty">Loading…</div>`; }
+  else { tkTickets ? renderTickets(tkTickets) : body.innerHTML=`<div class="empty">Loading…</div>`; }
+}
+function renderTickets(d){
+  const body=document.getElementById("tracker-body"); if(!body) return;
+  const list=Array.isArray(d.data)?d.data.slice():[];
+  if(!list.length){ body.innerHTML=`<div class="empty">No tickets.</div>`; return; }
+  const pos=statusPos();
+  list.sort((a,b)=> (pos(a.status)-pos(b.status)) || String(b.updated_at||"").localeCompare(String(a.updated_at||"")) );
+  body.innerHTML=list.map(t=>{
+    const crit=t.is_critical?`<span class="tk-crit" title="critical">🔥</span>`:"";
+    const pr=t.priority?`<span class="tk-pri tk-pri-${esc(t.priority)}">${esc(t.priority)}</span>`:"";
+    const due=t.due_date?`<span class="tk-due" title="due">📅 ${esc(tkDate(t.due_date))}</span>`:"";
+    const who=t.assignee?`<span class="tk-assignee">👤 ${esc(t.assignee)}</span>`:"";
+    return `<div class="tkt-row" data-id="${t.id}">
+      <div class="tkt-top"><span class="tkt-num">${esc(t.ticket_number||("#"+t.id))}</span>${crit}<span class="tkt-title">${esc(t.title||"")}</span></div>
+      <div class="tkt-meta">${statusChip(t.status,t.status_label)}${pr}${t.ticket_type?`<span class="tk-type">${esc(t.ticket_type)}</span>`:""}${who}${due}</div>
+    </div>`;
+  }).join("");
+  body.querySelectorAll(".tkt-row").forEach(r=>{ r.onclick=()=>openTicket(Number(r.dataset.id)); });
 }
 function renderTrackerNotifs(d){
   const body=document.getElementById("tracker-body"); if(!body) return;
   const meta=d.meta||{}, list=Array.isArray(d.data)?d.data:[];
   setTrackerBadge(meta.unread_count);
+  const unread=Number(meta.unread_count)||0;
   if(!list.length){ body.innerHTML=`<div class="empty">No notifications 🎉</div>`; }
   else {
-    body.innerHTML=list.map(n=>{
+    const head = unread>0 ? `<div class="tk-head"><span class="refresh" id="tk-mark-all">✓ mark all read</span></div>` : "";
+    body.innerHTML = head + list.map(n=>{
       const isNew = Number(n.id) > trackerSeen;              // local "since you last looked" flag
       const ic=TK_ICON[n.type]||"🔔";
       const tkt = n.ticket_number?`<span class="tk-tkt" title="${escAttr(n.ticket_title||"")}">${esc(n.ticket_number)}</span>`:"";
-      return `<div class="tk-row${isNew?" new":""}">
+      const readBtn = n.is_read?"":`<button type="button" class="tk-read" data-id="${n.id}" title="Mark read">✓</button>`;
+      return `<div class="tk-row${isNew?" new":""}" data-tid="${n.ticket_id!=null?n.ticket_id:""}">
         <span class="tk-ic">${ic}</span>
         <span class="tk-main"><span class="tk-title">${esc(n.title||"(untitled)")}${tkt}</span>
           <span class="tk-msg">${esc(n.message||"")}</span></span>
-        <span class="tk-age" title="${escAttr(n.created_at||"")}">${n.created_at?rel(n.created_at):""}</span>
+        <span class="tk-side"><span class="tk-age" title="${escAttr(n.created_at||"")}">${n.created_at?rel(n.created_at):""}</span>${readBtn}</span>
       </div>`;
     }).join("");
+    const ma=document.getElementById("tk-mark-all"); if(ma) ma.onclick=markAllRead;
+    body.querySelectorAll(".tk-read").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); markRead(Number(b.dataset.id)); }; });
+    body.querySelectorAll(".tk-row").forEach(r=>{ const tid=r.dataset.tid; if(tid){ r.style.cursor="pointer"; r.onclick=(e)=>{ if(e.target.closest(".tk-read")) return; openTicket(Number(tid)); }; } });
   }
-  // advance the local cursor AFTER computing isNew, so new items clear on the next poll
   const latest=Number(meta.latest_id || (list[0]&&list[0].id) || trackerSeen) || trackerSeen;
   if(latest>trackerSeen){ trackerSeen=latest; try{ localStorage.setItem("midash_tracker_seen",String(trackerSeen)); }catch(e){} }
 }
+async function refreshNotifs(){
+  let nd; try{ nd=await tracker("notifications",{since:0,order:"desc",limit:20}); }catch(e){ nd=null; }
+  if(nd && Array.isArray(nd.data)){ tkNotifs=nd; setTrackerBadge(nd.meta&&nd.meta.unread_count); if(tkTab==="notifs") renderTrackerNotifs(nd); }
+}
+async function markRead(id){ try{ await tracker("mark_read",{id}); }catch(e){} refreshNotifs(); }
+async function markAllRead(){ try{ await tracker("mark_all_read"); }catch(e){} refreshNotifs(); }
+async function openTicket(id){
+  openTicketModal();
+  const m=document.getElementById("tk-ticket-body"), tl=document.getElementById("tk-ticket-title");
+  if(tl) tl.textContent="🎫 Ticket "+id; if(m) m.innerHTML=`<div class="empty">Loading ticket…</div>`;
+  let d; try{ d=await tracker("ticket",{id}); }catch(e){ d=null; }
+  if(!d || d.offline || d.success===false || d.error || !d.data){ if(m) m.innerHTML=`<div class="empty">Couldn’t load ticket (${esc(d?cleanErr(d.error||d):"no response")}).</div>`; return; }
+  renderTicketDetail(d.data);
+}
+function renderTicketDetail(t){
+  const m=document.getElementById("tk-ticket-body"), tl=document.getElementById("tk-ticket-title"); if(!m) return;
+  if(tl) tl.textContent=(t.ticket_number?t.ticket_number+" · ":"")+(t.title||"Ticket");
+  const field=(k,v)=> (v!=null&&v!=="") ? `<div class="tkd-field"><span class="tkd-k">${esc(k)}</span><span class="tkd-v">${esc(String(v))}</span></div>` : "";
+  const block=(k,v)=> v ? `<div class="tkd-bk">${esc(k)}</div><div class="tkd-bv">${esc(String(v))}</div>` : "";
+  let h=`<div class="tkd-meta">${statusChip(t.status,t.status_label)}${t.priority?`<span class="tk-pri tk-pri-${esc(t.priority)}">${esc(t.priority)} priority</span>`:""}${t.ticket_type?`<span class="tk-type">${esc(t.ticket_type)}</span>`:""}${t.is_critical?`<span class="tk-crit">🔥 critical</span>`:""}</div>`;
+  h+=`<div class="tkd-fields">`+
+    field("Assignee", t.assignee)+field("Due", tkDate(t.due_date))+field("Effort", t.effort_points!=null?t.effort_points+" pts":"")+
+    field("Release", t.release_number)+field("BA owner", t.ba_owner)+field("QA", t.qa_assigned)+
+    field("Created by", t.created_by)+field("Updated", t.updated_at?rel(t.updated_at):"")+`</div>`;
+  h+=block("Description", t.description)+block("Requirements", t.requirements)+block("Acceptance criteria", t.acceptance_criteria)+block("Dev notes", t.dev_notes);
+  if(Array.isArray(t.comments)&&t.comments.length){
+    h+=`<div class="tkd-bk">Comments (${t.comments.length})</div>`+t.comments.map(c=>
+      `<div class="tkd-comment${c.is_internal?" internal":""}"><div class="tkd-ch"><b>${esc(c.author||"?")}</b>${c.role?`<span class="tkd-role">${esc(c.role)}</span>`:""}${c.is_internal?`<span class="tkd-int">internal</span>`:""}<span class="tkd-when">${c.created_at?rel(c.created_at):""}</span></div><div class="tkd-cbody">${esc(c.comment||"")}</div></div>`).join("");
+  }
+  if(Array.isArray(t.history)&&t.history.length){
+    h+=`<div class="tkd-bk">History</div><div class="tkd-history">`+t.history.slice(-8).reverse().map(x=>
+      `<div class="tkd-hrow"><span class="tkd-when">${x.created_at?rel(x.created_at):""}</span> · ${esc(x.user||"")} — ${esc(x.action||"")}${x.old_value!=null?` (${esc(x.old_value)} → ${esc(x.new_value)})`:""}</div>`).join("")+`</div>`;
+  }
+  if(t.pr_url) h+=`<div class="tkd-bk">PR</div><div class="tkd-bv"><a href="${esc(t.pr_url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(t.branch_name||t.pr_url)} ↗</a></div>`;
+  h+=`<div class="tkd-soon">✍️ Status changes & replies are coming once Tracker42 ships a tickets:write scope — this view is read-only for now.</div>`;
+  m.innerHTML=h;
+}
+function openTicketModal(){ const m=document.getElementById("tk-ticket-modal"); if(m) m.style.display="flex"; }
+function initTicketModal(){
+  const m=document.getElementById("tk-ticket-modal"); if(!m) return;
+  const close=()=>{ m.style.display="none"; };
+  document.getElementById("tk-ticket-close").onclick=close;
+  document.getElementById("tk-ticket-bg").onclick=close;
+}
 function initTracker(){
-  const r=document.getElementById("tracker-refresh"); if(r) r.onclick=loadTracker;
+  const r=document.getElementById("tracker-refresh"); if(r) r.onclick=()=>{ tkTickets=null; tkNotifs=null; loadTracker(); };
   const led=document.getElementById("tk-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadTracker; }
+  document.querySelectorAll("#tk-tabs .tk-tab").forEach(b=>{
+    b.onclick=()=>{ tkTab=b.dataset.tab; try{ localStorage.setItem("midash_tk_tab",tkTab); }catch(e){}
+      renderTrackerTab();
+      if((tkTab==="tickets"&&!tkTickets)||(tkTab==="notifs"&&!tkNotifs)) loadTracker();
+    };
+  });
+  initTicketModal();
   loadTracker();
   window.addEventListener("focus", ()=>{ if(document.getElementById("tracker-card") && Date.now()-trackerLastLoad>30000) loadTracker(); });
   // Background poll — Tracker42 recommends 60s + on-focus (no rate limit today, keep ≥30s).
