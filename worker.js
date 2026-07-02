@@ -287,6 +287,25 @@ async function handleCCPlan(request, env) {
   return new Response("method not allowed", { status: 405, headers: cors() });
 }
 
+// Contact metadata — miDash-owned tags (business/personal), usage counts, and hidden flags,
+// keyed by lowercased email. Google is the source of truth for the contacts themselves; this
+// just layers Q's own data on top. Stored in NOTES KV as "contacts_meta". Gated by authed().
+async function handleContactsMeta(request, env) {
+  if (!env.NOTES) return json({ error: "storage not configured" }, 501);
+  if (request.method === "GET") {
+    const v = await env.NOTES.get("contacts_meta");
+    let meta = null; try { meta = v ? JSON.parse(v) : null; } catch { meta = null; }
+    return json({ meta });
+  }
+  if (request.method === "PUT") {
+    const t = await request.text();
+    try { JSON.parse(t); } catch { return json({ error: "bad json" }, 400); }
+    await env.NOTES.put("contacts_meta", t);
+    return json({ ok: true });
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
 // Projects board — the dashboard's idea→shipped tracker. A JSON array of project
 // records, stored in the NOTES KV under "projects" so it syncs across Q's devices.
 // Gated upstream by authed() like everything else.
@@ -512,6 +531,7 @@ export default {
       if (url.pathname === "/finance") return handleFinance(request, env);
       if (url.pathname === "/ccplan") return handleCCPlan(request, env);
       if (url.pathname === "/projects") return handleProjects(request, env);
+      if (url.pathname === "/contacts-meta") return handleContactsMeta(request, env);
       if (url.pathname === "/tracker") return handleTracker(request, env);
       if (url.pathname === "/agent") return handleAgent(request, env);
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);

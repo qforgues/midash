@@ -125,6 +125,35 @@
   .dft-area { width:100%; min-height:130px; resize:vertical; border:1px solid var(--border); background:var(--bg);
     color:var(--text); border-radius:8px; padding:10px 12px; font-size:14px; line-height:1.5; outline:none; margin-bottom:8px; font-family:inherit; }
   .dft-in:focus, .dft-area:focus { border-color:var(--accent); }
+  .dft-from { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:2px; }
+  /* Stay-connected / reach-out */
+  .reach-totals { font-size:12.5px; color:var(--muted); display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+  .reach-totals b { color:var(--text); }
+  .reach-manage { margin-left:auto; color:var(--accent); cursor:pointer; font-weight:600; }
+  .reach-manage:hover { text-decoration:underline; }
+  .reach-sub { font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .reach-filter { display:flex; align-items:center; gap:6px; margin:9px 0 4px; flex-wrap:wrap; }
+  .reach-fbtn { border:1px solid var(--border); background:var(--bg); color:var(--muted); border-radius:20px;
+                padding:3px 11px; font-size:11.5px; font-family:inherit; cursor:pointer; text-transform:capitalize; }
+  .reach-fbtn.active { background:var(--accent-soft); color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--border)); font-weight:600; }
+  .reach-cycle { margin-left:auto; font-size:11px; color:var(--muted); }
+  .reach-card { border-top:1px solid var(--border); padding-top:11px; margin-top:6px; }
+  .reach-name { font-size:18px; font-weight:600; letter-spacing:-.01em; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .reach-acct { font-size:11px; font-weight:600; color:var(--muted); background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:1px 6px; }
+  .reach-tags { display:flex; gap:6px; flex-wrap:wrap; }
+  .reach-tag { border:1px solid var(--border); background:var(--bg); color:var(--muted); border-radius:20px;
+               padding:4px 10px; font-size:12px; font-family:inherit; cursor:pointer; }
+  .reach-tag.on { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); font-weight:600; }
+  .reach-summary { background:var(--bg); border:1px solid var(--border); border-radius:9px; padding:10px 12px; font-size:13px; line-height:1.5; color:var(--text); }
+  /* Contacts manager rows */
+  .cm-row { display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid var(--border); }
+  .cm-row.hidden { opacity:.45; }
+  .cm-info { flex:1; min-width:0; }
+  .cm-name { font-size:14px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cm-email { font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cm-acts { display:flex; gap:4px; flex:0 0 auto; }
+  .cm-tag { border:1px solid var(--border); background:var(--bg); border-radius:7px; width:30px; height:28px; font-size:13px; cursor:pointer; padding:0; }
+  .cm-tag.on { background:var(--accent-soft); border-color:var(--accent); }
   .mailrow .age { color:var(--muted); font-size:11.5px; font-variant-numeric:tabular-nums; }
   .needsauth { color:var(--muted); font-size:14px; }
   .needsauth button { margin-top:10px; }
@@ -797,6 +826,18 @@
   </div>
 </div>
 
+<!-- Contacts manager (all accounts) -->
+<div id="contacts-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="cm-close-bg"></div>
+  <div class="panel" style="max-width:560px">
+    <h2>👥 Contacts <span id="cm-count" class="fin-state"></span></h2>
+    <input id="cm-search" type="text" placeholder="Search name or email…" autocomplete="off"
+      style="width:100%;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:8px;padding:9px 11px;font-size:14px;outline:none;margin-bottom:10px">
+    <div id="cm-body" style="max-height:52vh;overflow:auto;min-height:120px"></div>
+    <div class="pat-actions" style="margin-top:12px"><button id="cm-close" class="gbtn">Done</button></div>
+  </div>
+</div>
+
 <!-- Switchboard connection detail -->
 <div id="sb-modal" class="modal" style="display:none">
   <div class="modal-backdrop" id="sb-modal-bg"></div>
@@ -841,7 +882,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.25.4",
+  version: "1.26.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1271,7 +1312,7 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks";
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/tasks";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -1948,24 +1989,66 @@ const PEOPLE_ENABLE="https://console.cloud.google.com/apis/library/people.google
 const TASKS_ENABLE="https://console.cloud.google.com/apis/library/tasks.googleapis.com";
 
 let contactsList=[], contactsErr=null, contactsFailed=[];
+/* Contact metadata (business/personal tag + usage counts + hidden), KV-synced, keyed by
+   lowercased email. Google owns the contacts; this layers Q's own data on top. */
+const CONTACTS_META_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/contacts-meta" : "";
+let contactsMeta={}, cmSaveTimer=null;
+function cKey(email){ return String(email||"").trim().toLowerCase(); }
+function cMeta(email){ return contactsMeta[cKey(email)] || {}; }
+async function loadContactsMeta(){
+  if(CONTACTS_META_URL){ try{ const r=await fetch(CONTACTS_META_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); if(j.meta && typeof j.meta==="object") contactsMeta=j.meta; } }catch(e){} }
+  if(!Object.keys(contactsMeta).length){ try{ const v=JSON.parse(localStorage.getItem("midash_contacts_meta")||"null"); if(v&&typeof v==="object") contactsMeta=v; }catch(e){} }
+}
+function saveContactsMeta(){
+  try{ localStorage.setItem("midash_contacts_meta", JSON.stringify(contactsMeta)); }catch(e){}
+  if(!CONTACTS_META_URL) return;
+  clearTimeout(cmSaveTimer); cmSaveTimer=setTimeout(()=>{ fetch(CONTACTS_META_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(contactsMeta)}).catch(()=>{}); }, 600);
+}
+function setContactTag(email, tag){ const k=cKey(email); const m=contactsMeta[k]||{}; m.tag=(m.tag===tag?null:tag); contactsMeta[k]=m; saveContactsMeta(); }
+function setContactHidden(email, hidden){ const k=cKey(email); const m=contactsMeta[k]||{}; m.hidden=!!hidden; contactsMeta[k]=m; saveContactsMeta(); }
 async function loadContacts(){
   contactsErr=null; contactsFailed=[];
   if(!accounts.length){ renderContacts(); renderReachout(); return; }
+  await loadContactsMeta();
   let all=[];
+  const grab=(arr,acct)=>arr.forEach(p=>{ const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value; const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0]; if(email) all.push({name, email, account:acct.email}); });
   for(const acct of accounts){
+    // My Contacts (saved)
     let d; try{ d=await gfetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1000&personFields=names,emailAddresses&sortOrder=FIRST_NAME_ASCENDING", acct.token); }catch(e){ continue; }
-    if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); contactsFailed.push(acct.email); continue; }
-    (d.connections||[]).forEach(p=>{
-      const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value;
-      const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0];
-      if(email) all.push({name, email});
-    });
+    if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); contactsFailed.push(acct.email); }
+    else grab(d.connections||[], acct);
+    // Other contacts (auto-collected from mail — the big pool; needs contacts.other.readonly, granted on reconnect)
+    let o; try{ o=await gfetch("https://people.googleapis.com/v1/otherContacts?readMask=names,emailAddresses&pageSize=1000", acct.token); }catch(e){}
+    if(o && !o.error) grab(o.otherContacts||[], acct);
   }
   const seen=new Set();
-  contactsList=all.filter(c=>{ const k=c.email.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
+  contactsList=all.filter(c=>{ const k=cKey(c.email); if(seen.has(k)) return false; seen.add(k); return true; })
                   .sort((a,b)=>a.name.localeCompare(b.name));
   renderContacts();
   renderReachout();
+}
+/* ---- Reach-out pool + usage-tracked pick (cycles everyone before repeating) ---- */
+let reachFilter="all";   // all | personal | business
+function reachPool(){
+  return contactsList.filter(c=>{ const m=cMeta(c.email); if(m.hidden) return false;
+    if(reachFilter==="personal") return m.tag==="personal"; if(reachFilter==="business") return m.tag==="business"; return true; });
+}
+function pickReachout(pool){
+  if(!pool.length) return null;
+  const shownOf=c=>cMeta(c.email).shown||0;
+  const minShown=Math.min(...pool.map(shownOf));
+  const least=pool.filter(c=>shownOf(c)===minShown);          // among the least-shown, random → no bias, full cycle
+  const pick=least[Math.floor(Math.random()*least.length)];
+  const k=cKey(pick.email); const m=contactsMeta[k]||{}; m.shown=(m.shown||0)+1; m.lastShown=Date.now(); contactsMeta[k]=m; saveContactsMeta();
+  return pick;
+}
+function contactTotals(){
+  const byAcct={}; accounts.forEach(a=>byAcct[a.email]=0);
+  let personal=0, business=0, untagged=0, hidden=0;
+  contactsList.forEach(c=>{ const m=cMeta(c.email); if(m.hidden){ hidden++; return; }
+    byAcct[c.account]=(byAcct[c.account]||0)+1;
+    if(m.tag==="personal") personal++; else if(m.tag==="business") business++; else untagged++; });
+  return { total:contactsList.length-hidden, byAcct, personal, business, untagged, hidden };
 }
 function reconnectBtn(id){ return `<button class="gbtn" id="${id}" style="margin-top:8px">🔓 reconnect (pick account)</button>`; }
 /* select_account so the user can re-grant scopes for the WORK account too, not just the default one. */
@@ -1982,26 +2065,106 @@ function renderContacts(){
   box.innerHTML=html;
   if(contactsFailed.length) wireReconnect("reconnect-contacts-note");
 }
-/* Stable day index so the daily pick is the same all day, then shuffles on demand. */
-function dayIndex(){ const d=new Date(); return Math.floor((d-new Date(d.getFullYear(),0,0))/86400000); }
 let reachoutContact=null, reachoutHistory=null;
 function renderReachout(shuffle){
   const box=document.getElementById("reachout"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   if(!contactsList.length && contactsErr){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${contactsErr}<br>${reconnectBtn("reconnect-contacts")}</div>`; wireReconnect("reconnect-contacts"); return; }
   if(!contactsList.length){ box.innerHTML=`<div class="empty">No contacts to suggest yet.</div>`; return; }
-  const i = Math.floor(Math.random()*contactsList.length);   // always a fresh random pick
-  const c=contactsList[i]; reachoutContact=c; reachoutHistory=null;
-  box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Say hi to:</div>
-    <div style="font-size:18px;font-weight:600;letter-spacing:-.01em">${esc(c.name)}</div>
-    <div class="from" style="margin:2px 0 14px">${esc(c.email)}</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="gbtn" id="reach-draft">✨ Draft a message</button>
-      <a class="gbtn" id="reach-blank" href="${gmailComposeUrl(CONFIG.account,c.email)}" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;color:var(--muted)">blank email</a>
-    </div>
-    <div id="reach-note" class="from" style="margin-top:8px"></div>`;
-  const db=document.getElementById("reach-draft");
-  if(db) db.onclick=()=>startDraft(c, db);
+  const t=contactTotals(), pool=reachPool();
+  const shownOf=c=>cMeta(c.email).shown||0;
+  const minShown=pool.length?Math.min(...pool.map(shownOf)):0;
+  const cycled=pool.filter(c=>shownOf(c)>minShown).length;
+  // keep the current contact across re-renders (tag/filter); only pick a NEW one on shuffle or if it left the pool
+  let c=reachoutContact;
+  const inPool = c && pool.some(x=>cKey(x.email)===cKey(c.email));
+  if(shuffle || !c || !inPool){ c = pool.length ? pickReachout(pool) : null; reachoutContact=c; reachoutHistory=null; }
+  const perAcct=accounts.map(a=>`${shortAcct(a.email)} ${t.byAcct[a.email]||0}`).join(" · ");
+  const head=`<div class="reach-totals"><b>${t.total}</b> contacts · 👤 ${t.personal} · 💼 ${t.business} · ◦ ${t.untagged}
+      <span class="reach-manage" id="reach-manage">manage ›</span></div>
+    <div class="reach-sub">${perAcct}${t.hidden?` · ${t.hidden} hidden`:""}</div>
+    <div class="reach-filter">${["all","personal","business"].map(f=>`<button class="reach-fbtn${reachFilter===f?" active":""}" data-f="${f}">${f}</button>`).join("")}
+      <span class="reach-cycle">${pool.length?`${cycled}/${pool.length} reached this round`:""}</span></div>`;
+  if(!c){ box.innerHTML=head+`<div class="empty">No ${reachFilter==="all"?"":reachFilter+" "}contacts to suggest.</div>`; wireReachHeader(); return; }
+  const m=cMeta(c.email);
+  box.innerHTML=head+`<div class="reach-card">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:6px">Say hi to:</div>
+      <div class="reach-name">${esc(c.name)} <span class="reach-acct">${esc(shortAcct(c.account))}</span></div>
+      <div class="from" style="margin:2px 0 8px">${esc(c.email)}</div>
+      <div class="reach-tags">
+        <button class="reach-tag${m.tag==="personal"?" on":""}" data-tag="personal">👤 personal</button>
+        <button class="reach-tag${m.tag==="business"?" on":""}" data-tag="business">💼 business</button>
+        <button class="reach-tag reach-hide" data-hide="1">🙈 not now</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="gbtn" id="reach-draft">✨ Draft a message</button>
+        <button class="gbtn" id="reach-history" style="color:var(--muted)">📜 Our history</button>
+      </div>
+      <div id="reach-note" class="from" style="margin-top:8px"></div>
+    </div>`;
+  wireReachHeader();
+  document.getElementById("reach-draft").onclick=(e)=>startDraft(c, e.currentTarget);
+  document.getElementById("reach-history").onclick=(e)=>showRelationshipSummary(c, e.currentTarget);
+  box.querySelectorAll(".reach-tag[data-tag]").forEach(b=>b.onclick=()=>{ setContactTag(c.email, b.dataset.tag); renderReachout(); });
+  const hb=box.querySelector(".reach-hide"); if(hb) hb.onclick=()=>{ setContactHidden(c.email, true); renderReachout(true); };
+}
+function wireReachHeader(){
+  const mg=document.getElementById("reach-manage"); if(mg) mg.onclick=openContactsManager;
+  document.querySelectorAll(".reach-fbtn").forEach(b=>b.onclick=()=>{ reachFilter=b.dataset.f; renderReachout(true); });
+}
+/* AI recap of the email history with this contact. */
+async function showRelationshipSummary(c, btn){
+  const note=document.getElementById("reach-note"); if(!note) return;
+  if(!CONFIG.chatEndpoint){ note.textContent="Agent offline."; return; }
+  if(btn){ btn.disabled=true; btn.textContent="📜 …"; }
+  note.textContent="Summarizing your history…";
+  try{
+    if(reachoutHistory===null) reachoutHistory=await gatherHistory(c);
+    const me=nameOf();
+    const prompt=`Summarize ${me}'s relationship with ${c.name} <${c.email}> using ONLY the email history below — 2-4 short sentences: who they seem to be to ${me}, recent topics, the tone, and roughly when they last talked. If there's little/no history, say so plainly.\n\nEmail history (may be partial):\n${reachoutHistory}\n\nDo not call any tools. Reply with just the summary.`;
+    const data=await streamModel(null, [{role:"user",content:prompt}]);
+    if(data.usage) recordUsage(data.model||selectedModel(), data.usage);
+    const txt=((data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n")).trim();
+    note.innerHTML=`<div class="reach-summary">📜 ${esc(txt||"(no summary)")}</div>`;
+  }catch(e){ note.textContent="Couldn't summarize ("+(e.message||e)+")."; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent="📜 Our history"; } }
+}
+
+/* ---- Contacts manager: see all contacts across accounts, tag business/personal, hide ---- */
+let cmSearch="";
+function openContactsManager(){
+  const m=document.getElementById("contacts-modal"); if(!m) return;
+  cmSearch=""; const s=document.getElementById("cm-search"); if(s) s.value="";
+  renderContactsManager(); m.style.display="flex";
+  setTimeout(()=>{ if(s) s.focus(); },50);
+}
+function renderContactsManager(){
+  const body=document.getElementById("cm-body"); if(!body) return;
+  const q=cmSearch.trim().toLowerCase();
+  let list=contactsList;
+  if(q) list=list.filter(c=>c.name.toLowerCase().includes(q)||c.email.toLowerCase().includes(q));
+  const total=list.length, shown=list.slice(0,200);
+  body.innerHTML=shown.map(c=>{ const m=cMeta(c.email);
+    return `<div class="cm-row${m.hidden?" hidden":""}" data-e="${escAttr(c.email)}">
+      <div class="cm-info"><div class="cm-name">${esc(c.name)}</div><div class="cm-email">${esc(c.email)} · ${esc(shortAcct(c.account))}</div></div>
+      <div class="cm-acts">
+        <button class="cm-tag${m.tag==="personal"?" on":""}" data-tag="personal" title="personal">👤</button>
+        <button class="cm-tag${m.tag==="business"?" on":""}" data-tag="business" title="business">💼</button>
+        <button class="cm-tag cm-hidebtn${m.hidden?" on":""}" data-hide="1" title="${m.hidden?"unhide":"hide from reach-out"}">${m.hidden?"🙈":"👁"}</button>
+      </div></div>`;
+  }).join("") + (total>200?`<div class="empty">Showing 200 of ${total} — search to narrow.</div>`:(total?"":`<div class="empty">No matches.</div>`));
+  body.querySelectorAll(".cm-row").forEach(row=>{ const e=row.dataset.e;
+    row.querySelectorAll(".cm-tag[data-tag]").forEach(b=>b.onclick=()=>{ setContactTag(e,b.dataset.tag); renderContactsManager(); });
+    const hb=row.querySelector(".cm-hidebtn"); if(hb) hb.onclick=()=>{ setContactHidden(e, !cMeta(e).hidden); renderContactsManager(); };
+  });
+  const cnt=document.getElementById("cm-count"); if(cnt){ const t=contactTotals(); cnt.textContent=`${t.total} active · 👤 ${t.personal} · 💼 ${t.business} · ◦ ${t.untagged}${t.hidden?` · ${t.hidden} hidden`:""}`; }
+}
+function initContactsManager(){
+  const m=document.getElementById("contacts-modal"); if(!m) return;
+  const close=()=>{ m.style.display="none"; renderReachout(); };   // reflect tag/hide changes back in the card
+  const cb=document.getElementById("cm-close"); if(cb) cb.onclick=close;
+  const bg=document.getElementById("cm-close-bg"); if(bg) bg.onclick=close;
+  const s=document.getElementById("cm-search"); if(s) s.oninput=()=>{ cmSearch=s.value; renderContactsManager(); };
 }
 
 /* Gather recent Gmail history with this contact (cached per nudge so Regenerate is fast). */
@@ -2046,6 +2209,9 @@ async function startDraft(c, btn){
 function renderDraftPreview(c, draft){
   const box=document.getElementById("reachout"); if(!box) return;
   box.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:8px">Draft to <b>${esc(c.name)}</b> &lt;${esc(c.email)}&gt;</div>
+    <label class="dft-from">From
+      <select id="dft-from" class="dft-in" style="margin-bottom:8px">${accounts.map(a=>`<option value="${escAttr(a.email)}"${a.email===CONFIG.account?" selected":""}>${esc(a.email)}</option>`).join("")}</select>
+    </label>
     <input id="dft-subject" class="dft-in" placeholder="Subject" value="${esc(draft.subject||"").replace(/"/g,"&quot;")}">
     <textarea id="dft-body" class="dft-area" placeholder="Message">${esc(draft.body||"")}</textarea>
     <input id="dft-tone" class="dft-in" placeholder="How should it sound? e.g. playful, mention the trip, keep it pro">
@@ -2065,7 +2231,8 @@ function renderDraftPreview(c, draft){
   };
   document.getElementById("dft-send").onclick=async(e)=>{   // actually sends via Gmail (with a confirm)
     const to=c.email, subject=subjI.value.trim(), bodyText=bodyI.value;
-    const acct=acctByEmail(CONFIG.account)||accounts[0];
+    const fromSel=document.getElementById("dft-from");
+    const acct=acctByEmail(fromSel&&fromSel.value)||acctByEmail(CONFIG.account)||accounts[0];
     if(!acct){ note.textContent="Connect Google first."; return; }
     if(!to){ note.textContent="No recipient email."; return; }
     if(!confirm(`Send this email from ${acct.email}?\n\nTo: ${to}\nSubject: ${subject}\n\n${bodyText}`)) return;
@@ -3526,7 +3693,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initSwitchboard(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
