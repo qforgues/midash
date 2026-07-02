@@ -678,12 +678,7 @@
 
       <!-- Agenda (60%) + Notes (40%) -->
       <div class="split" id="agenda-notes-row" style="margin-bottom:20px">
-        <div class="card" id="agenda-view-card" style="display:none">
-          <h2><span class="dot">🗓️</span>Agenda
-            <span class="refresh" id="agenda-refresh"><span class="ricon">↻</span> refresh</span></h2>
-          <div id="agenda-view"><div class="empty">—</div></div>
-          <div id="agenda-pager" class="pager" style="display:none"></div>
-        </div>
+        <!-- Agenda card removed (v1.25.1) — it duplicated "Next 3 days"; that stays up top. -->
         <!-- Notes — your scratchpad; the agent can read this on request -->
         <div class="card" id="notes">
           <h2><span class="dot">📝</span>Notes
@@ -838,7 +833,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.25.0",
+  version: "1.25.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1540,7 +1535,6 @@ function showConnect(){
   document.getElementById("today-refresh").style.display="none";
   document.getElementById("agenda3-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
-  document.getElementById("agenda-view-card").style.display="none";
   document.getElementById("agenda-notes-row").classList.remove("live");
   document.getElementById("tasks-row").style.display="none";
 }
@@ -1549,9 +1543,7 @@ function afterAuth(){
   document.getElementById("auth-note").style.display="none";
   const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
   const a3=document.getElementById("agenda3-refresh"); a3.style.display="inline"; a3.onclick=refreshLive;
-  document.getElementById("agenda-view-card").style.display="block";
   document.getElementById("agenda-notes-row").classList.add("live");
-  document.getElementById("agenda-refresh").onclick=refreshLive;
   document.getElementById("tasks-row").style.display="grid";
   document.getElementById("tasks-refresh").onclick=loadTasks;
   document.getElementById("reachout-shuffle").onclick=()=>renderReachout(true);
