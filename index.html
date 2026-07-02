@@ -42,8 +42,8 @@
   .hbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
   .hleft { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
   .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; position:relative; }
-  .greeting { font-size:28px; font-weight:600; letter-spacing:-.02em; }
-  .sub { color:var(--muted); font-size:15px; }
+  .greeting { font-size:15px; font-weight:600; letter-spacing:-.02em; }
+  .sub { color:var(--muted); font-size:28px; }
   .avatar { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex:0 0 auto; }
   .gear-menu { position:absolute; top:calc(100% + 10px); right:0; z-index:80; width:300px; max-width:88vw; max-height:74vh;
     overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:10px; }
@@ -407,6 +407,12 @@
   .split.live { grid-template-columns:3fr 2fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
   .split > * { min-width:0; }        /* let the fr tracks win — don't let long URLs blow out a column */
+  .split.even { grid-template-columns:1fr 1fr; }   /* defined after .live so it wins if both are set */
+  @media (max-width:760px){ .split.even { grid-template-columns:1fr; } }
+  /* Collapsible panels — click the chevron in any card header to fold it away (state persists) */
+  .collapse-chev { cursor:pointer; display:inline-block; font-size:11px; color:var(--muted); margin-right:7px; transition:transform .15s; user-select:none; }
+  .card.collapsed .collapse-chev { transform:rotate(-90deg); }
+  .card.collapsed > *:not(h2) { display:none !important; }
   #notes { display:flex; flex-direction:column; }
   #notes-area { flex:1; }
 
@@ -644,7 +650,9 @@
            (PORTAL42_TOKEN held server-side, passphrase-gated). Tickets list + detail and
            notifications (with click-to-clear) are live; status-change & replies wait on
            Tracker42 shipping a tickets:write scope. -->
-      <div class="card" id="tracker-card" style="margin-bottom:20px">
+      <!-- Tickets (Tracker42) + Tasks side by side, 50/50 -->
+      <div class="split even" id="tickets-tasks-row" style="margin-bottom:20px">
+      <div class="card" id="tracker-card">
         <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Portal42 Tickets
           <span class="tk-badge" id="tracker-badge">0</span>
           <span class="fin-state" id="tk-state">checking…</span>
@@ -655,6 +663,14 @@
           <button type="button" class="pbtn" id="tk-new-btn" style="margin-left:auto">＋ New ticket</button>
         </div>
         <div id="tracker-body"><div class="empty">—</div></div>
+      </div>
+        <div class="card" id="tasks-card">
+          <h2><span class="dot">✅</span>Tasks
+            <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
+          <div id="tasks"><div class="empty">—</div></div>
+          <div id="tasks-pager" class="pager" style="display:none"></div>
+        </div>
       </div>
 
       <!-- Projects — idea→shipped progress tracker (miDash-owned, syncs via /projects KV).
@@ -705,25 +721,13 @@
         </div>
       </div>
 
-      <!-- Google Tasks (#8) + daily reach-out (#6) -->
-      <div class="split live" id="tasks-row" style="margin-bottom:20px;display:none">
-        <div class="card" id="tasks-card">
-          <h2><span class="dot">✅</span>Tasks
-            <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
-          <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
-          <div id="tasks"><div class="empty">—</div></div>
-          <div id="tasks-pager" class="pager" style="display:none"></div>
-        </div>
+      <!-- Stay connected (#6) + Notes, 50/50 -->
+      <div class="split even" id="agenda-notes-row" style="margin-bottom:20px">
         <div class="card" id="reachout-card">
           <h2><span class="dot">🤝</span>Stay connected
             <span class="refresh" id="reachout-shuffle">🎲 shuffle</span></h2>
           <div id="reachout"><div class="empty">—</div></div>
         </div>
-      </div>
-
-      <!-- Agenda (60%) + Notes (40%) -->
-      <div class="split" id="agenda-notes-row" style="margin-bottom:20px">
-        <!-- Agenda card removed (v1.25.1) — it duplicated "Next 3 days"; that stays up top. -->
         <!-- Notes — your scratchpad; the agent can read this on request -->
         <div class="card" id="notes">
           <h2><span class="dot">📝</span>Notes
@@ -890,7 +894,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.26.1",
+  version: "1.27.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1320,7 +1324,11 @@ function tick() {
 /* ============================================================
    GOOGLE LIVE DATA  (client-side OAuth, no backend)
    ============================================================ */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/contacts.other.readonly https://www.googleapis.com/auth/tasks";
+/* NOTE: contacts.other.readonly (auto-collected "other contacts") is a SENSITIVE scope Google
+   gates behind app verification — requesting it on an unverified app makes the whole consent
+   fail with Google's generic "Something went wrong". Dropped so connect works; loadContacts()
+   already tolerates otherContacts being unavailable. Re-add only after the OAuth app is verified. */
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -1615,15 +1623,12 @@ function showConnect(){
   document.getElementById("agenda3-refresh").style.display="none";
   document.getElementById("auth-note").style.display="none";
   document.getElementById("agenda-notes-row").classList.remove("live");
-  document.getElementById("tasks-row").style.display="none";
 }
 function afterAuth(){
   renderAccountBar();
   document.getElementById("auth-note").style.display="none";
   const rb=document.getElementById("today-refresh"); rb.style.display="inline"; rb.onclick=refreshLive;
   const a3=document.getElementById("agenda3-refresh"); a3.style.display="inline"; a3.onclick=refreshLive;
-  document.getElementById("agenda-notes-row").classList.add("live");
-  document.getElementById("tasks-row").style.display="grid";
   document.getElementById("tasks-refresh").onclick=loadTasks;
   document.getElementById("reachout-shuffle").onclick=()=>renderReachout(true);
   startGoogleAutoRefresh(); refreshGoogleTokens();   // keep Google signed in past 1h (silent renew)
@@ -2992,7 +2997,8 @@ function openSbDetail(id){
     </div>
     <div id="sb-copied" class="sb-copied"></div>`;
   m.style.display="flex";
-  if(id==="google"){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
+  // move the live pills in only when connected; when not connected the fix button IS the connect action
+  if(id==="google" && accounts.length){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
   document.getElementById("sb-recheck").onclick=async()=>{ await sbCheckOne(c); openSbDetail(id); };
   const cl=document.getElementById("sb-close"); if(cl) cl.onclick=closeSbModal;
   if(c.fix){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ closeSbModal(); try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
@@ -3061,6 +3067,21 @@ async function sbCheckNotes(){
   if(res.error==="key") return {state:"warn",summary:"locked",detail:"Passphrase needed for Notes sync (401)."};
   if(res.error) return {state:res.error==="net"?"off":"warn",summary:res.error,detail:`Notes sync issue: ${res.error}${res.status?` (HTTP ${res.status})`:""}.`};
   return {state:"on",summary:"synced",detail:"Notes KV reachable + synced."};
+}
+/* Collapsible panels — drop a chevron into every card header; clicking it folds the card.
+   State persists per-card in localStorage (keyed by card id, else the header text). */
+function initCollapsible(){
+  let saved={}; try{ saved=JSON.parse(localStorage.getItem("midash_collapsed")||"{}"); }catch(e){}
+  const persist=()=>{ try{ localStorage.setItem("midash_collapsed", JSON.stringify(saved)); }catch(e){} };
+  document.querySelectorAll("main .card > h2").forEach(h2=>{
+    const card=h2.closest(".card"); if(!card || h2.querySelector(".collapse-chev")) return;
+    const key=card.id || (h2.textContent||"").trim().slice(0,32); if(!key) return;
+    const chev=document.createElement("span");
+    chev.className="collapse-chev"; chev.textContent="▾"; chev.title="Collapse / expand";
+    h2.insertBefore(chev, h2.firstChild);
+    if(saved[key]) card.classList.add("collapsed");
+    chev.onclick=(e)=>{ e.stopPropagation(); const c=card.classList.toggle("collapsed"); saved[key]=c?1:0; persist(); };
+  });
 }
 function initSwitchboard(){
   const r=document.getElementById("sb-refresh"); if(r) r.onclick=runSwitchboard;
@@ -3732,7 +3753,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initCollapsible(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
