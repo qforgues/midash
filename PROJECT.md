@@ -20,10 +20,12 @@ Optimize the *current* architecture; do **not** build a "v2 backend" unless a re
 forces it. The serverless setup (static page + Worker, no DB, no server, no hosting bill)
 is a core strength — protect it.
 
-- **Login once each morning is acceptable.** The hourly Google re-login is a non-problem.
-  The client-side token flow gives no refresh token by design; fixing that means a backend
-  (auth-code flow, refresh tokens, encrypted storage, sessions) — not worth it for one user.
-  Do **not** build refresh-token auth unless the re-login becomes genuinely annoying.
+- **Google stays signed in via silent GIS renewal (v1.25.4).** The hourly re-login WAS annoying,
+  so we added `refreshGoogleTokens()` — before the 1h token expires it silently re-requests a
+  fresh one (`tokenClient.requestAccessToken({prompt:"", hint:email})`), no popup, **no backend**.
+  Runs on a 5-min timer + on tab focus. Falls back to manual "Connect Google" only if the
+  browser's Google session actually dies. Do **not** build a backend refresh-token flow — this
+  client-side silent renew is the intended fix.
 - **Real risk to fix = the open `/chat` and `/notes` Worker endpoints.** Anyone who finds
   the URL could spam Anthropic → surprise bill. Lock them with a simple shared passphrase
   stored locally — not passkeys, not OAuth, not accounts.

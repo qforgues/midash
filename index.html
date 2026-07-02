@@ -841,7 +841,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.25.3",
+  version: "1.25.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1484,6 +1484,7 @@ function googleBoot() {
   const start = () => {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.googleClientId, scope: SCOPES, callback: onToken,
+      error_callback: (err)=>{ console.warn("[google] token error:", err && err.type); },   // silent-refresh misses land here — user can reconnect manually
     });
     loadAccounts();
     if (accounts.length) afterAuth(); else showConnect();
@@ -1501,9 +1502,29 @@ async function onToken(resp){
     email=info.email||email; pic=info.picture||"";
   }catch(e){}
   const exp=Date.now()+((resp.expires_in||3000)*1000);
+  const wasEmpty=!accounts.length;
   const found=accounts.find(a=>a.email===email);
   if(found){ found.token=resp.access_token; found.exp=exp; if(pic) found.pic=pic; } else accounts.push({email, token:resp.access_token, exp, pic});
-  accessToken=accounts[0].token; saveAccounts(); afterAuth();
+  accessToken=accounts[0].token; saveAccounts();
+  if(wasEmpty || !found) afterAuth();          // full UI setup only on a new/first connect
+  else { renderAccountBar(); startGoogleAutoRefresh(); }   // silent refresh: keep the token fresh, don't reload the world
+}
+
+/* Keep Google signed in past the 1-hour token: silently re-request a fresh token before it
+   expires. No popup while the browser's Google session is alive (prompt:"" + account hint).
+   No backend — pure GIS silent grant. If the session ever dies, it just falls back to the
+   manual "Connect Google" as before. */
+let gAutoRefreshTimer=null;
+function refreshGoogleTokens(){
+  if(!tokenClient || !accounts.length) return;
+  const soon=Date.now()+10*60*1000;                    // refresh anything expiring within 10 min
+  const stale=accounts.filter(a=>a.exp<soon);
+  stale.forEach((a,i)=>{ setTimeout(()=>{ try{ tokenClient.requestAccessToken({ prompt:"", hint:a.email }); }catch(e){} }, i*1500); });
+}
+function startGoogleAutoRefresh(){
+  if(gAutoRefreshTimer) return;
+  gAutoRefreshTimer=setInterval(refreshGoogleTokens, 5*60*1000);   // check every 5 min
+  window.addEventListener("focus", refreshGoogleTokens);           // and whenever you return to the tab
 }
 
 function setAvatar(){
@@ -1555,6 +1576,7 @@ function afterAuth(){
   document.getElementById("tasks-row").style.display="grid";
   document.getElementById("tasks-refresh").onclick=loadTasks;
   document.getElementById("reachout-shuffle").onclick=()=>renderReachout(true);
+  startGoogleAutoRefresh(); refreshGoogleTokens();   // keep Google signed in past 1h (silent renew)
   loadLive();
 }
 function refreshLive(){
