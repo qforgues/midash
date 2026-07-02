@@ -329,6 +329,12 @@
   .sb-label { font-weight:500; }
   .sb-green { color:#1c7a45; } .sb-amber { color:#9a6a00; } .sb-red { color:#b4231a; font-weight:600; }
   .sb-state { font-size:15px; font-weight:600; margin-bottom:10px; }
+  /* account pills: inline in header when not connected (Connect button); moved into the Google
+     switchboard detail (one per row) once connected */
+  #acct-bar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  header #acct-bar.pills-hidden { display:none; }
+  #sb-accounts #acct-bar { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
+  #sb-accounts:empty::after { content:"Not connected."; color:var(--muted); font-size:13.5px; }
   .sb-detail { font-size:13.5px; color:var(--text); line-height:1.5; background:var(--bg); border:1px solid var(--border);
                border-radius:9px; padding:11px 13px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
   .sb-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
@@ -555,13 +561,15 @@
         <span class="sub"><span id="datestr"></span> · <span id="clock"></span></span>
       </div>
       <div class="hright">
-        <div id="acct-bar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"></div>
+        <div id="acct-bar"></div>
         <img id="avatar" class="avatar" alt="" style="display:none">
         <button id="gear-btn" class="gbtn" title="Profile &amp; settings" style="padding:8px 11px">⚙️</button>
         <button id="menu-btn" class="gbtn" title="Links &amp; apps" style="padding:8px 12px">☰</button>
         <div id="gear-menu" class="gear-menu" style="display:none">
           <div class="gear-foot" style="border-top:none;margin-top:0;padding-top:0">
             <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px">👤 Appearance &amp; profile</button>
+            <button id="check-update" class="gbtn" style="width:100%;margin-bottom:4px">🔄 Check for update</button>
+            <div id="update-status" style="font-size:11.5px;color:var(--muted);text-align:center;min-height:14px;margin-bottom:8px"></div>
             <button id="dash-key-btn" class="gbtn" style="width:100%;margin-bottom:8px">🔒 Dashboard passphrase</button>
             <button id="pwa-install" class="gbtn" style="width:100%;display:none;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
           </div>
@@ -882,7 +890,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.26.0",
+  version: "1.26.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1575,6 +1583,7 @@ function setAvatar(){
 }
 function renderAccountBar(){
   const bar=document.getElementById("acct-bar");
+  bar.classList.toggle("pills-hidden", accounts.length>0);   // hidden in header when connected — pills live in the Google switchboard
   if(!accounts.length){
     bar.innerHTML=`<button class="gbtn" id="g-connect">🔓 Connect Google</button>`;
     document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
@@ -2958,13 +2967,23 @@ async function sbCheckOne(c){
 }
 async function runSwitchboard(){ sbLastRun=Date.now(); await Promise.all(SB_CONNS.map(sbCheckOne)); }
 function sbCopyText(c,s){ return `[miDash switchboard · v${CONFIG.version}] ${c.label} = ${(s.state||"?").toUpperCase()}${s.summary?" ("+s.summary+")":""}\n${s.detail||""}\nchecked: ${s._at?new Date(s._at).toISOString():"n/a"}`; }
+/* The account pills live in the header normally (hidden via CSS) and get moved into the
+   Google switchboard detail on demand — same live element, so all its controls keep working. */
+function restoreAcctBar(){
+  const ab=document.getElementById("acct-bar"); if(!ab) return;
+  const home=document.querySelector(".hright"), avatar=document.getElementById("avatar");
+  if(home && ab.parentElement!==home){ home.insertBefore(ab, avatar||null); }
+}
+function closeSbModal(){ const m=document.getElementById("sb-modal"); if(m) m.style.display="none"; restoreAcctBar(); }
 function openSbDetail(id){
   const c=SB_CONNS.find(x=>x.id===id), s=sbState[id]||{}; if(!c) return;
+  restoreAcctBar();   // pull the account bar out of any prior modal body before we rebuild it
   const m=document.getElementById("sb-modal"), body=document.getElementById("sb-modal-body"), title=document.getElementById("sb-modal-title");
   if(title) title.textContent="🎛️ "+c.label;
   const word={on:"🟢 Green — healthy",warn:"🟡 Amber — needs attention",off:"🔴 Red — down",idle:"⚪ Grey — not set up",check:"… checking"}[s.state]||s.state||"…";
+  const detail = id==="google" ? `<div id="sb-accounts" class="sb-detail"></div>` : `<div class="sb-detail">${esc(s.detail||"No further detail.")}</div>`;
   body.innerHTML=`<div class="sb-state">${word}${s.summary?` · ${esc(s.summary)}`:""}</div>
-    <div class="sb-detail">${esc(s.detail||"No further detail.")}</div>
+    ${detail}
     <div class="sb-actions">
       <button class="gbtn" id="sb-recheck">↻ Re-check</button>
       ${c.fix?`<button class="gbtn" id="sb-fix" style="border-color:var(--accent);color:var(--accent)">${esc(c.fix.label)}</button>`:""}
@@ -2973,9 +2992,10 @@ function openSbDetail(id){
     </div>
     <div id="sb-copied" class="sb-copied"></div>`;
   m.style.display="flex";
+  if(id==="google"){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
   document.getElementById("sb-recheck").onclick=async()=>{ await sbCheckOne(c); openSbDetail(id); };
-  const cl=document.getElementById("sb-close"); if(cl) cl.onclick=()=>m.style.display="none";
-  if(c.fix){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ m.style.display="none"; try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
+  const cl=document.getElementById("sb-close"); if(cl) cl.onclick=closeSbModal;
+  if(c.fix){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ closeSbModal(); try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
   document.getElementById("sb-copy").onclick=()=>{ const txt=sbCopyText(c,s), note=document.getElementById("sb-copied");
     if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>{ if(note) note.textContent="Copied — paste it to Claude."; }).catch(()=>{ if(note) note.textContent=txt; }); }
     else if(note) note.textContent=txt; };
@@ -3044,7 +3064,7 @@ async function sbCheckNotes(){
 }
 function initSwitchboard(){
   const r=document.getElementById("sb-refresh"); if(r) r.onclick=runSwitchboard;
-  const bg=document.getElementById("sb-modal-bg"); if(bg) bg.onclick=()=>{ const m=document.getElementById("sb-modal"); if(m) m.style.display="none"; };
+  const bg=document.getElementById("sb-modal-bg"); if(bg) bg.onclick=closeSbModal;
   renderSwitchboard();
   runSwitchboard();
   window.addEventListener("focus", ()=>{ if(document.getElementById("switchboard-card") && Date.now()-sbLastRun>20000) runSwitchboard(); });
@@ -3448,6 +3468,24 @@ function versionHTML(){
 function showVersion(){
   document.querySelectorAll(".ver").forEach(el=>{ el.innerHTML=versionHTML(); el.title="miDash version "+(CONFIG.version||""); });
 }
+/* Force-check for a newer build. GitHub Pages' CDN can serve a stale index.html for ~10 min
+   even on reload — a cache-busting fetch (?cb=) bypasses that. If a newer version is out,
+   clear caches + unregister the service worker and reload past the cache. */
+function verNewer(a,b){ const pa=String(a).split(".").map(Number),pb=String(b).split(".").map(Number); for(let i=0;i<3;i++){ if((pa[i]||0)>(pb[i]||0))return true; if((pa[i]||0)<(pb[i]||0))return false; } return false; }
+async function checkForUpdate(){
+  const st=document.getElementById("update-status"); const set=t=>{ if(st) st.textContent=t; };
+  set("Checking…");
+  try{
+    const html=await (await fetch("index.html?cb="+Date.now(),{cache:"no-store"})).text();
+    const m=html.match(/version:\s*"([\d.]+)"/); const latest=m&&m[1];
+    if(!latest){ set("Couldn't read the latest version."); return; }
+    if(!verNewer(latest, CONFIG.version)){ set("✓ You're on the latest ("+CONFIG.version+")."); return; }
+    set("Updating to "+latest+"…");
+    try{ if(window.caches){ const ks=await caches.keys(); await Promise.all(ks.map(k=>caches.delete(k))); } }catch(e){}
+    try{ if(navigator.serviceWorker){ const rs=await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(r=>r.unregister())); } }catch(e){}
+    location.replace(location.pathname+"?v="+latest);   // cache-bust the navigation so the new build actually loads
+  }catch(e){ set("Update check failed — check your connection."); }
+}
 
 /* ============================================================
    COMMAND BAR — universal capture + "Show:" focus filters (v1.8)
@@ -3678,6 +3716,7 @@ function isStandalone(){ return window.matchMedia("(display-mode: standalone)").
 function initPWA(){
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
   const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openKeyModal(); };
+  const cu=document.getElementById("check-update"); if(cu) cu.onclick=(e)=>{ e.stopPropagation(); checkForUpdate(); };
   const btn=document.getElementById("pwa-install"); if(!btn) return;
   let deferred=null;
   if(isStandalone()) return;   // already installed → no button
