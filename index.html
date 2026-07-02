@@ -588,7 +588,7 @@
           <div id="mail-pager" class="pager" style="display:none"></div>
         </div>
         <div class="card">
-          <h2><span class="dot">📅</span>Next 3 days
+          <h2><span class="dot">📅</span>Next 3 events
             <span class="refresh" id="agenda3-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
           <div id="agenda"><div class="empty">—</div></div>
         </div>
@@ -833,7 +833,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.25.1",
+  version: "1.25.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1598,7 +1598,7 @@ async function loadAgenda(){
     }
     all.sort((a,b)=>a.dt-b.dt);
     agendaEvents=all.filter(o=>!isOver(o));   // drop finished meetings entirely (no strikethrough)
-    renderAgenda(box, 3, "Nothing scheduled — clear runway 🎉");
+    renderNextEvents(box, 3, "Nothing scheduled — clear runway 🎉");
     renderAgendaView();
   }catch(err){ if(err.message==="expired") showConnect(); else box.innerHTML=`<div class="empty">Couldn't load calendar.</div>`; }
 }
@@ -1634,6 +1634,13 @@ function eventRow(o){
 function renderAgenda(box, days, emptyMsg){
   const cut=new Date(); cut.setHours(0,0,0,0); cut.setDate(cut.getDate()+days);
   const evs=agendaEvents.filter(o=>o.dt<cut);
+  if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
+  box.innerHTML=groupByDay(evs);
+}
+/* Next N upcoming events regardless of how far out they are (agendaEvents is already
+   future-only + sorted ascending). */
+function renderNextEvents(box, count, emptyMsg){
+  const evs=agendaEvents.slice(0, count);
   if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
   box.innerHTML=groupByDay(evs);
 }
