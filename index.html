@@ -42,7 +42,7 @@
   .hbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
   .hleft { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
   .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; position:relative; }
-  .greeting { font-size:15px; font-weight:600; letter-spacing:-.02em; }
+  .greeting { font-size:28px; font-weight:600; letter-spacing:-.02em; }
   .sub { color:var(--muted); font-size:28px; }
   .avatar { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex:0 0 auto; }
   .gear-menu { position:absolute; top:calc(100% + 10px); right:0; z-index:80; width:300px; max-width:88vw; max-height:74vh;
@@ -429,7 +429,7 @@
   input.cdot::-moz-color-swatch { border:none; border-radius:50%; }
 
   /* version stamp */
-  .ver { font-weight:700; color:var(--text); }
+  .ver { font-weight:700; color:var(--text); font-size:15px; }
   .ver .vchg { color:var(--accent); }
 
   /* pager */
@@ -894,7 +894,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.27.0",
+  version: "1.27.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
