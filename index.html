@@ -468,11 +468,16 @@
   /* ---- Command bar: universal capture + focus filters (v1.8) ---- */
   .cmd-card { padding:16px 18px; }
   .cap-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
-  .cap-modes { display:flex; gap:6px; flex-wrap:wrap; }
-  .capmode { border:1px solid var(--border); background:var(--surface); color:var(--muted);
-             border-radius:20px; padding:6px 12px; font-size:13px; cursor:pointer; transition:all .12s; }
-  .capmode:hover { border-color:var(--accent); }
-  .capmode.active { background:var(--accent-soft); color:var(--accent); border-color:var(--accent); font-weight:600; }
+  /* capture mode = one pill with a dropdown */
+  .cap-mode-pick { position:relative; flex:0 0 auto; }
+  .cap-mode-btn { border:1px solid var(--border); background:var(--accent-soft); color:var(--accent); font-weight:600;
+                  border-radius:20px; padding:7px 14px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap; }
+  .cap-mode-btn:hover { border-color:var(--accent); }
+  .cap-mode-menu { position:absolute; top:calc(100% + 6px); left:0; z-index:60; background:var(--surface);
+                   border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:6px; min-width:200px; }
+  .cap-mode-opt { display:block; width:100%; text-align:left; border:none; background:none; color:var(--text);
+                  border-radius:8px; padding:9px 11px; font-size:13.5px; font-family:inherit; cursor:pointer; }
+  .cap-mode-opt:hover { background:var(--accent-soft); color:var(--accent); }
   .cap-input { display:flex; flex:1; min-width:220px; gap:8px; }
   .cap-input input { flex:1; min-width:0; border:1px solid var(--border); border-radius:10px; padding:9px 12px;
                      font-size:14px; background:var(--bg); color:var(--text); }
@@ -553,29 +558,19 @@
       <!-- Command bar: universal capture box + "Show:" focus filters -->
       <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
         <div class="cap-row">
-          <div class="cap-modes" id="cap-modes">
-            <button type="button" class="capmode active" data-mode="remind">⏰ Remind me to…</button>
-            <button type="button" class="capmode" data-mode="draft">✉️ Draft email to…</button>
-            <button type="button" class="capmode" data-mode="idea">💡 Save this idea…</button>
+          <div class="cap-mode-pick">
+            <button type="button" class="cap-mode-btn" id="cap-mode-btn">⏰ Remind me to… ▾</button>
+            <div class="cap-mode-menu" id="cap-mode-menu" style="display:none">
+              <button type="button" class="cap-mode-opt" data-mode="remind">⏰ Remind me to…</button>
+              <button type="button" class="cap-mode-opt" data-mode="draft">✉️ Draft email to…</button>
+              <button type="button" class="cap-mode-opt" data-mode="idea">💡 Save this idea (note/keep)</button>
+            </div>
           </div>
           <form class="cap-input" id="cap-form">
-            <input id="cap-text" autocomplete="off" placeholder="Remind me to… e.g. call the dentist Friday">
+            <input id="cap-text" autocomplete="off" placeholder="Remind me to… e.g. call the dentist Friday at 3pm (sets a due date)">
             <button type="submit" id="cap-go">Capture</button>
           </form>
           <div class="cap-flash" id="cap-flash"></div>
-        </div>
-        <div class="focus-row">
-          <span class="focus-label">Show:</span>
-          <button type="button" class="focus-pill" data-focus="reply">📨 Needs reply</button>
-          <button type="button" class="focus-pill" data-focus="bills">💳 Bills/payments</button>
-          <button type="button" class="focus-pill" data-focus="today">📅 Today’s schedule</button>
-          <button type="button" class="focus-pill" data-focus="notes">🗒️ Loose notes/docs</button>
-          <button type="button" class="focus-pill" data-focus="unsub">🚫 Unsubscribe <span id="unsub-count"></span></button>
-        </div>
-        <div class="focus-panel" id="focus-panel" style="display:none">
-          <div class="focus-head"><span id="focus-title"></span>
-            <span class="refresh" id="focus-close">✕ close</span></div>
-          <div id="focus-body"><div class="empty">—</div></div>
         </div>
       </div>
 
@@ -586,6 +581,19 @@
             <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
           <div id="mail"><div class="empty">—</div></div>
           <div id="mail-pager" class="pager" style="display:none"></div>
+          <div class="focus-row">
+            <span class="focus-label">Show:</span>
+            <button type="button" class="focus-pill" data-focus="reply">📨 Needs reply</button>
+            <button type="button" class="focus-pill" data-focus="bills">💳 Bills/payments</button>
+            <button type="button" class="focus-pill" data-focus="today">📅 Today’s schedule</button>
+            <button type="button" class="focus-pill" data-focus="notes">🗒️ Loose notes/docs</button>
+            <button type="button" class="focus-pill" data-focus="unsub">🚫 Unsubscribe <span id="unsub-count"></span></button>
+          </div>
+          <div class="focus-panel" id="focus-panel" style="display:none">
+            <div class="focus-head"><span id="focus-title"></span>
+              <span class="refresh" id="focus-close">✕ close</span></div>
+            <div id="focus-body"><div class="empty">—</div></div>
+          </div>
         </div>
         <div class="card">
           <h2><span class="dot">📅</span>Next 3 events
@@ -833,7 +841,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.25.2",
+  version: "1.25.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2738,7 +2746,7 @@ const SB_CONNS = [
   { id:"finance", label:"42pay",      check:sbCheckFinance, fix:{label:"↻ Retry", run:()=>{ if(typeof loadFinance==="function") loadFinance(); if(typeof loadDebt==="function") loadDebt(); }} },
   { id:"tracker", label:"Tracker42",  check:sbCheckTracker, fix:{label:"↻ Retry", run:()=>{ tkTickets=null; tkNotifs=null; if(typeof loadTracker==="function") loadTracker(); }} },
   { id:"discord", label:"Discord",    check:sbCheckDiscord },
-  { id:"notes",   label:"Notes",      check:sbCheckNotes,   fix:{label:"↻ Re-sync", run:()=>{ if(resyncNotes) resyncNotes(); }} },
+  { id:"notes",   label:"Notes sync", check:sbCheckNotes,   fix:{label:"↻ Re-sync", run:()=>{ if(resyncNotes) resyncNotes(); }} },
 ];
 const sbState={}; let sbLastRun=0;
 function sbStateClass(s){ return ({on:"on",warn:"warn",off:"off",idle:"idle",check:"check"}[s]||"check"); }
@@ -3266,13 +3274,13 @@ const CAP_PLACEHOLDER = {
 };
 let capMode = "remind";
 function initCapture(){
-  const modes=document.getElementById("cap-modes"); if(!modes) return;
-  const input=document.getElementById("cap-text");
-  modes.querySelectorAll(".capmode").forEach(b=>{
-    b.onclick=()=>{ capMode=b.dataset.mode;
-      modes.querySelectorAll(".capmode").forEach(x=>x.classList.toggle("active",x===b));
-      input.placeholder=CAP_PLACEHOLDER[capMode]; input.focus(); };
-  });
+  const btn=document.getElementById("cap-mode-btn"), menu=document.getElementById("cap-mode-menu");
+  const input=document.getElementById("cap-text"); if(!btn||!menu||!input) return;
+  const setMode=(m)=>{ capMode=m; const opt=menu.querySelector(`[data-mode="${m}"]`); btn.textContent=(opt?opt.textContent:m)+" ▾"; input.placeholder=CAP_PLACEHOLDER[m]||""; menu.style.display="none"; };
+  btn.onclick=(e)=>{ e.stopPropagation(); menu.style.display=menu.style.display==="none"?"block":"none"; };
+  menu.querySelectorAll(".cap-mode-opt").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); setMode(b.dataset.mode); input.focus(); }; });
+  document.addEventListener("click",()=>{ if(menu) menu.style.display="none"; });
+  setMode("remind");
   document.getElementById("cap-form").addEventListener("submit",e=>{
     e.preventDefault(); const text=input.value.trim(); if(!text) return;
     if(capMode==="draft") captureDraft(text);
