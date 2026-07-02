@@ -3,9 +3,13 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.21.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.25.2` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-02
+
+> **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
+> background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
+> Always bump `CONFIG.version` on any dashboard change (see `applyVersionTheme()`).
 
 ---
 
@@ -44,9 +48,10 @@ is a core strength — protect it.
 A personal single-page command-center dashboard ("miDash") — calendar, mail,
 projects, work, kids, fun/play, plus a Notes scratchpad and an embedded AI chat
 agent. Static site, no build step, hosted free on GitHub Pages. A Cloudflare Worker
-is the "brain" (holds the Anthropic key + Notes storage). The Raspberry Pi is meant
-to be an external retriever that talks to the same Worker via a messaging app
-(Discord) — not built yet (see Backlog).
+is the "brain" (holds the Anthropic key + Notes storage). The Raspberry Pi (`claudeclaw`)
+is now an external retriever: the **Dash** Discord bot on the Pi relays DMs to the Worker's
+`/agent` endpoint (built 2026-07-02 — the old "claw42" backlog item, done). 42payments also
+moved to the Pi so both stay up when the Mac is closed.
 
 ## Live locations
 
@@ -57,7 +62,40 @@ to be an external retriever that talks to the same Worker via a messaging app
 - **Finance proxy:** `POST /finance`  (42payments/FreshBooks; key held server-side)
 - **CC payoff plan:** `GET/PUT /ccplan`  (KV `ccplan` blob — debt card)
 - **Projects board:** `GET/PUT /projects`  (KV `projects` array — projects tracker, v1.20.0)
-- All non-chat endpoints are gated by the `DASH_KEY` passphrase via `authed()`.
+- **Tracker42 proxy:** `GET/POST /tracker?action=…`  (Portal42 tickets; `PORTAL42_TOKEN` server-side)
+- **Discord agent brain:** `POST /agent`  (server-side tool loop for Discord/SMS — no browser)
+- **Discord heartbeat:** `GET/POST /discord-status`  (bot posts liveness; switchboard reads it)
+- All non-chat endpoints are gated by the `DASH_KEY` passphrase via `authed()`. The whole
+  Worker fetch handler is wrapped in try/catch so a crash returns a CORS-safe JSON error
+  (never Cloudflare's bare error page, which the browser misreports as a CORS failure).
+
+## Current system map (2026-07-02, v1.25.2)
+
+The "operating system for Quentin" vision is now largely realized. What runs where:
+
+| Piece | Repo | Host | Notes |
+|---|---|---|---|
+| Dashboard (static SPA) | `qforgues/midash` | GitHub Pages | `index.html` (all UI/CSS/JS/CONFIG) |
+| Brain (Anthropic + proxies + KV) | `qforgues/midash` | Cloudflare Worker | `worker.js`; secrets: `ANTHROPIC_API_KEY`, `DASH_KEY`, `PAYMENTS_API_KEY`, `PORTAL42_TOKEN` |
+| Discord agent "miDash"/Dash | `qforgues/midash-discord` (private) | **Pi** `midash-discord.service` | DMs → Worker `/agent`; auto-locks to first DMer; heartbeats `/discord-status` |
+| 42payments (FreshBooks app) | `qforgues/42payments` (private) | **Pi** `midash-42payments.service` | moved off the Mac 2026-07-02; served via the Pi's cloudflared tunnel |
+| Cloudflare tunnel | — | **Pi** `cloudflared.service` | `/etc/cloudflared/config.yml`; serves `42payments.myeasyapp.com` + `claw42.myeasyapp.com` |
+
+**Pi** = `claudeclaw` (Raspberry Pi 4). Reach it: **`ssh claudeclaw`** (mDNS `claudeclaw.local`, IP-independent;
+DHCP IP was `.211`). It also runs a *separate* Python bot (`pi-bot.service` = claw42) — unrelated to Dash.
+The Mac's old 42payments + tunnel LaunchAgents are disabled (`*.plist.disabled`).
+
+**Cards on the dashboard (top→bottom):** 🎛️ Switchboard (connection lights: Brain/Passphrase/Google/
+42pay/Tracker42/Discord/Notes — click one for a copyable diagnostic + fix) · Command bar (⏰ Remind
+→ Google Task **with parsed due date**, ✉️ Draft, 💡 Idea; Show: focus filters) · Unread inbox + Next 3
+events · 🚀 Portal42 Tickets (Tracker42: tickets list + detail + status-change/reply writes; Notifications
+w/ click-to-clear) · 🚀 Projects (idea→ship grid, agent-writable) · Credit Card Debt + payoff plan ·
+Tasks + Stay-connected (now a real **Send email** button) · Notes. *(Finance summary card removed v1.25.0;
+42payments still powers Debt + the switchboard + agent finance tools.)*
+
+**Discord = another front door to the same brain.** DM the bot → `/agent` runs a server-side tool loop
+(no browser) with **notes, projects, Tracker42 tickets, and 42payments finance** tools. Gmail/Calendar/
+Tasks are NOT available over Discord (they need the in-browser Google token).
 
 ## Accounts & keys
 
