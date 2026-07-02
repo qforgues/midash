@@ -183,10 +183,14 @@
   .proj-spill.zero { opacity:.38; }
   .proj-summary-meta { font-size:12.5px; color:var(--muted); margin-top:9px; }
   .proj-need { color:var(--warn); font-weight:600; }
-  .proj { border:1px solid var(--border); border-radius:13px; padding:13px 15px; margin-bottom:11px; background:var(--bg);
+  /* projects laid out as a responsive grid — 2 per row, 3 on wide screens, 1 on mobile */
+  #projects-body { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+  @media (min-width:1000px){ #projects-body { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+  @media (max-width:620px){ #projects-body { grid-template-columns:1fr; } }
+  #projects-body .empty { grid-column:1/-1; }
+  .proj { border:1px solid var(--border); border-radius:13px; padding:13px 15px; background:var(--bg);
           cursor:pointer; transition:border-color .15s, box-shadow .15s; min-width:0; }
   .proj:hover { border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow:var(--shadow); }
-  .proj:last-child { margin-bottom:0; }
   .proj.stale { border-left:3px solid var(--warn); }
   .proj.done { opacity:.9; }
   .proj-top { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:9px; }
@@ -629,13 +633,8 @@
         <div id="projects-body"><div class="empty">—</div></div>
       </div>
 
-      <!-- 42payments — business finances (read + act via the agent's finance_* tools) -->
-      <div class="card" id="finance-card" style="margin-bottom:20px">
-        <h2><span class="led" id="fin-led" title="42payments connection"></span>Finance
-          <span class="fin-state" id="fin-state">checking…</span>
-          <span class="refresh" id="finance-refresh"><span class="ricon">↻</span> refresh</span></h2>
-        <div id="finance-body"><div class="empty">—</div></div>
-      </div>
+      <!-- Finance summary card removed (v1.25.0) — 42payments still powers the Debt card,
+           the switchboard 42pay light, and the agent's finance_* tools. -->
 
       <!-- Credit-card debt — balances (from 42payments) + your payoff plan (miDash-owned) -->
       <div class="card" id="debt-card" style="margin-bottom:20px">
@@ -839,7 +838,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.24.4",
+  version: "1.25.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1646,7 +1645,7 @@ function renderAgenda(box, days, emptyMsg){
   if(!evs.length){ box.innerHTML=`<div class="empty">${emptyMsg}</div>`; return; }
   box.innerHTML=groupByDay(evs);
 }
-const AGENDA_PER=5, AGENDA_MAX=20;
+const AGENDA_PER=3, AGENDA_MAX=20;
 let agendaPage=0;
 function agendaRowHTML(o, showDate){
   const multi=accounts.length>1;
@@ -1710,7 +1709,7 @@ function labelPills(ids,map){
     .map(n=>`<span class="lbl">${esc(n)}</span>`).join("");
 }
 
-const MAIL_PER=5;   // show 5 emails per page
+const MAIL_PER=3;   // show 3 emails per page
 let mailRows=[], mailPage=0;
 // Deep-link by THREAD id (more reliable than message id for opening a conversation),
 // via the authuser form so it doesn't 404 like the /u/<email>/ path.
@@ -2023,7 +2022,7 @@ function renderDraftPreview(c, draft){
     <input id="dft-tone" class="dft-in" placeholder="How should it sound? e.g. playful, mention the trip, keep it pro">
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:2px">
       <button class="gbtn" id="dft-regen">↻ Regenerate</button>
-      <button class="gbtn" id="dft-open" style="border-color:var(--accent);color:var(--accent)">✉️ Open in Gmail</button>
+      <button class="gbtn" id="dft-send" style="border-color:var(--accent);color:var(--accent)">✉️ Send email</button>
       <button class="gbtn" id="dft-back" style="color:var(--muted)">back</button>
     </div>
     <div id="dft-note" class="from" style="margin-top:8px"></div>`;
@@ -2035,9 +2034,19 @@ function renderDraftPreview(c, draft){
     catch(err){ note.textContent="Couldn't regenerate ("+(err.message||err)+")."; }
     finally{ b.disabled=false; b.textContent="↻ Regenerate"; }
   };
-  document.getElementById("dft-open").onclick=()=>{   // synchronous → no popup blocker
-    window.open(gmailComposeUrl(CONFIG.account, c.email, subjI.value, bodyI.value), "_blank", "noopener");
-    note.textContent="Opened in Gmail ↗ — review before sending.";
+  document.getElementById("dft-send").onclick=async(e)=>{   // actually sends via Gmail (with a confirm)
+    const to=c.email, subject=subjI.value.trim(), bodyText=bodyI.value;
+    const acct=acctByEmail(CONFIG.account)||accounts[0];
+    if(!acct){ note.textContent="Connect Google first."; return; }
+    if(!to){ note.textContent="No recipient email."; return; }
+    if(!confirm(`Send this email from ${acct.email}?\n\nTo: ${to}\nSubject: ${subject}\n\n${bodyText}`)) return;
+    const b=e.currentTarget; b.disabled=true; b.textContent="sending…"; note.textContent="";
+    try{
+      const lines=["To: "+to,"Subject: "+subject,"Content-Type: text/plain; charset=UTF-8","",bodyText];
+      const r=await fetch("https://www.googleapis.com/gmail/v1/users/me/messages/send",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({raw:b64url(lines.join("\r\n"))})});
+      if(r.ok){ note.textContent="✅ Sent to "+to; b.textContent="✓ Sent"; }
+      else { note.textContent="Send failed ("+r.status+"). Reconnect Google, then try again."; b.disabled=false; b.textContent="✉️ Send email"; }
+    }catch(err){ note.textContent="Send failed ("+(err.message||err)+")."; b.disabled=false; b.textContent="✉️ Send email"; }
   };
   document.getElementById("dft-back").onclick=()=>renderReachout();
 }
@@ -2072,7 +2081,7 @@ async function loadTasks(){
   }
   renderTasks(out, err, failedAccts);
 }
-const TASKS_PER=5;             // show 5 at a time, page through the rest
+const TASKS_PER=3;             // show 3 at a time, page through the rest
 let taskItems=[], taskPage=0, taskFailed=[];
 function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
@@ -2516,7 +2525,7 @@ function renderTrackerTab(){
   if(tkTab==="notifs"){ tkNotifs ? renderTrackerNotifs(tkNotifs) : body.innerHTML=`<div class="empty">Loading…</div>`; }
   else { tkTickets ? renderTickets(tkTickets) : body.innerHTML=`<div class="empty">Loading…</div>`; }
 }
-const TK_PER=5; let tkTicketPage=0;   // show 5 tickets at a time, page through the rest
+const TK_PER=3; let tkTicketPage=0;   // show 3 tickets at a time, page through the rest
 function renderTickets(d){
   const body=document.getElementById("tracker-body"); if(!body) return;
   if(!d || d.offline || d.success===false || d.error){
@@ -3252,7 +3261,7 @@ function showVersion(){
    already-connected accounts — no backend changes needed.
    ============================================================ */
 const CAP_PLACEHOLDER = {
-  remind: "Remind me to… e.g. call the dentist Friday",
+  remind: "Remind me to… e.g. call the dentist Friday at 3pm (sets a due date)",
   draft:  "Draft email to… e.g. Sam about the Q3 numbers",
   idea:   "Save this idea… e.g. rewrite the landing-page hero",
 };
@@ -3286,15 +3295,83 @@ function captureToNotes(mode, text){
   ta.dispatchEvent(new Event("input"));   // fire the existing autosave → Worker KV
   capFlash("💡 Idea saved to Notes");
 }
-/* "Remind me to…" → a REAL Google Task (turning intent into a tracked to-do).
+/* Natural-language "when" parser for reminders. Pulls a due date (+ optional time) out of
+   phrases like "…Friday", "…tomorrow at 3pm", "…in 3 days", "…july 10", "…by the 5th".
+   Google Tasks stores DATE only, so any parsed time is appended to the task title.
+   Unit-tested in Node against 15 phrasings. */
+function pad2(n){ return String(n).padStart(2,"0"); }
+function ymdLocal(d){ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
+function parseReminder(text){
+  const now = new Date();
+  const orig = text;
+  let work = " "+text+" ";
+  const strip = [];
+  let hh=null, mm=0, timeStr=null, m;
+  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am|pm)?\b/i))){
+    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase();
+    if(ap==="pm"&&hh<12) hh+=12; if(ap==="am"&&hh===12) hh=0;
+    timeStr=(hh%12||12)+":"+pad2(mm)+(hh<12?"am":"pm"); strip.push(m[0]);
+  } else if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2})\s*(am|pm)\b/i))){
+    hh=parseInt(m[1],10)%12; if(m[2].toLowerCase()==="pm") hh+=12;
+    timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
+  } else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
+  else if(/\bmidnight\b/i.test(work)){ hh=0; timeStr="midnight"; strip.push("midnight"); }
+  else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
+  let due=null;
+  const mn=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  if((m=work.match(/\b(today|tonight)\b/i))){ due=new Date(now); strip.push(m[0]); }
+  else if((m=work.match(/\b(tomorrow|tmrw|tmr)\b/i))){ due=new Date(now); due.setDate(due.getDate()+1); strip.push(m[0]); }
+  else if((m=work.match(/\bin\s+(\d+)\s+(days?|weeks?)\b/i))){ due=new Date(now); due.setDate(due.getDate()+parseInt(m[1],10)*(/week/i.test(m[2])?7:1)); strip.push(m[0]); }
+  else if((m=work.match(/\bnext\s+week\b/i))){ due=new Date(now); due.setDate(due.getDate()+7); strip.push(m[0]); }
+  else if((m=work.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i))){
+    const w=m[2].toLowerCase();
+    const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
+    due=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; due.setDate(due.getDate()+delta); strip.push(m[0]);
+  }
+  else if((m=work.match(new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i")))){
+    const mo=mn.indexOf(m[1].toLowerCase().slice(0,3)), day=parseInt(m[2],10);
+    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i")))){
+    const day=parseInt(m[1],10), mo=mn.indexOf(m[2].toLowerCase().slice(0,3));
+    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i))){
+    const day=parseInt(m[1],10); due=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-due)>86400000) due.setMonth(due.getMonth()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))){
+    const mo=parseInt(m[1],10)-1, day=parseInt(m[2],10); let yr=m[3]?(m[3].length<=2?2000+parseInt(m[3],10):parseInt(m[3],10)):now.getFullYear();
+    due=new Date(yr,mo,day,0,0,0); if(!m[3]&&(now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  if(!due && hh!=null) due=new Date(now);
+  const hadDateWord = due && !(strip.length===1 && (timeStr!=null) && !/today|tonight|tomorrow|tmrw|tmr|next|in\s+\d|\/|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(orig));
+  if(due){
+    if(hh!=null){ due.setHours(hh,mm,0,0); if(due<now && !hadDateWord) due.setDate(due.getDate()+1); }
+    else due.setHours(9,0,0,0);
+  }
+  let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
+  title=title.replace(/\s{2,}/g," ").trim();
+  while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
+  title=title.replace(/[\s,;:-]+$/,"").trim();
+  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
+}
+/* "Remind me to…" → a REAL Google Task with a parsed due date. Say "…by Friday 3pm" and it
+   sets the task's due date (time kept in the title, since Google Tasks stores date only).
    Falls back to a Notes checkbox line if Google/Tasks-write isn't available yet. */
 async function captureRemind(text){
   const acct=defaultAcct();
+  const p=parseReminder(text);
+  let title=p.title||text;
+  if(p.timeStr) title=title+" ("+p.timeStr+")";   // Google Tasks stores the DATE only
+  const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
   if(acct){
-    try{ const r=await createTask(acct, text); if(r.ok){ capFlash("✅ Added to your Tasks"); loadTasks(); return; } }catch(e){}
+    try{ const r=await createTask(acct, title, dueISO); if(r.ok){
+      capFlash(p.due ? ("✅ Task added — due "+fmtDue(p.ymd)+(p.timeStr?" "+p.timeStr:"")) : "✅ Added to your Tasks");
+      loadTasks(); return;
+    } }catch(e){}
   }
   const ta=document.getElementById("notes-area");
-  if(ta){ ta.value=`- [ ] ${text}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
+  if(ta){ ta.value=`- [ ] ${title}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
   capFlash(acct ? "⏰ Saved to Notes — reconnect Google for Tasks write access" : "⏰ Reminder saved to Notes");
 }
 /* Draft email → hand it to the chat agent (it resolves the contact, can pull
@@ -3420,7 +3497,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initSwitchboard(); initFinance(); initDebt(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initProjects(); initTracker(); initSwitchboard(); initDebt(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
