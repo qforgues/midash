@@ -370,32 +370,93 @@ async function handleDiscordStatus(request, env) {
 // Agent over external channels (Discord now, SMS/Twilio later) — CHAT-ONLY MVP, no tools.
 // Takes { messages:[{role,content}] } or { message:"..." }, returns { reply, usage }.
 // NON-streaming (a bot wants the whole reply). Gated by authed() like everything else.
+// ---- Server-side tools for the Discord/SMS agent (no browser needed) ----
+const AGENT_PIPELINE = ["idea", "validate", "plan", "build", "test", "ship", "grow"];
+const AGENT_SYSTEM = `You are Q's personal assistant "Dash", reachable over Discord. Be concise, warm, and
+direct — keep replies short enough to read comfortably in a chat app (a few sentences, use line breaks/lists sparingly).
+You have TOOLS for Q's finances (42payments), his Portal42/Tracker42 tickets, his Projects board, and his Notes
+scratchpad — use them to actually get things done, then confirm briefly what you did.
+You do NOT have his email or calendar here (those need the miDash dashboard) — if he asks for those, say so plainly.
+For anything OTHERS would see (a ticket status change, a ticket comment), briefly confirm with Q before doing it
+unless he was already explicit. Reading is always fine to do immediately.`;
+const AGENT_TOOLS = [
+  { name: "read_notes", description: "Read Q's free-form Notes scratchpad.", input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "add_note", description: "Jot a line to the TOP of Q's Notes scratchpad.", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
+  { name: "list_projects", description: "List Q's tracked projects with stage, next action, and days since touched.", input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "add_project", description: "Add a new project. name required; optional stage (idea|validate|plan|build|test|ship|grow), next, url.", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" }, url: { type: "string" } }, required: ["name"] } },
+  { name: "update_project", description: "Update a project by name (partial match ok): set stage and/or next action.", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" } }, required: ["name"] } },
+  { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
+  { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
+  { name: "set_ticket_status", description: "Change a Portal42 ticket's status (e.g. current, code_review, released). A note is required for failed_beta/failed_live/released. Confirm with Q first.", input_schema: { type: "object", properties: { id: { type: "integer" }, status: { type: "string" }, note: { type: "string" } }, required: ["id", "status"] } },
+  { name: "add_ticket_comment", description: "Add a comment/reply to a Portal42 ticket. Confirm with Q first.", input_schema: { type: "object", properties: { ticket_id: { type: "integer" }, comment: { type: "string" }, is_internal: { type: "boolean" } }, required: ["ticket_id", "comment"] } },
+];
+async function agentGetProjects(env) { try { const v = await env.NOTES.get("projects"); const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; } catch { return []; } }
+async function agentFinance(env, path) {
+  if (!env.PAYMENTS_API_KEY) return { error: "finance not configured" };
+  try { const r = await fetch(PAYMENTS_BASE + path, { headers: { "X-API-Key": env.PAYMENTS_API_KEY, "Accept": "application/json" } }); const t = await r.text(); try { return JSON.parse(t || "{}"); } catch { return { error: "finance returned non-JSON (app may be down)" }; } }
+  catch { return { error: "42payments offline" }; }
+}
+async function agentTracker(env, action, params, body) {
+  if (!env.PORTAL42_TOKEN) return { error: "tracker not configured" };
+  const qs = new URLSearchParams({ action });
+  if (params) for (const k in params) if (params[k] != null) qs.set(k, params[k]);
+  const isWrite = ["set_status", "add_comment", "create_ticket", "mark_read", "mark_all_read"].includes(action);
+  const init = { method: isWrite ? "POST" : "GET", headers: { Authorization: "Bearer " + env.PORTAL42_TOKEN, "Accept": "application/json" } };
+  if (isWrite && body) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(body); }
+  try { const r = await fetch(TRACKER_BASE + "?" + qs.toString(), init); const t = await r.text(); try { return JSON.parse(t || "{}"); } catch { return { error: "tracker returned non-JSON" }; } }
+  catch { return { error: "Tracker42 offline" }; }
+}
+async function runAgentTool(name, a, env) {
+  a = a || {};
+  try {
+    switch (name) {
+      case "read_notes": { const n = await env.NOTES.get("notes"); return { notes: (n || "").slice(0, 4000) }; }
+      case "add_note": { if (!a.text) return { error: "need text" }; const cur = (await env.NOTES.get("notes")) || ""; const next = "- " + String(a.text) + "  · " + new Date().toISOString().slice(0, 10) + "\n" + cur; await env.NOTES.put("notes", next.slice(0, 20000)); return { added: true }; }
+      case "list_projects": { const ps = await agentGetProjects(env); return { projects: ps.map(p => ({ name: p.name, stage: AGENT_PIPELINE[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null })) }; }
+      case "add_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const si = a.stage ? AGENT_PIPELINE.indexOf(String(a.stage).toLowerCase()) : 0; const np = { id: "p_" + Date.now().toString(36), name: String(a.name), url: String(a.url || ""), repo: "", stage: si >= 0 ? si : 0, next: String(a.next || ""), notes: "", updated: Date.now(), pinned: false, order: (ps.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1) }; ps.push(np); await env.NOTES.put("projects", JSON.stringify(ps)); return { added: true, name: np.name }; }
+      case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const p = ps.find(x => x.name.toLowerCase() === q) || ps.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; if (a.stage) { const si = AGENT_PIPELINE.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage; use one of " + AGENT_PIPELINE.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, stage: AGENT_PIPELINE[p.stage] }; }
+      case "finance_summary": return await agentFinance(env, "/summary");
+      case "list_tracker_notifications": { const d = await agentTracker(env, "notifications", { since: 0, order: "desc", limit: a.limit || 10 }); if (d && d.success === false) return { error: d.error }; return { notifications: (d && d.data) || [], meta: (d && d.meta) || {} }; }
+      case "get_ticket": { if (a.id == null) return { error: "need id" }; const d = await agentTracker(env, "ticket", { id: a.id }); return (d && d.data) || d; }
+      case "set_ticket_status": { if (a.id == null || !a.status) return { error: "need id and status" }; return await agentTracker(env, "set_status", null, { id: a.id, status: a.status, note: a.note || undefined }); }
+      case "add_ticket_comment": { if (a.ticket_id == null || !a.comment) return { error: "need ticket_id and comment" }; return await agentTracker(env, "add_comment", null, { ticket_id: a.ticket_id, comment: a.comment, is_internal: a.is_internal }); }
+      default: return { error: "unknown tool " + name };
+    }
+  } catch (e) { return { error: String(e && e.message || e) }; }
+}
 async function handleAgent(request, env) {
   if (request.method !== "POST") return new Response("POST only", { status: 405, headers: cors() });
   let body;
   try { body = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
-  const messages = Array.isArray(body.messages) ? body.messages
+  let msgs = Array.isArray(body.messages) ? body.messages.slice()
     : (body.message != null ? [{ role: "user", content: String(body.message) }] : []);
-  if (!messages.length) return json({ error: { message: "no message" } }, 400);
+  if (!msgs.length) return json({ error: { message: "no message" } }, 400);
   const model = (typeof body.model === "string" && ALLOWED_MODELS.has(body.model)) ? body.model : DEFAULT_MODEL;
-  const payload = {
-    model,
-    max_tokens: 1200,
-    system: "You are Q's personal assistant, reachable over Discord (and later SMS). You're in a chat — be concise, warm, and direct, and keep replies short enough to read comfortably in a messaging app. You don't have tools in this conversation, so answer from what you know; if Q asks for something that needs his email/calendar/finances, say it's coming to Discord soon but for now he can do it in the miDash dashboard.",
-    messages,
-  };
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) {
-    let e; try { e = await r.json(); } catch { e = { error: { message: "upstream " + r.status } }; }
-    return json(e, r.status);
+  let usage = null;
+  for (let round = 0; round < 6; round++) {   // up to 6 tool rounds, then answer
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model, max_tokens: 1400, system: AGENT_SYSTEM, tools: AGENT_TOOLS, messages: msgs }),
+    });
+    if (!r.ok) { let e; try { e = await r.json(); } catch { e = { error: { message: "upstream " + r.status } }; } return json(e, r.status); }
+    const data = await r.json();
+    usage = data.usage || usage;
+    const toolUses = (data.content || []).filter(b => b.type === "tool_use");
+    if (!toolUses.length) {
+      const reply = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+      return json({ reply, usage });
+    }
+    msgs.push({ role: "assistant", content: data.content });
+    const results = [];
+    for (const tu of toolUses) {
+      const out = await runAgentTool(tu.name, tu.input, env);
+      results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 8000) });
+    }
+    msgs.push({ role: "user", content: results });
   }
-  const data = await r.json();
-  const reply = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
-  return json({ reply, usage: data.usage || null });
+  return json({ reply: "I did a few steps but ran out of room — can you narrow it down a bit?", usage });
 }
 
 async function handleChat(request, env) {
