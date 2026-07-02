@@ -894,7 +894,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.27.1",
+  version: "1.27.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3497,7 +3497,11 @@ async function checkForUpdate(){
   const st=document.getElementById("update-status"); const set=t=>{ if(st) st.textContent=t; };
   set("Checking…");
   try{
-    const html=await (await fetch("index.html?cb="+Date.now(),{cache:"no-store"})).text();
+    // Read the version from the raw GitHub source — this bypasses BOTH the GitHub Pages CDN
+    // and our own service-worker cache (different origin, never cached here), so we always
+    // see the truly-latest committed build. Query string forces a fresh edge fetch too.
+    const raw="https://raw.githubusercontent.com/qforgues/midash/main/index.html?cb="+Date.now();
+    const html=await (await fetch(raw,{cache:"no-store"})).text();
     const m=html.match(/version:\s*"([\d.]+)"/); const latest=m&&m[1];
     if(!latest){ set("Couldn't read the latest version."); return; }
     if(!verNewer(latest, CONFIG.version)){ set("✓ You're on the latest ("+CONFIG.version+")."); return; }
