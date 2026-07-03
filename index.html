@@ -621,17 +621,10 @@
       <div class="split live" id="today-row" style="margin-bottom:20px">
         <div class="card">
           <h2><span class="dot">✉️</span>Unread in inbox
-            <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
+            <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span>
+            <span class="refresh" id="inbox-unsub" title="Unsubscribe queue" style="margin-left:10px">🚫 <span id="unsub-count"></span></span></h2>
           <div id="mail"><div class="empty">—</div></div>
           <div id="mail-pager" class="pager" style="display:none"></div>
-          <div class="focus-row">
-            <span class="focus-label">Show:</span>
-            <button type="button" class="focus-pill" data-focus="reply">📨 Needs reply</button>
-            <button type="button" class="focus-pill" data-focus="bills">💳 Bills/payments</button>
-            <button type="button" class="focus-pill" data-focus="today">📅 Today’s schedule</button>
-            <button type="button" class="focus-pill" data-focus="notes">🗒️ Loose notes/docs</button>
-            <button type="button" class="focus-pill" data-focus="unsub">🚫 Unsubscribe <span id="unsub-count"></span></button>
-          </div>
           <div class="focus-panel" id="focus-panel" style="display:none">
             <div class="focus-head"><span id="focus-title"></span>
               <span class="refresh" id="focus-close">✕ close</span></div>
@@ -697,29 +690,8 @@
       <!-- Finance summary card removed (v1.25.0) — 42payments still powers the Debt card,
            the switchboard 42pay light, and the agent's finance_* tools. -->
 
-      <!-- Credit-card debt — balances (from 42payments) + your payoff plan (miDash-owned) -->
-      <div class="card" id="debt-card" style="margin-bottom:20px">
-        <h2><span class="led" id="debt-led" title="Card balances"></span>Credit Card Debt
-          <span class="fin-state" id="debt-state">checking…</span>
-          <span class="refresh" id="debt-refresh"><span class="ricon">↻</span> refresh</span></h2>
-        <div id="debt-body"><div class="empty">—</div></div>
-        <div class="plan-box" id="plan-box">
-          <div class="plan-head">🎯 Payoff plan</div>
-          <div class="plan-row">
-            <label>Strategy
-              <select id="plan-strategy">
-                <option value="avalanche">Avalanche (highest APR first)</option>
-                <option value="snowball">Snowball (smallest balance first)</option>
-                <option value="custom">Custom</option>
-              </select></label>
-            <label>Attacking
-              <input id="plan-target" placeholder="which card / account" autocomplete="off"></label>
-            <label>Monthly
-              <input id="plan-monthly" type="number" min="0" step="50" placeholder="$ / mo" autocomplete="off"></label>
-          </div>
-          <div class="plan-foot"><span id="plan-status" class="plan-status"></span></div>
-        </div>
-      </div>
+      <!-- Credit Card Debt moved out of the main flow → opened from the ☰ menu as a modal
+           (monthly review + agent-built payoff plan). See #debt-modal below. -->
 
       <!-- Stay connected (#6) + Notes, 50/50 -->
       <div class="split even" id="agenda-notes-row" style="margin-bottom:20px">
@@ -869,6 +841,39 @@
   </div>
 </div>
 
+<!-- Credit Card Debt — opened from the ☰ menu (monthly review + agent-built payoff plan) -->
+<div id="debt-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="debt-modal-bg"></div>
+  <div class="panel" style="max-width:560px">
+    <h2><span class="led" id="debt-led" title="Card balances"></span>💳 Credit Card Debt
+      <span class="fin-state" id="debt-state">checking…</span>
+      <span class="refresh" id="debt-refresh"><span class="ricon">↻</span> refresh</span></h2>
+    <div id="debt-body"><div class="empty">—</div></div>
+    <div class="plan-box" id="plan-box">
+      <div class="plan-head">🎯 Payoff plan</div>
+      <div class="plan-row">
+        <label>Strategy
+          <select id="plan-strategy">
+            <option value="avalanche">Avalanche (highest APR first)</option>
+            <option value="snowball">Snowball (smallest balance first)</option>
+            <option value="custom">Custom</option>
+          </select></label>
+        <label>Attacking
+          <input id="plan-target" placeholder="which card / account" autocomplete="off"></label>
+        <label>Monthly
+          <input id="plan-monthly" type="number" min="0" step="50" placeholder="$ / mo" autocomplete="off"></label>
+      </div>
+      <div class="plan-foot"><span id="plan-status" class="plan-status"></span></div>
+    </div>
+    <div class="plan-box" style="margin-top:14px">
+      <div class="plan-head">🤖 Strategy with your agent</div>
+      <p style="font-size:12.5px;color:var(--muted);margin:7px 0 11px;line-height:1.5">Hands your current balances and plan settings to your agent. It can pull live finance data and build a concrete month-by-month payoff plan with you — which account to hit first, timeline, interest saved.</p>
+      <button class="gbtn" id="debt-agent" style="border-color:var(--accent);color:var(--accent)">🤖 Build my payoff strategy</button>
+    </div>
+    <div class="pat-actions" style="margin-top:16px"><button id="debt-close" class="gbtn">Close</button></div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -894,7 +899,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.27.2",
+  version: "1.27.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -995,6 +1000,13 @@ function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
 /* ---------- Render all quick-links into the gear dropdown ---------- */
 function render() {
+  const tools = `
+    <div class="gear-sec">
+      <h3><span class="dot">🧰</span>Tools</h3>
+      <div class="links">
+        <a href="#" id="cc-debt-link"><span class="lhs"><span class="ldot set"></span>💳 Credit Card Debt</span><span><span class="arrow">→</span></span></a>
+      </div>
+    </div>`;
   const sections = CONFIG.sections.map(s => `
     <div class="gear-sec">
       <h3><span class="dot">${s.icon}</span>${s.title}</h3>
@@ -1019,7 +1031,9 @@ function render() {
       <h3><span class="dot">👤</span>Contacts <span class="refresh" id="contacts-refresh"><span class="ricon">↻</span></span></h3>
       <div class="links" id="contacts"><div class="empty">connect Google…</div></div>
     </div>`;
-  document.getElementById("gear-sections").innerHTML = sections + projects + contacts;
+  document.getElementById("gear-sections").innerHTML = tools + sections + projects + contacts;
+  const ccl=document.getElementById("cc-debt-link");
+  if(ccl) ccl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openDebtModal(); };
   document.getElementById("proj-refresh").onclick = (e)=>{ e.stopPropagation(); loadProjects(); };
   document.getElementById("contacts-refresh").onclick = (e)=>{ e.stopPropagation(); loadContacts(); };
 
@@ -2542,6 +2556,19 @@ async function agentLoop(thinking){
   bubble.textContent="(stopped — too many steps)";
 }
 
+/* Programmatically send a message into the agent (same pipeline as the chat box) and open
+   the chat panel so the streamed answer is visible. Used by the CC-debt "build strategy" flow. */
+function agentAsk(text){
+  if(!CONFIG.chatEndpoint){ const p=document.getElementById("chat-panel"); if(p) p.classList.add("open"); addMsg("No agent backend configured yet.","sys"); return; }
+  const panel=document.getElementById("chat-panel"); if(panel) panel.classList.add("open");
+  addMsg(text,"user"); agentMessages.push({role:"user",content:text}); saveChat();
+  const sendBtn=document.getElementById("chat-send"); if(sendBtn) sendBtn.disabled=true;
+  const thinking=addMsg("…","bot");
+  agentLoop(thinking)
+    .catch(err=>{ thinking.className="msg sys"; thinking.textContent="Agent error: "+err.message; })
+    .finally(()=>{ if(sendBtn) sendBtn.disabled=false; });
+}
+
 /* ---------- Daily usage / cost meter ----------
    Estimates metered Anthropic API spend from each response's token usage, accumulated
    per LOCAL day. Resets at midnight (the day key flips), shown live in the chat header. */
@@ -3091,7 +3118,8 @@ function initSwitchboard(){
   window.addEventListener("focus", ()=>{ if(document.getElementById("switchboard-card") && Date.now()-sbLastRun>20000) runSwitchboard(); });
 }
 
-/* ---------- Credit Card Debt card (balances from 42payments + miDash-owned payoff plan) ---------- */
+/* ---------- Credit Card Debt (menu modal — balances from 42payments + miDash-owned payoff plan) ---------- */
+let lastDebt=null;   // most recent /cards payload, handed to the agent when building a strategy
 function pickMoney(v){ if(v==null) return null; if(typeof v==="object"){ if("amount" in v) return v; if("balance" in v) return v.balance; } return v; }
 function pickAmt(v){ const m=pickMoney(v); if(m==null) return NaN; return Number(typeof m==="object"?m.amount:m); }
 function wireDebtRetry(){ const b=document.getElementById("debt-retry"); if(b) b.onclick=loadDebt; }
@@ -3105,7 +3133,7 @@ async function loadDebt(){
   if(d && d.not_ready){ setDebtLed("warn","not connected"); body.innerHTML=`<div class="needsauth">42payments is running but FreshBooks isn’t connected yet. <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">Sign in once ›</a></div>`; return; }
   if(!d || d.error){ const gw=finGwDown(d); setDebtLed(gw?"idle":(d&&d.code==="upstream_nonjson"?"warn":"off"), gw?"app down":(d&&d.code==="upstream_nonjson"?"setup pending":"error")); body.innerHTML=`<div class="empty">${gw?"42payments app is down (gateway "+d.upstream_status+") — start it, then retry.":("Couldn’t load card balances"+(d&&d.error?` (${esc(cleanErr(d.error))})`:"")+".")} <span class="refresh" id="debt-retry" style="margin-left:6px">↻ retry</span></div>`; wireDebtRetry(); return; }
   if(d.available===false){ setDebtLed("warn","not synced"); body.innerHTML=`<div class="needsauth">Open the <b>Debt</b> tab in <a href="https://42payments.myeasyapp.com" target="_blank" rel="noopener">42payments</a> once to sync your tracker${d.reason?` — ${esc(String(d.reason))}`:""}, then hit ↻ refresh. Balances fill in automatically. Your payoff plan below works now.</div>`; return; }
-  setDebtLed("on","synced"); renderDebt(d);
+  setDebtLed("on","synced"); lastDebt=d; renderDebt(d);
 }
 function renderDebt(d){
   const body=document.getElementById("debt-body"); if(!body||!d) return;
@@ -3152,7 +3180,25 @@ function initDebt(){
   const r=document.getElementById("debt-refresh"); if(r) r.onclick=loadDebt;
   const led=document.getElementById("debt-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadDebt; }
   ["plan-strategy","plan-target","plan-monthly"].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener("change",schedulePlanSave); el.addEventListener("input",schedulePlanSave); } });
-  loadCCPlan(); loadDebt();
+  const bg=document.getElementById("debt-modal-bg"); if(bg) bg.onclick=closeDebtModal;
+  const cl=document.getElementById("debt-close"); if(cl) cl.onclick=closeDebtModal;
+  const ag=document.getElementById("debt-agent"); if(ag) ag.onclick=debtAskAgent;
+  loadCCPlan();   // load the saved plan so it's ready; balances load lazily when the modal opens
+}
+function openDebtModal(){
+  const m=document.getElementById("debt-modal"); if(!m) return;
+  m.style.display="flex";
+  loadDebt();   // pull fresh balances each time you open it
+}
+function closeDebtModal(){ const m=document.getElementById("debt-modal"); if(m) m.style.display="none"; }
+function debtAskAgent(){
+  const p=readPlan();
+  const strat=({avalanche:"Avalanche (highest APR first)",snowball:"Snowball (smallest balance first)",custom:"Custom"})[p.strategy]||p.strategy;
+  let known="";
+  if(lastDebt && lastDebt.available!==false){ known=` Balances currently loaded in miDash: personal ${fmtMoney(lastDebt.personal)}, business ${fmtMoney(lastDebt.business)}, total ${fmtMoney(lastDebt.total)}.`; }
+  const msg=`Help me build my credit-card payoff strategy. Pull my current card balances from 42payments with your finance tools (personal, business, total).${known}\n\nMy plan settings: strategy = ${strat}; attacking = ${p.target||"(not set yet)"}; monthly budget = ${p.monthly!=null?("$"+p.monthly):"(not set yet)"}.\n\nWalk me through a concrete plan: which card/account to pay first and why, a month-by-month payoff timeline, roughly how much interest it saves, and any changes you'd suggest to my settings. Ask me for anything you need that isn't in the data (like each card's APR).`;
+  closeDebtModal();
+  agentAsk(msg);
 }
 
 async function executeTool(name,a){
@@ -3658,20 +3704,19 @@ const FOCUS_MAIL = {
 };
 let activeFocus=null;
 function initFocus(){
-  document.querySelectorAll(".focus-pill").forEach(b=>{
-    b.onclick=()=>{ const f=b.dataset.focus; if(activeFocus===f){ closeFocus(); return; } openFocus(f); };
-  });
+  const ub=document.getElementById("inbox-unsub");
+  if(ub) ub.onclick=()=>{ if(activeFocus==="unsub") closeFocus(); else openFocus("unsub"); };
   const c=document.getElementById("focus-close"); if(c) c.onclick=closeFocus;
   renderUnsubPill();
 }
 function closeFocus(){
   activeFocus=null;
   document.getElementById("focus-panel").style.display="none";
-  document.querySelectorAll(".focus-pill").forEach(x=>x.classList.remove("active"));
+  const ub=document.getElementById("inbox-unsub"); if(ub) ub.classList.remove("active");
 }
 function openFocus(f){
   activeFocus=f;
-  document.querySelectorAll(".focus-pill").forEach(x=>x.classList.toggle("active",x.dataset.focus===f));
+  const ub=document.getElementById("inbox-unsub"); if(ub) ub.classList.toggle("active",f==="unsub");
   const panel=document.getElementById("focus-panel"), title=document.getElementById("focus-title"), body=document.getElementById("focus-body");
   panel.style.display="block";
   if(f==="today"){ title.textContent="📅 Today’s schedule"; renderTodayFocus(body); return; }
