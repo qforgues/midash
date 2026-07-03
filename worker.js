@@ -431,17 +431,29 @@ async function handleTracker(request, env) {
 // Discord bot heartbeat. The local bot POSTs here every minute; the dashboard GETs it to
 // show a live green/red "Discord" light. The Worker stamps the receive time (its own clock),
 // so the dashboard just checks freshness. Stored in the NOTES KV. Gated by authed().
+// KV's free tier allows ~1000 writes/day. A 60s heartbeat is 1440 writes/day on its own, which
+// blows the quota — after that EVERY put() throws (breaking notes/projects sync too, not just this).
+// So coalesce: persist a fresh timestamp at most once per HEARTBEAT_WRITE_EVERY. The bot can keep
+// POSTing every minute; we just skip the redundant writes. The dashboard's "online" window is wider
+// than this interval, so a coalesced (slightly stale) timestamp still reads green.
+const HEARTBEAT_WRITE_EVERY = 5 * 60 * 1000;
 async function handleDiscordStatus(request, env) {
   if (!env.NOTES) return json({ error: "storage not configured" }, 501);
+  const prevRaw = await env.NOTES.get("discord_status");
+  let prev = null; try { prev = prevRaw ? JSON.parse(prevRaw) : null; } catch {}
   if (request.method === "POST") {
     let b = {}; try { b = await request.json(); } catch {}
-    const rec = { online: true, tag: b && b.tag ? String(b.tag).slice(0, 64) : null, at: Date.now() };
-    await env.NOTES.put("discord_status", JSON.stringify(rec));
-    return json({ ok: true });
+    const tag = (b && b.tag) ? String(b.tag).slice(0, 64) : (prev && prev.tag) || null;
+    const now = Date.now();
+    const fresh = prev && prev.at && (now - Number(prev.at)) < HEARTBEAT_WRITE_EVERY;
+    if (!fresh) {
+      // Never 500 the heartbeat: if we've somehow still hit the KV write cap, swallow it and report skipped.
+      try { await env.NOTES.put("discord_status", JSON.stringify({ online: true, tag, at: now })); }
+      catch (e) { return json({ ok: true, skipped: "kv_write_limit" }); }
+    }
+    return json({ ok: true, wrote: !fresh });
   }
-  const v = await env.NOTES.get("discord_status");
-  let status = null; try { status = v ? JSON.parse(v) : null; } catch {}
-  return json({ status });
+  return json({ status: prev });
 }
 
 // Agent over external channels (Discord now, SMS/Twilio later) — CHAT-ONLY MVP, no tools.

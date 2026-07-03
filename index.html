@@ -467,15 +467,22 @@
   .agfoot a { color:var(--accent); text-decoration:none; } .agfoot a:hover { text-decoration:underline; }
   @media (max-width:560px){ .agrow { grid-template-columns:90px 12px 1fr; } .agrow .agtime { grid-column:3; } }
 
-  /* agenda + notes row (notes gets the bigger share), stretched so heights match */
-  .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:stretch; }
+  /* agenda + notes row (notes gets the bigger share). align-items:start so a collapsed card
+     stays its own (short) height instead of stretching to match its expanded sibling — only the
+     expanded panel expands; the folded one doesn't leave a blank gap. */
+  .split { display:grid; grid-template-columns:1fr; gap:20px; align-items:start; }
   .split.live { grid-template-columns:3fr 2fr; }
   @media (max-width:760px){ .split.live { grid-template-columns:1fr; } }
   .split > * { min-width:0; }        /* let the fr tracks win — don't let long URLs blow out a column */
   .split.even { grid-template-columns:1fr 1fr; }   /* defined after .live so it wins if both are set */
   @media (max-width:760px){ .split.even { grid-template-columns:1fr; } }
   /* Collapsible panels — click the chevron in any card header to fold it away (state persists) */
-  .collapse-chev { cursor:pointer; display:inline-block; font-size:11px; color:var(--muted); margin-right:7px; transition:transform .15s; user-select:none; }
+  .collapse-chev { cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+      width:28px; height:28px; border-radius:8px; font-size:18px; line-height:1; margin-right:10px;
+      color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent);
+      border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+      transition:transform .15s, background .15s; user-select:none; }
+  .collapse-chev:hover { background:color-mix(in srgb, var(--accent) 26%, transparent); }
   .card.collapsed .collapse-chev { transform:rotate(-90deg); }
   .card.collapsed > *:not(h2) { display:none !important; }
   #notes { display:flex; flex-direction:column; }
@@ -1020,7 +1027,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.37.0",
+  version: "1.38.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2089,13 +2096,13 @@ function refreshTokenFor(email){
 let gAutoRefreshTimer=null;
 function refreshGoogleTokens(){
   if(!tokenClient || !accounts.length) return;
-  const soon=Date.now()+10*60*1000;                    // refresh anything expiring within 10 min
+  const soon=Date.now()+25*60*1000;                    // refresh anything expiring within 25 min — big margin so the token (and the green light) never lapses
   const stale=accounts.filter(a=>a.exp<soon);
   stale.forEach((a,i)=>{ setTimeout(()=>{ try{ tokenClient.requestAccessToken({ prompt:"", hint:a.email }); }catch(e){} }, i*1500); });
 }
 function startGoogleAutoRefresh(){
   if(gAutoRefreshTimer) return;
-  gAutoRefreshTimer=setInterval(refreshGoogleTokens, 5*60*1000);   // check every 5 min
+  gAutoRefreshTimer=setInterval(refreshGoogleTokens, 3*60*1000);   // check every 3 min
   window.addEventListener("focus", refreshGoogleTokens);           // and whenever you return to the tab
 }
 
@@ -3610,8 +3617,10 @@ async function sbCheckPass(){
 }
 function sbCheckGoogle(){
   if(!accounts||!accounts.length) return {state:"warn",summary:"not connected",detail:"No Google account connected. Click Connect Google."};
-  const now=Date.now(), expired=accounts.filter(a=>!(a.exp>now+60000));
-  if(expired.length===accounts.length) return {state:"warn",summary:"expired",detail:`All ${accounts.length} Google token(s) expired (they last ~1h by design). Reconnect.`};
+  // Only count a token as "expired" once it's actually past its expiry — tokens auto-renew silently
+  // ~25 min before that, so the light stays green continuously instead of flickering amber early.
+  const now=Date.now(), expired=accounts.filter(a=>!(a.exp>now));
+  if(expired.length===accounts.length) return {state:"warn",summary:"expired",detail:`All ${accounts.length} Google token(s) expired (they last ~1h and renew silently). Reconnect if this persists.`};
   if(expired.length) return {state:"warn",summary:`${expired.length} expired`,detail:`Expired: ${expired.map(a=>a.email).join(", ")}.\nStill valid: ${accounts.filter(a=>a.exp>now+60000).map(a=>a.email).join(", ")}.`};
   return {state:"on",summary:`${accounts.length} connected`,detail:`Connected: ${accounts.map(a=>a.email).join(", ")}.`};
 }
@@ -3646,7 +3655,9 @@ async function sbCheckDiscord(){
   const s=d&&d.status;
   if(!s||!s.at) return {state:"off",summary:"never seen",detail:"The Discord bot hasn’t checked in yet. Start it: double-click ~/midash-discord/setup.command."};
   const age=Date.now()-Number(s.at);
-  if(age<180000) return {state:"on",summary:"online",detail:`Discord bot is online${s.tag?" as "+s.tag:""}. Last heartbeat ${Math.max(0,Math.round(age/1000))}s ago.`};
+  // Heartbeat writes are coalesced server-side (~1 per 5 min) to stay under the KV write quota, so
+  // the stored timestamp can legitimately be several minutes old while the bot is healthy. Allow 12 min.
+  if(age<12*60000) return {state:"on",summary:"online",detail:`Discord bot is online${s.tag?" as "+s.tag:""}. Last heartbeat ${Math.max(0,Math.round(age/60000))} min ago.`};
   return {state:"off",summary:"offline",detail:`Discord bot last checked in ${Math.round(age/60000)} min ago — it isn’t running. Start it: ~/midash-discord/setup.command (or its LaunchAgent).`};
 }
 async function sbCheckNotes(){
@@ -3659,15 +3670,18 @@ async function sbCheckNotes(){
 /* Collapsible panels — drop a chevron into every card header; clicking it folds the card.
    State persists per-card in localStorage (keyed by card id, else the header text). */
 function initCollapsible(){
-  let saved={}; try{ saved=JSON.parse(localStorage.getItem("midash_collapsed")||"{}"); }catch(e){}
-  const persist=()=>{ try{ localStorage.setItem("midash_collapsed", JSON.stringify(saved)); }catch(e){} };
+  // Panels start COLLAPSED by default; a card is expanded only if this device has explicitly
+  // opened it before. Stored as 1=collapsed / 0=expanded per card; a missing key means collapsed.
+  // (New "_v2" key so the default flip takes effect for existing devices, not just fresh ones.)
+  let saved={}; try{ saved=JSON.parse(localStorage.getItem("midash_collapsed_v2")||"{}"); }catch(e){}
+  const persist=()=>{ try{ localStorage.setItem("midash_collapsed_v2", JSON.stringify(saved)); }catch(e){} };
   document.querySelectorAll("main .card > h2").forEach(h2=>{
     const card=h2.closest(".card"); if(!card || h2.querySelector(".collapse-chev")) return;
     const key=card.id || (h2.textContent||"").trim().slice(0,32); if(!key) return;
     const chev=document.createElement("span");
     chev.className="collapse-chev"; chev.textContent="▾"; chev.title="Collapse / expand";
     h2.insertBefore(chev, h2.firstChild);
-    if(saved[key]) card.classList.add("collapsed");
+    if(saved[key]!==0) card.classList.add("collapsed");   // default collapsed unless explicitly expanded
     chev.onclick=(e)=>{ e.stopPropagation(); const c=card.classList.toggle("collapsed"); saved[key]=c?1:0; persist(); };
   });
 }
