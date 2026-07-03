@@ -213,6 +213,17 @@
   .cc-ord-n { width:20px; height:20px; border-radius:50%; background:var(--accent-soft); color:var(--accent); font-size:11px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
   .cc-ord-name { flex:1; min-width:0; overflow-wrap:anywhere; }
   .cc-ord-m { color:var(--muted); font-size:12px; white-space:nowrap; }
+  /* Weekly review */
+  .weekly-due { color:var(--accent); font-weight:700; font-size:11px; margin-left:5px; }
+  .wk-sec { margin-bottom:15px; }
+  .wk-h { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:8px; }
+  .wk-row { display:flex; align-items:baseline; gap:9px; padding:5px 0; border-top:1px solid var(--border); font-size:13.5px; }
+  .wk-row:first-of-type { border-top:none; }
+  .wk-tag { flex:0 0 auto; font-size:11px; font-weight:600; color:var(--accent); white-space:nowrap; min-width:74px; }
+  .wk-tag.warn { color:#9a6a00; } .wk-tag.bad { color:var(--warn); }
+  .wk-name { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .wk-sub { color:var(--muted); font-size:12px; }
+  .wk-empty { font-size:12.5px; color:var(--muted); }
 
   /* Projects — idea→shipped progress tracker */
   .proj-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:13px; }
@@ -969,6 +980,21 @@
   </div>
 </div>
 
+<!-- Weekly review — once-a-week rollup across the whole dashboard (opened from the ☰ menu) -->
+<div id="weekly-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="weekly-bg"></div>
+  <div class="panel" style="max-width:560px">
+    <h2>🗓️ Weekly review</h2>
+    <div id="weekly-body"><div class="empty">—</div></div>
+    <div class="plan-box" style="margin-top:14px">
+      <div class="plan-head">🤖 Talk it through</div>
+      <p style="font-size:12.5px;color:var(--muted);margin:7px 0 11px;line-height:1.5">Hands this week's rollup to your agent to plan the week — what to prioritize, who to reach out to, what's slipping.</p>
+      <button class="gbtn" id="weekly-agent" style="border-color:var(--accent);color:var(--accent)">🤖 Plan my week with the agent</button>
+    </div>
+    <div class="pat-actions" style="margin-top:16px"><button id="weekly-close" class="gbtn">Close</button></div>
+  </div>
+</div>
+
 <!-- Chat agent -->
 <button id="chat-toggle" title="Ask your agent">💬</button>
 <div id="chat-panel">
@@ -994,7 +1020,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.36.0",
+  version: "1.37.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1100,6 +1126,7 @@ function render() {
     <div class="gear-sec">
       <h3><span class="dot">🧰</span>Tools</h3>
       <div class="links">
+        <a href="#" id="weekly-link"><span class="lhs"><span class="ldot set"></span>🗓️ Weekly review <span id="weekly-due" class="weekly-due"></span></span><span><span class="arrow">→</span></span></a>
         <a href="#" id="cc-debt-link"><span class="lhs"><span class="ldot set"></span>💳 Credit Card Debt</span><span><span class="arrow">→</span></span></a>
       </div>
     </div>`;
@@ -1130,6 +1157,9 @@ function render() {
   document.getElementById("gear-sections").innerHTML = tools + sections + projects + contacts;
   const ccl=document.getElementById("cc-debt-link");
   if(ccl) ccl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openDebtModal(); };
+  const wkl=document.getElementById("weekly-link");
+  if(wkl) wkl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openWeeklyReview(); };
+  updateWeeklyDue();
   document.getElementById("proj-refresh").onclick = (e)=>{ e.stopPropagation(); loadProjects(); };
   document.getElementById("contacts-refresh").onclick = (e)=>{ e.stopPropagation(); loadContacts(); };
 
@@ -3821,6 +3851,67 @@ function debtAskAgent(){
   agentAsk(msg);
 }
 
+/* ---------- Weekly review — once-a-week rollup assembled from data already in memory ---------- */
+function weeklyReachouts(n){
+  return (contactsList||[]).filter(c=>!cMeta(c.email).hidden)
+    .map(c=>({c, shown:cMeta(c.email).shown||0, last:cMeta(c.email).lastShown||0}))
+    .sort((a,b)=>a.shown-b.shown || a.last-b.last).slice(0,n).map(x=>x.c);
+}
+function buildWeeklyDigest(){
+  const neglected=liveProjects().filter(p=>projStale(p)).sort((a,b)=>(projAgeDays(b)||0)-(projAgeDays(a)||0));
+  const now=Date.now(), horizon=now+7*86400000, week=[];
+  liveProjects().filter(p=>projType(p)==="property").forEach(p=>{ (projEvents[p.id]||[]).forEach(ev=>{ const t=ev.dt.getTime(); if(t>=now-3600000 && t<=horizon) week.push({p,ev,t}); }); });
+  week.sort((a,b)=>a.t-b.t);
+  return { neglected, week, reach:weeklyReachouts(3), debt:(lastDebt && lastDebt.available!==false)?lastDebt:null };
+}
+function renderWeeklyBody(){
+  const el=document.getElementById("weekly-body"); if(!el) return;
+  const d=buildWeeklyDigest();
+  const sec=(t,inner)=>`<div class="wk-sec"><div class="wk-h">${t}</div>${inner}</div>`;
+  const neg=d.neglected.length ? d.neglected.slice(0,6).map(p=>{ const t=projType(p); const pr=(t==="property"&&PROPERTIES[p.property])?PROPERTIES[p.property].emoji+" ":"";
+      return `<div class="wk-row"><span class="wk-tag ${projStale(p)===2?"bad":"warn"}">${esc(projAgeLabel(p))}</span><span class="wk-name">${pr}${esc(p.name)}${p.next?` <span class="wk-sub">— ${esc(p.next)}</span>`:""}</span></div>`; }).join("")
+    : `<div class="wk-empty">Everything's been touched recently ✓</div>`;
+  const wk=d.week.length ? d.week.slice(0,8).map(({p,ev})=>{ const pr=PROPERTIES[p.property],ar=PROP_AREAS[p.area]; const when=ev.timed?`${dayLabel(ev.dt)} · ${ev.dt.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}`:dayLabel(ev.dt);
+      return `<div class="wk-row"><span class="wk-tag">${esc(when)}</span><span class="wk-name">${pr?pr.emoji+" ":""}${ar?ar.emoji+" ":""}${esc(p.name)}${p.people?` <span class="wk-sub">👥 ${esc(p.people)}</span>`:""}</span></div>`; }).join("")
+    : `<div class="wk-empty">Nothing scheduled this week.</div>`;
+  const rc=d.reach.length ? d.reach.map(c=>`<div class="wk-row"><span class="wk-name">${esc(c.name)}</span><span class="wk-sub">${esc(c.email||"")}</span></div>`).join("")
+    : `<div class="wk-empty">Connect Google to see who to reach out to.</div>`;
+  const db=d.debt ? `<div class="wk-row"><span class="wk-name">Card balances</span><span class="wk-sub">total ${esc(fmtMoney(d.debt.total))}</span></div>` : `<div class="wk-empty">Open the CC Debt tool once to load balances.</div>`;
+  el.innerHTML = sec(`🚀 Projects needing a push (${d.neglected.length})`, neg)
+    + sec(`📅 Scheduled this week (${d.week.length})`, wk)
+    + sec(`🤝 Reach out to`, rc)
+    + sec(`💳 Money`, db);
+}
+function updateWeeklyDue(){
+  const el=document.getElementById("weekly-due"); if(!el) return;
+  let last=0; try{ last=+localStorage.getItem("midash_lastreview")||0; }catch(e){}
+  el.textContent = (!last || (Date.now()-last)>7*86400000) ? "• due" : "";
+}
+function openWeeklyReview(){
+  const m=document.getElementById("weekly-modal"); if(!m) return;
+  try{ localStorage.setItem("midash_lastreview", String(Date.now())); }catch(e){}
+  updateWeeklyDue(); renderWeeklyBody(); m.style.display="flex";
+  if(accounts.length) loadProjEvents().then(renderWeeklyBody).catch(()=>{});   // freshen this-week events
+  if(typeof loadDebt==="function" && !lastDebt) loadDebt().then(renderWeeklyBody).catch(()=>{});
+}
+function closeWeeklyReview(){ const m=document.getElementById("weekly-modal"); if(m) m.style.display="none"; }
+function weeklyAskAgent(){
+  const d=buildWeeklyDigest();
+  const neg=d.neglected.slice(0,8).map(p=>`${p.name}${p.next?" (next: "+p.next+")":""} — ${projAgeLabel(p)}`).join("; ")||"none";
+  const wk=d.week.slice(0,8).map(({p,ev})=>`${p.name} on ${ev.dt.toLocaleDateString()}${p.people?" w/ "+p.people:""}`).join("; ")||"nothing";
+  const rc=d.reach.map(c=>c.name).join(", ")||"n/a";
+  const money=d.debt?`card balances total ${fmtMoney(d.debt.total)}`:"not loaded";
+  const msg=`Here's my weekly review — help me plan the week. Pick the 3 highest-impact moves and a simple order to tackle them; be concrete and brief.\n\n• Projects needing a push: ${neg}\n• Scheduled property work this week: ${wk}\n• People to reach out to: ${rc}\n• Money: ${money}`;
+  closeWeeklyReview();
+  agentAsk(msg);
+}
+function initWeekly(){
+  const bg=document.getElementById("weekly-bg"); if(bg) bg.onclick=closeWeeklyReview;
+  const cl=document.getElementById("weekly-close"); if(cl) cl.onclick=closeWeeklyReview;
+  const ag=document.getElementById("weekly-agent"); if(ag) ag.onclick=weeklyAskAgent;
+  updateWeeklyDue();
+}
+
 async function executeTool(name,a){
   const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name) || /tracker|ticket/.test(name));
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
@@ -4461,7 +4552,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initCollapsible(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initWeekly(); initCollapsible(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
