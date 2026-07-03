@@ -215,6 +215,20 @@
   .proj-spill.zero { opacity:.38; }
   .proj-summary-meta { font-size:12.5px; color:var(--muted); margin-top:9px; }
   .proj-need { color:var(--warn); font-weight:600; }
+  /* property filter chips */
+  .proj-filters { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:13px; }
+  .proj-chip { border:1px solid var(--border); background:var(--surface); color:var(--text); border-radius:20px;
+               padding:4px 11px; font-size:12.5px; cursor:pointer; font-family:inherit; }
+  .proj-chip:hover { border-color:var(--accent); }
+  .proj-chip.on { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  .proj-chip-sep { color:var(--muted); opacity:.6; margin:0 1px; }
+  /* property card extras: property/area badges, people, calendar line */
+  .proj-badges { display:flex; flex-wrap:wrap; gap:5px; margin:-2px 0 9px; }
+  .proj-badge { font-size:11px; padding:2px 8px; border-radius:6px; background:var(--surface);
+                border:1px solid var(--border); color:var(--muted); white-space:nowrap; }
+  .proj-people { font-size:12.5px; color:var(--muted); margin-top:8px; overflow-wrap:anywhere; }
+  .proj-ev { font-size:12.5px; color:var(--accent); margin-top:7px; font-weight:500; }
+  .proj-ev-more { color:var(--muted); font-weight:400; }
   /* projects laid out as a responsive grid — 2 per row, 3 on wide screens, 1 on mobile */
   #projects-body { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
   @media (min-width:1000px){ #projects-body { grid-template-columns:repeat(3,minmax(0,1fr)); } }
@@ -688,6 +702,7 @@
             </select></span>
         </div>
         <div id="proj-summary" class="proj-summary"></div>
+        <div id="proj-filters" class="proj-filters" style="display:none"></div>
         <div id="projects-body"><div class="empty">—</div></div>
       </div>
 
@@ -781,6 +796,13 @@
     <h2>🚀 Project</h2>
     <label class="col"><span>Name</span><input id="proj-f-name" type="text" placeholder="e.g. La Palma TV"></label>
     <label class="col"><span>Type</span><select id="proj-f-type"></select></label>
+    <div id="proj-f-prop-wrap" style="display:none">
+      <div class="tkn-row">
+        <label class="col" style="flex:1"><span>Property</span><select id="proj-f-property"></select></label>
+        <label class="col" style="flex:1"><span>Area / trade</span><select id="proj-f-area"></select></label>
+      </div>
+      <label class="col"><span>People — kids, contractors (comma-separated)</span><input id="proj-f-people" type="text" placeholder="e.g. Nehemias, Marco" autocomplete="off"></label>
+    </div>
     <label class="col"><span>Stage</span><select id="proj-f-stage"></select></label>
     <label class="col"><span>Next action — the one thing to push it forward</span><input id="proj-f-next" type="text" placeholder="e.g. wire up the EPG feed"></label>
     <label class="col"><span id="proj-f-url-lbl">Live URL (optional)</span><input id="proj-f-url" type="text" placeholder="https://…"></label>
@@ -791,6 +813,30 @@
       <button id="proj-f-save" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Save</button>
       <button id="proj-f-delete" class="gbtn" style="color:var(--warn)">Delete</button>
       <button id="proj-f-close" class="gbtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Schedule property work → creates a Google Calendar event tagged back to the project -->
+<div id="sched-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="sched-bg"></div>
+  <div class="panel" style="max-width:460px">
+    <h2>📅 Schedule work</h2>
+    <div id="sched-for" class="fin-note" style="margin-bottom:10px"></div>
+    <div class="tkn-row">
+      <label class="col" style="flex:1"><span>Date</span><input id="sched-date" type="date"></label>
+      <label class="col" style="flex:1"><span>Time</span><input id="sched-time" type="time" value="09:00"></label>
+    </div>
+    <div class="tkn-row">
+      <label class="col" style="flex:1"><span>Duration</span>
+        <select id="sched-dur"><option value="60">1 hour</option><option value="120">2 hours</option><option value="180">3 hours</option><option value="240">4 hours</option><option value="480">All day (8h)</option></select></label>
+      <label class="col" style="flex:1"><span>Who</span><input id="sched-who" type="text" placeholder="Nehemias…" autocomplete="off"></label>
+    </div>
+    <label class="col"><span>On calendar</span><select id="sched-acct"></select></label>
+    <div id="sched-msg" class="key-result"></div>
+    <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
+      <button id="sched-save" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Add to calendar</button>
+      <button id="sched-close" class="gbtn">Close</button>
     </div>
   </div>
 </div>
@@ -904,7 +950,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.28.0",
+  version: "1.29.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1134,6 +1180,21 @@ const PROJ_TYPES = {
   software: { label:"Software", emoji:"💻", ship:5 },   // Ship/Grow = live, never "neglected"
   property: { label:"Property", emoji:"🏠", ship:6 },   // only Done/in-use is "complete"
 };
+/* Property projects also carry a PROPERTY (which building) and an AREA/trade. Both drive
+   the filter chips + card badges. Free-text people are stored per project too. */
+const PROPERTIES = {
+  house: { label:"House", emoji:"🏠" },
+  cabin: { label:"Cabin", emoji:"🌲" },
+};
+const PROP_AREAS = {
+  inside:   { label:"Inside",   emoji:"🛋️" },
+  outside:  { label:"Outside",  emoji:"🌳" },
+  plumbing: { label:"Plumbing", emoji:"🔧" },
+  electric: { label:"Electric", emoji:"⚡" },
+  handyman: { label:"Handyman", emoji:"🪚" },
+  cleaning: { label:"Cleaning", emoji:"🧹" },
+  other:    { label:"Other",    emoji:"📦" },
+};
 const PIPELINE = PIPELINES.software;   // back-compat alias
 function projType(p){ return (p && PROJ_TYPES[p.type]) ? p.type : "software"; }
 function pipeOf(t){ return PIPELINES[t] || PIPELINES.software; }
@@ -1159,6 +1220,9 @@ function normalizeProject(p){
     id: p.id || ("p_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),
     name: String(p.name||"Untitled"),
     type,
+    property: PROPERTIES[p.property] ? p.property : "",
+    area: PROP_AREAS[p.area] ? p.area : "",
+    people: String(p.people||"").trim(),
     url: String(p.url||"").trim(),
     repo: String(p.repo||"").trim().replace(/^https?:\/\/github\.com\//i,"").replace(/\/+$/,""),
     stage,
@@ -1209,10 +1273,43 @@ function projState(msg){
   const need=projects.filter(projStale).length;
   el.textContent = projects.length ? (need?need+" need a push":"all on track ✓") : "—";
 }
+let projFilter={ property:"all", area:"all" };
+/* When a property or area filter is active, restrict to matching PROPERTY projects
+   (software projects drop out — you're slicing the property board). */
+function projFiltered(){
+  const f=projFilter;
+  if(f.property==="all" && f.area==="all") return projects.slice();
+  return projects.filter(p=>{
+    if(projType(p)!=="property") return false;
+    if(f.property!=="all" && p.property!==f.property) return false;
+    if(f.area!=="all" && p.area!==f.area) return false;
+    return true;
+  });
+}
+function renderProjFilters(){
+  const el=document.getElementById("proj-filters"); if(!el) return;
+  const props=projects.filter(p=>projType(p)==="property");
+  if(!props.length){ el.style.display="none"; el.innerHTML=""; if(projFilter.property!=="all"||projFilter.area!=="all") projFilter={property:"all",area:"all"}; return; }
+  el.style.display="flex";
+  const chip=(active,label,onA)=>`<button type="button" class="proj-chip${active?" on":""}" data-f="${onA}">${label}</button>`;
+  const usedProps=Object.keys(PROPERTIES).filter(k=>props.some(p=>p.property===k));
+  const usedAreas=Object.keys(PROP_AREAS).filter(k=>props.some(p=>p.area===k));
+  let html=chip(projFilter.property==="all"&&projFilter.area==="all","All","reset");
+  usedProps.forEach(k=>{ html+=chip(projFilter.property===k,`${PROPERTIES[k].emoji} ${esc(PROPERTIES[k].label)}`,"prop:"+k); });
+  if(usedAreas.length){ html+=`<span class="proj-chip-sep">·</span>`; usedAreas.forEach(k=>{ html+=chip(projFilter.area===k,`${PROP_AREAS[k].emoji} ${esc(PROP_AREAS[k].label)}`,"area:"+k); }); }
+  el.innerHTML=html;
+  el.querySelectorAll(".proj-chip").forEach(b=>b.onclick=()=>{
+    const f=b.dataset.f;
+    if(f==="reset") projFilter={property:"all",area:"all"};
+    else if(f.startsWith("prop:")){ const k=f.slice(5); projFilter.property = projFilter.property===k?"all":k; }
+    else if(f.startsWith("area:")){ const k=f.slice(5); projFilter.area = projFilter.area===k?"all":k; }
+    renderProjects();
+  });
+}
 function projSorted(){
   const sel=document.getElementById("proj-sort");
   const mode=(sel&&sel.value)||"neglected";
-  const arr=projects.slice();
+  const arr=projFiltered();
   const pin=(a,b)=>(b.pinned?1:0)-(a.pinned?1:0);
   if(mode==="type") arr.sort((a,b)=>pin(a,b) || projType(a).localeCompare(projType(b)) || (projStale(b)-projStale(a)) || a.name.localeCompare(b.name));
   else if(mode==="stage") arr.sort((a,b)=>pin(a,b) || (a.stage-b.stage) || a.name.localeCompare(b.name));
@@ -1242,9 +1339,11 @@ function renderProjSummary(){
 }
 function renderProjects(){
   const body=document.getElementById("projects-body"); if(!body) return;
-  renderProjSummary(); projState();
+  renderProjSummary(); renderProjFilters(); projState();
   if(!projects.length){ body.innerHTML=`<div class="empty">No projects yet. Tap <b>＋ Add project</b> or <b>⇪ Import GitHub repos</b> to start tracking.</div>`; return; }
-  body.innerHTML = projSorted().map(p=>{
+  const rows=projSorted();
+  if(!rows.length){ body.innerHTML=`<div class="empty">No projects match this filter. <span class="refresh" onclick="projFilter={property:'all',area:'all'};renderProjects()" style="margin-left:4px">clear</span></div>`; return; }
+  body.innerHTML = rows.map(p=>{
     const t=projType(p), pipe=pipeOf(t);
     const st=pipe[p.stage]||pipe[0];
     const pct=projPct(p.stage,t), sc=projStale(p);
@@ -1252,16 +1351,30 @@ function renderProjects(){
     const href = p.url || (p.repo?("https://github.com/"+p.repo):"");
     const link = href ? `<a class="proj-link" href="${esc(href)}" target="_blank" rel="noopener" data-act="open" title="${esc(href)}">↗</a>` : "";
     const tag = `<span class="proj-ttag" title="${esc(PROJ_TYPES[t].label)} project">${PROJ_TYPES[t].emoji}</span>`;
+    const isProp = t==="property";
+    let badges="";
+    if(isProp){
+      const pr=PROPERTIES[p.property], ar=PROP_AREAS[p.area];
+      if(pr) badges+=`<span class="proj-badge" title="Property">${pr.emoji} ${esc(pr.label)}</span>`;
+      if(ar) badges+=`<span class="proj-badge" title="Area / trade">${ar.emoji} ${esc(ar.label)}</span>`;
+    }
+    const badgeRow = badges?`<div class="proj-badges">${badges}</div>`:"";
+    const people = (isProp && p.people)?`<div class="proj-people">👥 ${esc(p.people)}</div>`:"";
+    const evLine = isProp ? projEventLine(p) : "";
+    const schedBtn = isProp ? `<button type="button" class="pbtn ghost" data-act="sched" title="Schedule work on the calendar">📅 schedule</button>` : "";
     return `<div class="proj${sc?" stale":""}${p.stage>=projLastOf(t)?" done":""}" data-id="${p.id}">
       <div class="proj-top">
         <div class="proj-name">${tag}${p.pinned?'<span class="proj-pin" title="pinned">📌</span>':""}${esc(p.name)}${link}</div>
         <div class="proj-stage">${st.emoji} ${esc(st.label)}</div>
       </div>
+      ${badgeRow}
       <div class="proj-prog" title="${pct}% — ${esc(st.label)}"><div class="proj-prog-fill" style="width:${pct}%"></div></div>
       <div class="proj-next">${p.next?('<span class="proj-next-lbl">next</span>'+esc(p.next)):'<span class="proj-next-empty">set the next action to push this forward</span>'}</div>
+      ${people}${evLine}
       <div class="proj-foot">
         <span class="proj-age ${ageCls}" title="last touched">${sc?"⚠ ":""}${projAgeLabel(p)}</span>
         <span class="proj-acts">
+          ${schedBtn}
           <button type="button" class="pbtn ghost" data-act="back" title="move back a stage">◀</button>
           <button type="button" class="pbtn ghost" data-act="fwd" title="advance a stage">advance ▶</button>
           <button type="button" class="pbtn ghost" data-act="edit" title="edit">edit</button>
@@ -1278,6 +1391,7 @@ function renderProjects(){
       e.preventDefault();
       if(act==="fwd"){ e.stopPropagation(); return advanceProject(id,1); }
       if(act==="back"){ e.stopPropagation(); return advanceProject(id,-1); }
+      if(act==="sched"){ e.stopPropagation(); return openSchedModal(id); }
       openProjModal(id);                         // edit button or row body
     };
   });
@@ -1289,6 +1403,91 @@ function advanceProject(id,delta){
   p.stage=ns; p.updated=Date.now();
   renderProjects(); scheduleProjSave();
 }
+
+/* ---- Property work ↔ Google Calendar (both ways) ----
+   Events created here are tagged with private extendedProperties (midashApp + the project id),
+   so we can pull them back per project. One query per account for all miDash work events. */
+let projEvents={};   // projectId -> [{dt, timed, title, eventId, acct}]  (upcoming only, sorted)
+async function gpost(url, token, body){
+  const r=await fetch(url,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(r.status===401) throw new Error("expired");
+  return r.json();
+}
+async function loadProjEvents(){
+  if(!accounts.length){ projEvents={}; return; }
+  const now=new Date(); const map={};
+  for(const acct of accounts){
+    try{
+      const url=`https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=250&timeMin=${now.toISOString()}&privateExtendedProperty=${encodeURIComponent("midashApp=1")}`;
+      const data=await gfetch(url, acct.token);
+      (data.items||[]).forEach(x=>{
+        const priv=(x.extendedProperties&&x.extendedProperties.private)||{};
+        const pid=priv.midashProject; if(!pid) return;
+        const timed=!!(x.start&&x.start.dateTime);
+        const dt=timed?new Date(x.start.dateTime):(x.start&&x.start.date?new Date(x.start.date+"T00:00:00"):null);
+        if(!dt) return;
+        (map[pid]=map[pid]||[]).push({dt, timed, title:x.summary||"", eventId:x.id, acct:acct.email});
+      });
+    }catch(e){}
+  }
+  Object.values(map).forEach(a=>a.sort((x,y)=>x.dt-y.dt));
+  projEvents=map;
+  renderProjects();
+}
+function projEventLine(p){
+  const evs=projEvents[p.id]; if(!evs||!evs.length) return "";
+  const n=evs[0];
+  const when=n.timed ? `${dayLabel(n.dt)} · ${n.dt.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}` : dayLabel(n.dt);
+  const more=evs.length>1?` <span class="proj-ev-more">+${evs.length-1} more</span>`:"";
+  return `<div class="proj-ev">📅 ${esc(when)}${more}</div>`;
+}
+let schedForId=null;
+function openSchedModal(id){
+  const p=projects.find(x=>x.id===id); if(!p) return;
+  if(!accounts.length){ alert("Connect Google first to schedule work on your calendar."); return; }
+  schedForId=id;
+  const forEl=document.getElementById("sched-for");
+  const pr=PROPERTIES[p.property], ar=PROP_AREAS[p.area];
+  if(forEl) forEl.innerHTML=`${pr?pr.emoji+" "+esc(pr.label):""}${ar?" · "+ar.emoji+" "+esc(ar.label):""} — <b>${esc(p.name)}</b>`;
+  const who=document.getElementById("sched-who"); if(who) who.value=p.people||"";
+  const acct=document.getElementById("sched-acct");
+  if(acct) acct.innerHTML=accounts.map(a=>`<option value="${esc(a.email)}">${esc(aliasOf(a.email))} · ${esc(a.email)}</option>`).join("");
+  const d=document.getElementById("sched-date"); if(d && !d.value){ const t=new Date(); t.setDate(t.getDate()+1); d.value=t.toISOString().slice(0,10); }
+  const msg=document.getElementById("sched-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
+  document.getElementById("sched-modal").style.display="flex";
+}
+function initSchedModal(){
+  const m=document.getElementById("sched-modal"); if(!m) return;
+  const close=()=>{ m.style.display="none"; schedForId=null; };
+  const msg=(s,bad)=>{ const e=document.getElementById("sched-msg"); if(e){ e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); } };
+  document.getElementById("sched-close").onclick=close;
+  document.getElementById("sched-bg").onclick=close;
+  document.getElementById("sched-save").onclick=async()=>{
+    const p=projects.find(x=>x.id===schedForId); if(!p){ close(); return; }
+    const date=document.getElementById("sched-date").value, time=document.getElementById("sched-time").value||"09:00";
+    if(!date){ msg("Pick a date.",true); return; }
+    const dur=Number(document.getElementById("sched-dur").value)||60;
+    const who=document.getElementById("sched-who").value.trim();
+    const acctEmail=document.getElementById("sched-acct").value;
+    const acct=acctByEmail(acctEmail)||accounts[0]; if(!acct){ msg("No Google account.",true); return; }
+    const start=new Date(date+"T"+time+":00");
+    const end=new Date(start.getTime()+dur*60000);
+    const tz=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"UTC";
+    const pr=PROPERTIES[p.property], ar=PROP_AREAS[p.area];
+    const summary=`${pr?pr.emoji+" "+pr.label:"🏠"}${ar?" · "+ar.label:""}${who?" w/ "+who:""} — ${p.name}`;
+    const body={ summary,
+      description:`miDash property work · ${p.name}${p.next?"\nNext: "+p.next:""}`,
+      start:{ dateTime:start.toISOString(), timeZone:tz }, end:{ dateTime:end.toISOString(), timeZone:tz },
+      extendedProperties:{ private:{ midashApp:"1", midashProject:p.id, midashProp:p.property||"", midashArea:p.area||"" } } };
+    msg("Adding to calendar…");
+    try{
+      const r=await gpost("https://www.googleapis.com/calendar/v3/calendars/primary/events", acct.token, body);
+      if(r && r.id){ msg("✓ Added to your calendar.",false); p.updated=Date.now(); scheduleProjSave();
+        setTimeout(()=>{ close(); loadProjEvents(); if(typeof loadAgenda==="function") loadAgenda(); }, 700); }
+      else msg("Couldn’t create the event"+(r&&r.error?": "+(r.error.message||""):"")+".",true);
+    }catch(e){ msg("Calendar error — "+(e.message||"try again")+".",true); }
+  };
+}
 function fillStageSelect(sel,type){ if(sel) sel.innerHTML=pipeOf(type).map((s,i)=>`<option value="${i}">${s.emoji} ${esc(s.label)} · ${projPct(i,type)}%</option>`).join(""); }
 /* Reflect the chosen type: repopulate the stage list for that pipeline (keeping the current
    stage index if it still fits) and hide the GitHub-repo field for non-software projects. */
@@ -1297,7 +1496,9 @@ function projModalApplyType(type, keepStage){
   const cur = keepStage!=null ? keepStage : (Number(ss&&ss.value)||0);
   fillStageSelect(ss, type);
   if(ss){ const last=projLastOf(type); ss.value=Math.max(0,Math.min(last,cur)); }
+  const isProp = type==="property";
   const repoWrap=document.getElementById("proj-f-repo-wrap"); if(repoWrap) repoWrap.style.display = type==="software" ? "" : "none";
+  const propWrap=document.getElementById("proj-f-prop-wrap"); if(propWrap) propWrap.style.display = isProp ? "" : "none";
   const urlLbl=document.getElementById("proj-f-url-lbl"); if(urlLbl) urlLbl.textContent = type==="software" ? "Live URL (optional)" : "Link — listing, docs, map… (optional)";
 }
 function openProjModal(id){
@@ -1307,10 +1508,15 @@ function openProjModal(id){
   const set=(k,v)=>{ const el=document.getElementById(k); if(el) el.value=v; };
   const ty=document.getElementById("proj-f-type");
   if(ty) ty.innerHTML=Object.keys(PROJ_TYPES).map(t=>`<option value="${t}">${PROJ_TYPES[t].emoji} ${esc(PROJ_TYPES[t].label)}</option>`).join("");
+  const propSel=document.getElementById("proj-f-property");
+  if(propSel) propSel.innerHTML=`<option value="">— pick —</option>`+Object.keys(PROPERTIES).map(k=>`<option value="${k}">${PROPERTIES[k].emoji} ${esc(PROPERTIES[k].label)}</option>`).join("");
+  const areaSel=document.getElementById("proj-f-area");
+  if(areaSel) areaSel.innerHTML=`<option value="">— pick —</option>`+Object.keys(PROP_AREAS).map(k=>`<option value="${k}">${PROP_AREAS[k].emoji} ${esc(PROP_AREAS[k].label)}</option>`).join("");
   const type=projType(p);
   if(ty) ty.value=type;
   projModalApplyType(type, p.stage);
   set("proj-f-name",p.name); set("proj-f-next",p.next);
+  set("proj-f-property",p.property||""); set("proj-f-area",p.area||""); set("proj-f-people",p.people||"");
   set("proj-f-url",p.url); set("proj-f-repo",p.repo); set("proj-f-notes",p.notes);
   const msg=document.getElementById("proj-f-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
   const del=document.getElementById("proj-f-delete"); if(del) del.style.display = id?"":"none";
@@ -1329,9 +1535,13 @@ function initProjModal(){
     const name=document.getElementById("proj-f-name").value.trim();
     if(!name){ msg("Name can’t be empty.",true); return; }
     const type=(tsel&&tsel.value)||"software";
+    const isProp=type==="property";
     const fields={ name, type,
       stage: Number(document.getElementById("proj-f-stage").value)||0,
       next: document.getElementById("proj-f-next").value.trim(),
+      property: isProp ? document.getElementById("proj-f-property").value : "",
+      area: isProp ? document.getElementById("proj-f-area").value : "",
+      people: isProp ? document.getElementById("proj-f-people").value.trim() : "",
       url: document.getElementById("proj-f-url").value.trim(),
       repo: type==="software" ? document.getElementById("proj-f-repo").value.trim() : "",
       notes: document.getElementById("proj-f-notes").value };
@@ -1380,6 +1590,7 @@ function initProjects(){
   const sort=document.getElementById("proj-sort");
   if(sort){ try{ sort.value=localStorage.getItem("midash_proj_sort")||"neglected"; }catch(e){} sort.onchange=()=>{ try{ localStorage.setItem("midash_proj_sort",sort.value); }catch(e){} renderProjects(); }; }
   initProjModal();
+  initSchedModal();
   loadProjectsState();
   window.addEventListener("focus", ()=>{ if(document.getElementById("projects-card") && Date.now()-projLastLoad>60000) loadProjectsState(); });
 }
@@ -1719,7 +1930,7 @@ async function gfetch(url, token){
   if(r.status===401){ throw new Error("expired"); }
   return r.json();
 }
-function loadLive(){ loadAgenda(); loadMail(); loadContacts(); loadTasks(); }
+function loadLive(){ loadAgenda(); loadMail(); loadContacts(); loadTasks(); loadProjEvents(); }
 
 function dayLabel(d){
   const today=new Date(); today.setHours(0,0,0,0);
@@ -3388,19 +3599,22 @@ async function executeTool(name,a){
         return r.ok?{sent:true,account:acct.email}:{error:"send failed "+r.status};
       }
       case "list_projects": {
-        const list=projSorted().map(p=>{ const t=projType(p), pipe=pipeOf(t); return {
+        const list=projSorted().map(p=>{ const t=projType(p), pipe=pipeOf(t); const o={
           name:p.name, type:t, stage:(pipe[p.stage]||pipe[0]).key, progressPct:projPct(p.stage,t),
           next:p.next||null, lastTouchedDays: projAgeDays(p)!=null?Math.round(projAgeDays(p)):null,
-          stale:!!projStale(p), url:p.url||null, repo:p.repo||null }; });
-        return { projects:list, pipelines:{ software:PIPELINES.software.map(s=>s.key), property:PIPELINES.property.map(s=>s.key) } };
+          stale:!!projStale(p), url:p.url||null, repo:p.repo||null };
+          if(t==="property"){ o.property=p.property||null; o.area=p.area||null; o.people=p.people||null; const evs=projEvents[p.id]; o.nextScheduled=(evs&&evs[0])?evs[0].dt.toISOString():null; }
+          return o; });
+        return { projects:list, pipelines:{ software:PIPELINES.software.map(s=>s.key), property:PIPELINES.property.map(s=>s.key) }, properties:Object.keys(PROPERTIES), areas:Object.keys(PROP_AREAS) };
       }
       case "add_project": {
         if(!a.name) return {error:"need a name"};
         const t=PROJ_TYPES[a.type]?a.type:"software", pipe=pipeOf(t);
         const si=a.stage?pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()):0;
-        const np=normalizeProject({ name:a.name, type:t, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"", updated:Date.now(), order:nextOrder() });
+        const np=normalizeProject({ name:a.name, type:t, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"",
+          property:a.property||"", area:a.area||"", people:a.people||"", updated:Date.now(), order:nextOrder() });
         projects.push(np); renderProjects(); saveProjects();
-        return { added:true, name:np.name, type:t, stage:(pipe[np.stage]||pipe[0]).key };
+        return { added:true, name:np.name, type:t, stage:(pipe[np.stage]||pipe[0]).key, property:np.property||null, area:np.area||null };
       }
       case "update_project": {
         if(!a.name) return {error:"need the project name"};
@@ -3411,6 +3625,9 @@ async function executeTool(name,a){
         if(a.stage!=null){ const si=pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()); if(si<0) return {error:"bad stage — for this "+projType(p)+" project use one of "+pipe.map(s=>s.key).join(", ")}; p.stage=si; }
         if(a.next!=null) p.next=String(a.next);
         if(a.notes!=null) p.notes=String(a.notes);
+        if(a.property!=null && PROPERTIES[a.property]) p.property=a.property;
+        if(a.area!=null && PROP_AREAS[a.area]) p.area=a.area;
+        if(a.people!=null) p.people=String(a.people);
         p.updated=Date.now(); renderProjects(); saveProjects();
         return { updated:true, name:p.name, type:projType(p), stage:(pipe[p.stage]||pipe[0]).key, progressPct:projPct(p.stage,projType(p)) };
       }
