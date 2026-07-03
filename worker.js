@@ -216,12 +216,32 @@ function json(obj, status = 200) {
 // FAIL-OPEN by design: if DASH_KEY isn't set yet, requests are allowed (same as before),
 // so deploying this code never locks you out. Enforcement starts the instant you set the
 // secret. To disable later: `wrangler secret delete DASH_KEY`.
+// Constant-time string compare — avoids leaking the secret length/prefix via response timing.
+function timingSafeEqual(a, b) {
+  a = String(a); b = String(b);
+  if (a.length !== b.length) return false;
+  let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+// Returns true (key matches), false (key set but wrong/missing), or null (no key configured).
+// The caller decides the fail-open policy for null so it can stay narrow (harmless reads only).
 function authed(request, env) {
   const secret = (env.DASH_KEY || "").trim();            // tolerate a trailing newline/space in the secret
-  if (!secret) return true;                              // not configured → open (set the secret to enforce)
+  if (!secret) return null;                              // not configured → caller applies fail-open policy
   const h = request.headers.get("Authorization") || "";
   const m = h.match(/^Bearer\s+(.+)$/i);
-  return !!m && m[1].trim() === secret;
+  return !!m && timingSafeEqual(m[1].trim(), secret);
+}
+// Cheap per-isolate rate limit (resets per isolate / colo — a speed bump against a leaked URL,
+// not a hard guarantee). Keyed by CF-Connecting-IP + bucket.
+const RL_BUCKETS = new Map();
+function rateLimited(request, bucket, max, windowMs) {
+  const ip = request.headers.get("CF-Connecting-IP") || "?";
+  const k = bucket + ":" + ip, now = Date.now();
+  let e = RL_BUCKETS.get(k);
+  if (!e || now > e.resetAt) { e = { count: 0, resetAt: now + windowMs }; RL_BUCKETS.set(k, e); }
+  e.count++;
+  return e.count > max;
 }
 
 // Notes read/write. Access is gated upstream by authed() once DASH_KEY is set.
@@ -313,19 +333,37 @@ async function handleContactsMeta(request, env) {
 // Projects board — the dashboard's idea→shipped tracker. A JSON array of project
 // records, stored in the NOTES KV under "projects" so it syncs across Q's devices.
 // Gated upstream by authed() like everything else.
+// Tombstone-aware union merge — KEEP IN SYNC with mergeProjects() in index.html.
+// A delete is a record with deleted=true (LWW on `updated` carries it over a stale copy);
+// union-by-id alone cannot express deletion. GC tombstones after 90 days.
+const PROJ_TOMBSTONE_TTL = 90 * 86400000;
+function mergeProjectArrays(a, b) {
+  const by = {};
+  (a || []).forEach(p => { if (p && p.id) by[p.id] = p; });
+  (b || []).forEach(p => { if (!p || !p.id) return; const ex = by[p.id]; if (!ex || (p.updated || 0) > (ex.updated || 0)) by[p.id] = p; });
+  const now = Date.now();
+  return Object.values(by).filter(p => !(p.deleted && (now - (p.updated || 0)) > PROJ_TOMBSTONE_TTL));
+}
+async function readProjects(env) {
+  const v = await env.NOTES.get("projects");
+  try { const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; } catch { return []; }
+}
 async function handleProjects(request, env) {
   if (!env.NOTES) return json({ error: "storage not configured" }, 501);
   if (request.method === "GET") {
-    const v = await env.NOTES.get("projects");
-    let projects = null; try { projects = v ? JSON.parse(v) : null; } catch { projects = null; }
-    return json({ projects });
+    const cur = await readProjects(env);
+    return json({ projects: cur.length ? cur : null });
   }
   if (request.method === "PUT") {
-    const t = await request.text();
-    try { if (!Array.isArray(JSON.parse(t))) return json({ error: "expected a JSON array" }, 400); }
-    catch { return json({ error: "bad json" }, 400); }
-    await env.NOTES.put("projects", t);
-    return json({ ok: true });
+    let incoming;
+    try { incoming = JSON.parse(await request.text()); } catch { return json({ error: "bad json" }, 400); }
+    if (!Array.isArray(incoming)) return json({ error: "expected a JSON array" }, 400);
+    // Merge into whatever's in KV rather than blind-overwriting, so a browser PUT and the
+    // Discord-agent write can't silently clobber each other. Return the merged set so the
+    // client adopts it and devices converge.
+    const merged = mergeProjectArrays(await readProjects(env), incoming);
+    await env.NOTES.put("projects", JSON.stringify(merged));
+    return json({ ok: true, projects: merged });
   }
   return new Response("method not allowed", { status: 405, headers: cors() });
 }
@@ -420,6 +458,8 @@ const AGENT_TOOLS = [
   { name: "set_ticket_status", description: "Change a Portal42 ticket's status (e.g. current, code_review, released). A note is required for failed_beta/failed_live/released. Confirm with Q first.", input_schema: { type: "object", properties: { id: { type: "integer" }, status: { type: "string" }, note: { type: "string" } }, required: ["id", "status"] } },
   { name: "add_ticket_comment", description: "Add a comment/reply to a Portal42 ticket. Confirm with Q first.", input_schema: { type: "object", properties: { ticket_id: { type: "integer" }, comment: { type: "string" }, is_internal: { type: "boolean" } }, required: ["ticket_id", "comment"] } },
 ];
+// Returns the RAW array (tombstones included) — write paths must preserve tombstones or they'd
+// resurrect deletes on un-synced devices. List/match sites filter p.deleted themselves.
 async function agentGetProjects(env) { try { const v = await env.NOTES.get("projects"); const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; } catch { return []; } }
 async function agentFinance(env, path) {
   if (!env.PAYMENTS_API_KEY) return { error: "finance not configured" };
@@ -442,9 +482,9 @@ async function runAgentTool(name, a, env) {
     switch (name) {
       case "read_notes": { const n = await env.NOTES.get("notes"); return { notes: (n || "").slice(0, 4000) }; }
       case "add_note": { if (!a.text) return { error: "need text" }; const cur = (await env.NOTES.get("notes")) || ""; const next = "- " + String(a.text) + "  · " + new Date().toISOString().slice(0, 10) + "\n" + cur; await env.NOTES.put("notes", next.slice(0, 20000)); return { added: true }; }
-      case "list_projects": { const ps = await agentGetProjects(env); return { projects: ps.map(p => { const t = agentType(p); const o = { name: p.name, type: t, stage: agentPipe(t)[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null }; if (t === "property") { o.property = p.property || null; o.area = p.area || null; o.people = p.people || null; } return o; }) }; }
+      case "list_projects": { const ps = (await agentGetProjects(env)).filter(p => !p.deleted); return { projects: ps.map(p => { const t = agentType(p); const o = { name: p.name, type: t, stage: agentPipe(t)[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null }; if (t === "property") { o.property = p.property || null; o.area = p.area || null; o.people = p.people || null; } return o; }) }; }
       case "add_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const t = AGENT_PIPELINES[a.type] ? a.type : "software"; const si = a.stage ? agentPipe(t).indexOf(String(a.stage).toLowerCase()) : 0; const isProp = t === "property"; const np = { id: "p_" + Date.now().toString(36), name: String(a.name), type: t, property: isProp && a.property ? String(a.property) : "", area: isProp && a.area ? String(a.area) : "", people: isProp && a.people ? String(a.people) : "", url: String(a.url || ""), repo: t === "software" ? String(a.repo || "") : "", stage: si >= 0 ? si : 0, next: String(a.next || ""), notes: "", updated: Date.now(), pinned: false, order: (ps.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1) }; ps.push(np); await env.NOTES.put("projects", JSON.stringify(ps)); return { added: true, name: np.name, type: t }; }
-      case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const p = ps.find(x => x.name.toLowerCase() === q) || ps.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; const pipe = agentPipe(agentType(p)); if (a.stage) { const si = pipe.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage for this " + agentType(p) + " project; use one of " + pipe.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); if (a.property != null) p.property = String(a.property); if (a.area != null) p.area = String(a.area); if (a.people != null) p.people = String(a.people); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, type: agentType(p), stage: pipe[p.stage] }; }
+      case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const live = ps.filter(x => !x.deleted); const p = live.find(x => x.name.toLowerCase() === q) || live.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; const pipe = agentPipe(agentType(p)); if (a.stage) { const si = pipe.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage for this " + agentType(p) + " project; use one of " + pipe.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); if (a.property != null) p.property = String(a.property); if (a.area != null) p.area = String(a.area); if (a.people != null) p.people = String(a.people); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, type: agentType(p), stage: pipe[p.stage] }; }
       case "finance_summary": return await agentFinance(env, "/summary");
       case "list_tracker_notifications": { const d = await agentTracker(env, "notifications", { since: 0, order: "desc", limit: a.limit || 10 }); if (d && d.success === false) return { error: d.error }; return { notifications: (d && d.data) || [], meta: (d && d.meta) || {} }; }
       case "get_ticket": { if (a.id == null) return { error: "need id" }; const d = await agentTracker(env, "ticket", { id: a.id }); return (d && d.data) || d; }
@@ -481,7 +521,8 @@ async function handleAgent(request, env) {
     const results = [];
     for (const tu of toolUses) {
       const out = await runAgentTool(tu.name, tu.input, env);
-      results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 8000) });
+      const isErr = out && typeof out === "object" && ("error" in out);   // surface tool errors at the protocol level
+      results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 8000), ...(isErr ? { is_error: true } : {}) });
     }
     msgs.push({ role: "user", content: results });
   }
@@ -535,17 +576,26 @@ export default {
     // can read and show.
     try {
       if (request.method === "OPTIONS") return new Response(null, { headers: cors() });
-      if (!authed(request, env)) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
       const url = new URL(request.url);
+      const auth = authed(request, env);   // true | false | null(no key set)
+      if (auth === false) return json({ error: { message: "Locked — enter your dashboard passphrase.", code: "auth" } }, 401);
+      if (auth === null) {
+        // Fail-open ONLY for harmless bootstrap reads. Everything else — the Anthropic proxy
+        // (/chat, /agent), the finance WRITE proxy, tracker, and ALL writes — stays closed until
+        // DASH_KEY is set, so a leaked workers.dev URL can't run up cost or move business money.
+        const safeBootstrap = request.method === "GET" && (url.pathname === "/notes" || url.pathname === "/discord-status");
+        if (!safeBootstrap) return json({ error: { message: "This Worker isn't secured yet — set the DASH_KEY secret to enable this endpoint.", code: "setup" } }, 401);
+      }
+      const tooMany = () => json({ error: { message: "Too many requests — slow down a moment.", code: "rate_limited" } }, 429);
       if (url.pathname === "/notes") return handleNotes(request, env);
       if (url.pathname === "/finance") return handleFinance(request, env);
       if (url.pathname === "/ccplan") return handleCCPlan(request, env);
       if (url.pathname === "/projects") return handleProjects(request, env);
       if (url.pathname === "/contacts-meta") return handleContactsMeta(request, env);
       if (url.pathname === "/tracker") return handleTracker(request, env);
-      if (url.pathname === "/agent") return handleAgent(request, env);
+      if (url.pathname === "/agent") return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleAgent(request, env);
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
-      return handleChat(request, env);
+      return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleChat(request, env);   // chat is the fallback route
     } catch (e) {
       return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
     }

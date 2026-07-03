@@ -950,7 +950,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.30.0",
+  version: "1.31.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1229,10 +1229,15 @@ function normalizeProject(p){
     next: String(p.next||""),
     notes: String(p.notes||""),
     updated: p.updated || Date.now(),
+    deleted: !!p.deleted,           // tombstone: a delete is a record with deleted=true, not a removal
     pinned: !!p.pinned,
     order: typeof p.order==="number" ? p.order : 0,
   };
 }
+/* Monotonic LWW timestamp: never returns a value <= the newest `updated` already in the array,
+   so a device with a skewed clock can't silently win or lose every conflict (poor-man's Lamport). */
+function stamp(){ let mx=0; for(const p of projects) if((p.updated||0)>mx) mx=p.updated; return Math.max(Date.now(), mx+1); }
+function liveProjects(){ return projects.filter(p=>!p.deleted); }   // tombstones never render/count
 function nextOrder(){ return projects.reduce((m,p)=>Math.max(m,p.order),0)+1; }
 
 function cacheProjects(){ try{ localStorage.setItem("midash_projects", JSON.stringify(projects)); }catch(e){} }
@@ -1240,13 +1245,18 @@ function cacheProjects(){ try{ localStorage.setItem("midash_projects", JSON.stri
    one side are kept. This stops a KV write (e.g. seeded jobs) from clobbering device-local
    projects, and finally syncs local-only projects up. If the merge adds anything the server
    didn't have, we persist so both sides converge. */
+const TOMBSTONE_TTL = 90*86400000;   // GC deletes after 90d — must exceed max plausible device staleness
 function mergeProjects(server, local){
   const by={}; let fromServer=0;
   (server||[]).forEach(p=>{ const n=normalizeProject(p); by[n.id]=n; fromServer++; });
   let added=0;
   (local||[]).forEach(p=>{ const n=normalizeProject(p); const ex=by[n.id];
+    // tombstone: a delete is an UPDATE (deleted=true) that must beat a stale live copy from
+    // another device — LWW on `updated` carries it, which union-by-id alone could not express.
     if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; } });
-  return { list:Object.values(by), changed: added>0 || fromServer===0 };
+  const now=Date.now();
+  const list=Object.values(by).filter(p=>!(p.deleted && (now-(p.updated||0))>TOMBSTONE_TTL));  // GC old tombstones
+  return { list, changed: added>0 || fromServer===0 || list.length!==Object.keys(by).length };
 }
 async function loadProjectsState(){
   const rb=document.getElementById("projects-refresh"); if(rb) rb.classList.add("spin");
@@ -1275,29 +1285,39 @@ function seedProjects(){
   renderProjects();
   saveProjects();   // persist the seed so it's there next time
 }
+let projSaveInFlight=false, projSaveAgain=false;
 async function saveProjects(){
   cacheProjects();
   renderProjSummary(); projState();
   if(!PROJ_URL) return;
-  try{ const r=await fetch(PROJ_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(projects)});
-       projState(r.ok?"synced ✓":"saved here (sync "+r.status+")"); }
+  if(projSaveInFlight){ projSaveAgain=true; return; }   // coalesce concurrent saves so we adopt the latest merge
+  projSaveInFlight=true;
+  try{
+    const r=await fetch(PROJ_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(projects)});
+    if(r.ok){ const j=await r.json().catch(()=>null);
+      if(j && Array.isArray(j.projects)){ projects=j.projects.map(normalizeProject); cacheProjects(); renderProjects(); }  // adopt the server-merged set → devices converge
+      projState("synced ✓");
+    } else projState("saved here (sync "+r.status+")");
+  }
   catch(e){ projState("saved on this device"); }
+  finally{ projSaveInFlight=false; if(projSaveAgain){ projSaveAgain=false; saveProjects(); } }
 }
 function scheduleProjSave(){ clearTimeout(projSaveTimer); projSaveTimer=setTimeout(saveProjects,500); }
 
 function projState(msg){
   const el=document.getElementById("proj-state"); if(!el) return;
   if(msg){ el.textContent=msg; clearTimeout(projState._t); projState._t=setTimeout(()=>projState(),1900); return; }
-  const need=projects.filter(projStale).length;
-  el.textContent = projects.length ? (need?need+" need a push":"all on track ✓") : "—";
+  const live=liveProjects();
+  const need=live.filter(projStale).length;
+  el.textContent = live.length ? (need?need+" need a push":"all on track ✓") : "—";
 }
 let projFilter={ property:"all", area:"all" };
 /* When a property or area filter is active, restrict to matching PROPERTY projects
    (software projects drop out — you're slicing the property board). */
 function projFiltered(){
   const f=projFilter;
-  if(f.property==="all" && f.area==="all") return projects.slice();
-  return projects.filter(p=>{
+  if(f.property==="all" && f.area==="all") return liveProjects();
+  return liveProjects().filter(p=>{
     if(projType(p)!=="property") return false;
     if(f.property!=="all" && p.property!==f.property) return false;
     if(f.area!=="all" && p.area!==f.area) return false;
@@ -1306,7 +1326,7 @@ function projFiltered(){
 }
 function renderProjFilters(){
   const el=document.getElementById("proj-filters"); if(!el) return;
-  const props=projects.filter(p=>projType(p)==="property");
+  const props=liveProjects().filter(p=>projType(p)==="property");
   if(!props.length){ el.style.display="none"; el.innerHTML=""; if(projFilter.property!=="all"||projFilter.area!=="all") projFilter={property:"all",area:"all"}; return; }
   el.style.display="flex";
   const chip=(active,label,onA)=>`<button type="button" class="proj-chip${active?" on":""}" data-f="${onA}">${label}</button>`;
@@ -1338,21 +1358,22 @@ function projSorted(){
 }
 function renderProjSummary(){
   const el=document.getElementById("proj-summary"); if(!el) return;
-  if(!projects.length){ el.innerHTML=""; return; }
-  const types=Object.keys(PROJ_TYPES).filter(t=>projects.some(p=>projType(p)===t));
+  const live=liveProjects();
+  if(!live.length){ el.innerHTML=""; return; }
+  const types=Object.keys(PROJ_TYPES).filter(t=>live.some(p=>projType(p)===t));
   const multi=types.length>1;
   const rows=types.map(t=>{
-    const pipe=pipeOf(t), ps=projects.filter(p=>projType(p)===t);
+    const pipe=pipeOf(t), ps=live.filter(p=>projType(p)===t);
     const counts=pipe.map((s,i)=>ps.filter(p=>p.stage===i).length);
     return `<div class="proj-summary-row">`+
       (multi?`<span class="proj-tsum" title="${esc(PROJ_TYPES[t].label)}">${PROJ_TYPES[t].emoji}</span>`:"")+
       pipe.map((s,i)=>`<span class="proj-spill${counts[i]?"":" zero"}" title="${esc(s.label)}">${s.emoji}<b>${counts[i]}</b></span>`).join("")+
     `</div>`;
   }).join("");
-  const need=projects.filter(projStale).length;
-  const done=projects.filter(p=>p.stage>=projShipOf(projType(p))).length;
+  const need=live.filter(projStale).length;
+  const done=live.filter(p=>p.stage>=projShipOf(projType(p))).length;
   el.innerHTML = rows +
-    `<div class="proj-summary-meta">${projects.length} project${projects.length===1?"":"s"} · ${done} done`+
+    `<div class="proj-summary-meta">${live.length} project${live.length===1?"":"s"} · ${done} done`+
       (need?` · <span class="proj-need">${need} need a push</span>`:` · all on track ✓`)+`</div>`;
 }
 function renderProjects(){
@@ -1418,7 +1439,7 @@ function advanceProject(id,delta){
   const p=projects.find(x=>x.id===id); if(!p) return;
   const ns=Math.max(0,Math.min(projLastOf(projType(p)),p.stage+delta));
   if(ns===p.stage) return;
-  p.stage=ns; p.updated=Date.now();
+  p.stage=ns; p.updated=stamp();
   renderProjects(); scheduleProjSave();
 }
 
@@ -1500,7 +1521,7 @@ function initSchedModal(){
     msg("Adding to calendar…");
     try{
       const r=await gpost("https://www.googleapis.com/calendar/v3/calendars/primary/events", acct.token, body);
-      if(r && r.id){ msg("✓ Added to your calendar.",false); p.updated=Date.now(); scheduleProjSave();
+      if(r && r.id){ msg("✓ Added to your calendar.",false); p.updated=stamp(); scheduleProjSave();
         setTimeout(()=>{ close(); loadProjEvents(); if(typeof loadAgenda==="function") loadAgenda(); }, 700); }
       else msg("Couldn’t create the event"+(r&&r.error?": "+(r.error.message||""):"")+".",true);
     }catch(e){ msg("Calendar error — "+(e.message||"try again")+".",true); }
@@ -1566,9 +1587,9 @@ function initProjModal(){
     if(editingProjId){
       const p=projects.find(x=>x.id===editingProjId); if(!p){ close(); return; }
       Object.assign(p, normalizeProject({...p, ...fields}));
-      p.updated=Date.now();
+      p.updated=stamp();
     } else {
-      projects.push(normalizeProject({...fields, order:nextOrder(), updated:Date.now()}));
+      projects.push(normalizeProject({...fields, order:nextOrder(), updated:stamp()}));
     }
     close(); renderProjects(); saveProjects();
   };
@@ -1576,7 +1597,8 @@ function initProjModal(){
     if(!editingProjId) return;
     const p=projects.find(x=>x.id===editingProjId);
     if(!confirm("Remove “"+(p?p.name:"this project")+"” from the tracker?")) return;
-    projects=projects.filter(x=>x.id!==editingProjId);
+    // tombstone: keep the record marked deleted so the delete survives a stale-device merge
+    if(p){ p.deleted=true; p.updated=stamp(); }
     close(); renderProjects(); saveProjects();
   };
 }
@@ -2740,7 +2762,37 @@ const agentMessages=[];
    visible bubbles from it on load. */
 const CHAT_KEY="midash_chat";
 function saveChat(){ try{ localStorage.setItem(CHAT_KEY, JSON.stringify(agentMessages)); }catch(e){} }
-function loadChat(){ try{ const a=JSON.parse(localStorage.getItem(CHAT_KEY)||"[]"); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function loadChat(){ try{ const a=JSON.parse(localStorage.getItem(CHAT_KEY)||"[]"); return Array.isArray(a)?repairChat(a):[]; }catch(e){ return []; } }
+/* The assistant tool_use message is persisted BEFORE its tools run (and a confirm() can block
+   mid-loop). If the tab closed there, history ends with a tool_use that has no matching
+   tool_result → Anthropic 400s on every future send, bricking the chat. Repair by injecting a
+   synthetic error tool_result for any dangling tool_use id, so context survives instead of the
+   whole conversation being cleared. */
+function repairChat(msgs){
+  const stub=id=>({ type:"tool_result", tool_use_id:id, content:"(interrupted — page closed before this tool finished)", is_error:true });
+  const out=[];
+  for(let i=0;i<msgs.length;i++){
+    const m=msgs[i];
+    if(m && m.role==="assistant" && Array.isArray(m.content)){
+      const ids=m.content.filter(b=>b&&b.type==="tool_use").map(b=>b.id);
+      const next=msgs[i+1];
+      const nextIsResults = next && next.role==="user" && Array.isArray(next.content);
+      const answered=new Set();
+      if(nextIsResults) next.content.forEach(b=>{ if(b&&b.type==="tool_result"&&b.tool_use_id) answered.add(b.tool_use_id); });
+      const missing=ids.filter(id=>!answered.has(id));
+      if(missing.length && nextIsResults){
+        // partial results already follow → merge the missing stubs into that SAME user turn
+        next.content=next.content.concat(missing.map(stub));
+        out.push(m); continue;
+      }
+      out.push(m);
+      if(missing.length){ out.push({ role:"user", content: missing.map(stub) }); }   // no results turn at all → insert one
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
 function clearChat(){ agentMessages.length=0; try{ localStorage.removeItem(CHAT_KEY); }catch(e){} if(log) log.innerHTML=""; }
 function renderChatHistory(){
   for(const m of agentMessages){
@@ -2791,7 +2843,7 @@ async function streamModel(onText, msgs){
         else if(d.type==="signature_delta"){ b.signature=(b.signature||"")+d.signature; }
         else if(d.type==="input_json_delta"){ jsonParts[ev.index]=(jsonParts[ev.index]||"")+d.partial_json; } break; }
       case "content_block_stop": { const b=blocks[ev.index];
-        if(b&&b.type==="tool_use"){ try{ b.input=jsonParts[ev.index]?JSON.parse(jsonParts[ev.index]):{}; }catch(e){ b.input={}; } } break; }
+        if(b&&b.type==="tool_use"){ try{ b.input=jsonParts[ev.index]?JSON.parse(jsonParts[ev.index]):{}; }catch(e){ b.input={}; b._truncated=true; } } break; }   // dropped stream → don't run the tool on garbage args
       case "message_delta": if(ev.delta&&ev.delta.stop_reason) stop_reason=ev.delta.stop_reason; if(ev.usage) usage=Object.assign({}, usage, ev.usage); break;
       case "error": throw new Error((ev.error&&ev.error.message)||"stream error");
     }
@@ -2837,8 +2889,13 @@ async function agentLoop(thinking){
     const calls=(data.content||[]).filter(b=>b.type==="tool_use");
     const results=[];
     for(const c of calls){
+      if(c._truncated){   // input JSON was cut off in transit → don't run it on {}, ask for a retry
+        results.push({type:"tool_result",tool_use_id:c.id,content:"tool input was truncated in transit — please retry the call",is_error:true});
+        continue;
+      }
       const out=await executeTool(c.name, c.input||{});
-      results.push({type:"tool_result",tool_use_id:c.id,content:typeof out==="string"?out:JSON.stringify(out)});
+      const isErr = out && typeof out==="object" && ("error" in out);   // surface tool errors at the protocol level
+      results.push({type:"tool_result",tool_use_id:c.id,content:typeof out==="string"?out:JSON.stringify(out),...(isErr?{is_error:true}:{})});
     }
     agentMessages.push({role:"user",content:results}); saveChat();
     bubble=addMsg("…","bot");
@@ -3630,14 +3687,14 @@ async function executeTool(name,a){
         const t=PROJ_TYPES[a.type]?a.type:"software", pipe=pipeOf(t);
         const si=a.stage?pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()):0;
         const np=normalizeProject({ name:a.name, type:t, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"",
-          property:a.property||"", area:a.area||"", people:a.people||"", updated:Date.now(), order:nextOrder() });
+          property:a.property||"", area:a.area||"", people:a.people||"", updated:stamp(), order:nextOrder() });
         projects.push(np); renderProjects(); saveProjects();
         return { added:true, name:np.name, type:t, stage:(pipe[np.stage]||pipe[0]).key, property:np.property||null, area:np.area||null };
       }
       case "update_project": {
         if(!a.name) return {error:"need the project name"};
-        const q=String(a.name).toLowerCase();
-        const p=projects.find(x=>x.name.toLowerCase()===q) || projects.find(x=>x.name.toLowerCase().includes(q));
+        const q=String(a.name).toLowerCase(), live=liveProjects();   // never match a tombstone
+        const p=live.find(x=>x.name.toLowerCase()===q) || live.find(x=>x.name.toLowerCase().includes(q));
         if(!p) return {error:"no project matching “"+a.name+"” — call list_projects to see the names."};
         const pipe=pipeOf(projType(p));
         if(a.stage!=null){ const si=pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()); if(si<0) return {error:"bad stage — for this "+projType(p)+" project use one of "+pipe.map(s=>s.key).join(", ")}; p.stage=si; }
@@ -3646,7 +3703,7 @@ async function executeTool(name,a){
         if(a.property!=null && PROPERTIES[a.property]) p.property=a.property;
         if(a.area!=null && PROP_AREAS[a.area]) p.area=a.area;
         if(a.people!=null) p.people=String(a.people);
-        p.updated=Date.now(); renderProjects(); saveProjects();
+        p.updated=stamp(); renderProjects(); saveProjects();
         return { updated:true, name:p.name, type:projType(p), stage:(pipe[p.stage]||pipe[0]).key, progressPct:projPct(p.stage,projType(p)) };
       }
       case "list_tracker_notifications": {

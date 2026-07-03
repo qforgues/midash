@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>miDash — pure-function tests</title>
+<style>
+  body { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; background:#0f1117; color:#e6e6e6; padding:24px; line-height:1.5; }
+  h1 { font-size:18px; } h2 { font-size:14px; color:#9aa; margin-top:22px; border-bottom:1px solid #333; padding-bottom:4px; }
+  .row { padding:4px 0; } .ok { color:#5ad17a; } .bad { color:#ff6b6b; font-weight:700; }
+  #summary { font-size:16px; font-weight:700; margin:14px 0; padding:10px 14px; border-radius:8px; }
+  #summary.pass { background:#12321e; color:#5ad17a; } #summary.fail { background:#3a1414; color:#ff6b6b; }
+  code { color:#c8c8ff; }
+</style>
+</head>
+<body>
+<h1>miDash — pure-function regression tests</h1>
+<p style="color:#889">Zero-build. Open this file in a browser. Functions below are copies of the
+real ones in <code>index.html</code> / <code>worker.js</code> — <b>KEEP IN SYNC</b> when you edit
+the originals.</p>
+<div id="summary"></div>
+<div id="out"></div>
+
+<script>
+/* ============ COPIES UNDER TEST — KEEP IN SYNC with index.html / worker.js ============ */
+
+// --- constants (subset needed by normalizeProject) ---
+const PROJ_TYPES = { software:{ship:5}, property:{ship:6} };
+const PROPERTIES = { house:1, cabin:1 };
+const PROP_AREAS = { inside:1,outside:1,plumbing:1,electric:1,handyman:1,cleaning:1,other:1 };
+const PIPELINES = {
+  software:[{key:"idea"},{key:"validate"},{key:"plan"},{key:"build"},{key:"test"},{key:"ship"},{key:"grow"}],
+  property:[{key:"idea"},{key:"scope"},{key:"design"},{key:"source"},{key:"build"},{key:"finish"},{key:"done"}],
+};
+function pipeOf(t){ return PIPELINES[t]||PIPELINES.software; }
+
+// --- esc / escAttr (index.html) ---
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
+
+// --- verNewer (index.html) ---
+function verNewer(a,b){ const pa=String(a).split(".").map(Number),pb=String(b).split(".").map(Number); for(let i=0;i<3;i++){ if((pa[i]||0)>(pb[i]||0))return true; if((pa[i]||0)<(pb[i]||0))return false; } return false; }
+
+// --- normalizeProject (index.html) — trimmed to fields the tests exercise ---
+function normalizeProject(p){
+  p=p||{};
+  const type = PROJ_TYPES[p.type] ? p.type : "software";
+  const pipe = pipeOf(type), last = pipe.length-1;
+  let stage = typeof p.stage==="number" ? p.stage : pipe.findIndex(s=>s.key===p.stage);
+  if(!(stage>=0)) stage=0;
+  stage = Math.max(0, Math.min(last, Math.round(stage)));
+  return {
+    id: p.id || ("p_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),
+    name: String(p.name||"Untitled"), type,
+    property: PROPERTIES[p.property] ? p.property : "",
+    area: PROP_AREAS[p.area] ? p.area : "",
+    people: String(p.people||"").trim(),
+    stage, next:String(p.next||""), notes:String(p.notes||""),
+    updated: p.updated || Date.now(),
+    deleted: !!p.deleted,
+    pinned: !!p.pinned, order: typeof p.order==="number" ? p.order : 0,
+  };
+}
+
+// --- stamp (index.html) — parameterized on the array + a clock for testability ---
+function stampOf(arr, nowFn){ let mx=0; for(const p of arr) if((p.updated||0)>mx) mx=p.updated; return Math.max(nowFn(), mx+1); }
+
+// --- mergeProjects (index.html) ---
+const TOMBSTONE_TTL = 90*86400000;
+function mergeProjects(server, local, now){
+  now = now || Date.now();
+  const by={}; let fromServer=0;
+  (server||[]).forEach(p=>{ const n=normalizeProject(p); by[n.id]=n; fromServer++; });
+  let added=0;
+  (local||[]).forEach(p=>{ const n=normalizeProject(p); const ex=by[n.id];
+    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; } });
+  const list=Object.values(by).filter(p=>!(p.deleted && (now-(p.updated||0))>TOMBSTONE_TTL));
+  return { list, changed: added>0 || fromServer===0 || list.length!==Object.keys(by).length };
+}
+function liveOf(list){ return list.filter(p=>!p.deleted); }
+
+// --- repairChat (index.html) ---
+function repairChat(msgs){
+  const stub=id=>({ type:"tool_result", tool_use_id:id, content:"(interrupted)", is_error:true });
+  const out=[];
+  for(let i=0;i<msgs.length;i++){
+    const m=msgs[i];
+    if(m && m.role==="assistant" && Array.isArray(m.content)){
+      const ids=m.content.filter(b=>b&&b.type==="tool_use").map(b=>b.id);
+      const next=msgs[i+1];
+      const nextIsResults = next && next.role==="user" && Array.isArray(next.content);
+      const answered=new Set();
+      if(nextIsResults) next.content.forEach(b=>{ if(b&&b.type==="tool_result"&&b.tool_use_id) answered.add(b.tool_use_id); });
+      const missing=ids.filter(id=>!answered.has(id));
+      if(missing.length && nextIsResults){ next.content=next.content.concat(missing.map(stub)); out.push(m); continue; }
+      out.push(m);
+      if(missing.length){ out.push({ role:"user", content: missing.map(stub) }); }
+      continue;
+    }
+    out.push(m);
+  }
+  return out;
+}
+
+/* ================================ TEST HARNESS ================================ */
+let pass=0, fail=0;
+const out=document.getElementById("out");
+function section(t){ const h=document.createElement("h2"); h.textContent=t; out.appendChild(h); }
+function ok(cond, label){
+  const d=document.createElement("div"); d.className="row "+(cond?"ok":"bad");
+  d.textContent=(cond?"✓ ":"✗ FAIL — ")+label; out.appendChild(d);
+  cond?pass++:fail++;
+}
+const day=86400000, NOW=1_800_000_000_000;   // fixed "now" for deterministic tombstone tests
+
+section("Tombstone merge — a delete beats a stale live copy (both directions)");
+{
+  const live={id:"x", name:"Fix sink", type:"property", updated: NOW-10*day};
+  const del ={id:"x", name:"Fix sink", type:"property", updated: NOW-1*day, deleted:true};
+  // delete on server, stale-live on local
+  let m=mergeProjects([del],[live], NOW);
+  ok(m.list.length===1 && m.list[0].deleted===true, "server-delete vs local-live → stays deleted");
+  ok(liveOf(m.list).length===0, "deleted item not in live view");
+  // delete on local, stale-live on server (other direction)
+  m=mergeProjects([live],[del], NOW);
+  ok(m.list.length===1 && m.list[0].deleted===true, "local-delete vs server-live → stays deleted");
+}
+
+section("Resurrection regression — the exact 2-device scenario");
+{
+  // Device A deleted P (tombstone in KV). Device B still holds the old live copy locally.
+  const kv=[{id:"P",name:"Clean garage",type:"property",updated:NOW-2*day,deleted:true}];
+  const deviceBlocal=[{id:"P",name:"Clean garage",type:"property",updated:NOW-9*day}];
+  const merged=mergeProjects(kv, deviceBlocal, NOW);
+  ok(liveOf(merged.list).length===0, "B's stale copy does NOT resurrect P");
+  // and if B re-saves the merged set, KV still has only the tombstone (no live P)
+  const remerge=mergeProjects(merged.list, [], NOW);
+  ok(liveOf(remerge.list).length===0, "re-save keeps it deleted (no oscillation)");
+}
+
+section("LWW — newest updated wins; equal timestamps stable");
+{
+  let m=mergeProjects([{id:"a",name:"old",updated:1}],[{id:"a",name:"new",updated:9}], NOW);
+  ok(m.list.length===1 && m.list[0].name==="new", "newer local overwrites older server");
+  m=mergeProjects([{id:"a",name:"newer",updated:9}],[{id:"a",name:"older",updated:1}], NOW);
+  ok(m.list[0].name==="newer", "older local does NOT overwrite newer server");
+  m=mergeProjects([{id:"a",name:"server",updated:5}],[{id:"a",name:"local",updated:5}], NOW);
+  ok(m.list[0].name==="server", "equal timestamps → server stays (stable, no flip)");
+}
+
+section("Tombstone GC — old deletes drop, fresh deletes survive");
+{
+  const old={id:"o",name:"x",updated:NOW-91*day,deleted:true};
+  const fresh={id:"f",name:"y",updated:NOW-10*day,deleted:true};
+  const m=mergeProjects([old,fresh],[], NOW);
+  ok(!m.list.find(p=>p.id==="o"), "tombstone older than 90d is GC'd");
+  ok(!!m.list.find(p=>p.id==="f"), "tombstone within 90d is kept (still propagating)");
+}
+
+section("Union — adds from both sides, no dupes");
+{
+  const s=[...Array(3)].map((_,i)=>({id:"s"+i,name:"j"+i,updated:100}));
+  const l=[{id:"L1",name:"miDash",updated:50},{id:"s0",name:"j0-edited",updated:200}];
+  const m=mergeProjects(s,l, NOW);
+  ok(m.list.length===4, "3 server + 1 new local = 4 unique");
+  ok(m.list.find(p=>p.id==="s0").name==="j0-edited", "newer local edit of s0 wins");
+  ok(m.changed===true, "changed flag set when local added");
+}
+
+section("stamp() — monotonic even with a backwards clock");
+{
+  const arr=[{updated: NOW+1000}];           // an item is 'ahead' of the wall clock
+  const s=stampOf(arr, ()=>NOW);             // clock says NOW, but max is NOW+1000
+  ok(s === NOW+1001, "stamp > newest existing updated (skewed clock can't lose)");
+  const s2=stampOf([], ()=>NOW);
+  ok(s2 === NOW, "empty array → wall clock");
+}
+
+section("verNewer");
+{
+  ok(verNewer("1.10.0","1.9.9")===true, "1.10.0 > 1.9.9 (numeric, not lexical)");
+  ok(verNewer("1.30.2","1.30.1")===true, "patch bump newer");
+  ok(verNewer("2.0.0","1.99.99")===true, "major bump newer");
+  ok(verNewer("1.30.0","1.30.0")===false, "same version not newer");
+  ok(verNewer("1.29.0","1.30.0")===false, "older not newer");
+  ok(verNewer("1.30","1.30.0")===false, "malformed (missing patch) treated as 0, not newer");
+}
+
+section("esc / escAttr — XSS payloads neutralized");
+{
+  ok(esc('<img src=x onerror=alert(1)>')==="&lt;img src=x onerror=alert(1)&gt;", "angle brackets escaped");
+  ok(esc('a & b')==="a &amp; b", "ampersand escaped");
+  ok(escAttr('" onmouseover="alert(1)')==='&quot; onmouseover=&quot;alert(1)', "quotes escaped for attribute context");
+  ok(esc('normal text')==="normal text", "plain text unchanged");
+}
+
+section("repairChat — dangling tool_use gets a synthetic error result");
+{
+  // conversation cut off right after an assistant tool_use (no results turn at all)
+  let msgs=[{role:"user",content:"hi"},{role:"assistant",content:[{type:"tool_use",id:"t1",name:"x",input:{}}]}];
+  let r=repairChat(msgs);
+  ok(r.length===3 && r[2].role==="user" && r[2].content[0].tool_use_id==="t1" && r[2].content[0].is_error, "inserts error tool_result turn for dangling tool_use");
+  // partial: results turn exists but is missing one id → merge into same turn
+  msgs=[{role:"assistant",content:[{type:"tool_use",id:"a"},{type:"tool_use",id:"b"}]},
+        {role:"user",content:[{type:"tool_result",tool_use_id:"a",content:"ok"}]}];
+  r=repairChat(msgs);
+  const ids=r[1].content.map(c=>c.tool_use_id).sort();
+  ok(r.length===2 && ids.join(",")==="a,b", "merges missing result into existing results turn (no consecutive user turns)");
+  // healthy conversation is untouched
+  msgs=[{role:"assistant",content:[{type:"tool_use",id:"z"}]},{role:"user",content:[{type:"tool_result",tool_use_id:"z",content:"ok"}]}];
+  r=repairChat(msgs);
+  ok(r.length===2 && r[1].content.length===1, "complete tool_use/result pair left unchanged");
+}
+
+/* ================================ SUMMARY ================================ */
+const sum=document.getElementById("summary");
+sum.className = fail?"fail":"pass";
+sum.textContent = fail ? (fail+" FAILED, "+pass+" passed") : ("ALL "+pass+" TESTS PASSED ✓");
+</script>
+</body>
+</html>
