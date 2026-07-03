@@ -50,6 +50,6 @@ These pure functions exist in more than one place and MUST be edited in lockstep
 - Metered Anthropic spend: a hard cap is set in the Anthropic Console. Don't disable the rate limit.
 
 ## Live
-- Site: https://qforgues.github.io  ·  Worker: https://midash-chat.quentin-forgues.workers.dev
+- Site: https://qforgues.github.io/midash/  ·  Worker: https://midash-chat.quentin-forgues.workers.dev
 - Pi: `ssh claudeclaw` (services: `midash-discord`, `midash-42payments`, `cloudflared`)
-- Deployed-version check: `curl -s https://qforgues.github.io/index.html?cb=$(date +%s) | grep -m1 version`
+- Deployed-version check: `curl -s https://qforgues.github.io/midash/index.html?cb=$(date +%s) | grep -m1 version`
