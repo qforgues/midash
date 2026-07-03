@@ -950,7 +950,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.31.0",
+  version: "1.32.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1447,9 +1447,13 @@ function advanceProject(id,delta){
    Events created here are tagged with private extendedProperties (midashApp + the project id),
    so we can pull them back per project. One query per account for all miDash work events. */
 let projEvents={};   // projectId -> [{dt, timed, title, eventId, acct}]  (upcoming only, sorted)
-async function gpost(url, token, body){
+async function gpost(url, token, body, _retried){
   const r=await fetch(url,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(r.status===401) throw new Error("expired");
+  if(r.status===401){
+    if(!_retried){ const acct=accounts.find(a=>a.token===token)||accounts[0];
+      if(acct){ try{ const nt=await refreshTokenFor(acct.email); return gpost(url, nt, body, true); }catch(e){} } }
+    throw new Error("expired");
+  }
   return r.json();
 }
 async function loadProjEvents(){
@@ -1490,7 +1494,7 @@ function openSchedModal(id){
   if(forEl) forEl.innerHTML=`${pr?pr.emoji+" "+esc(pr.label):""}${ar?" · "+ar.emoji+" "+esc(ar.label):""} — <b>${esc(p.name)}</b>`;
   const who=document.getElementById("sched-who"); if(who) who.value=p.people||"";
   const acct=document.getElementById("sched-acct");
-  if(acct) acct.innerHTML=accounts.map(a=>`<option value="${esc(a.email)}">${esc(aliasOf(a.email))} · ${esc(a.email)}</option>`).join("");
+  if(acct) acct.innerHTML=accounts.map(a=>`<option value="${escAttr(a.email)}">${esc(aliasOf(a.email))} · ${esc(a.email)}</option>`).join("");
   const d=document.getElementById("sched-date"); if(d && !d.value){ const t=new Date(); t.setDate(t.getDate()+1); d.value=t.toISOString().slice(0,10); }
   const msg=document.getElementById("sched-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
   document.getElementById("sched-modal").style.display="flex";
@@ -1518,14 +1522,28 @@ function initSchedModal(){
       description:`miDash property work · ${p.name}${p.next?"\nNext: "+p.next:""}`,
       start:{ dateTime:start.toISOString(), timeZone:tz }, end:{ dateTime:end.toISOString(), timeZone:tz },
       extendedProperties:{ private:{ midashApp:"1", midashProject:p.id, midashProp:p.property||"", midashArea:p.area||"" } } };
+    const btn=document.getElementById("sched-save"); if(btn) btn.disabled=true;   // no double-click dupes
     msg("Adding to calendar…");
     try{
       const r=await gpost("https://www.googleapis.com/calendar/v3/calendars/primary/events", acct.token, body);
       if(r && r.id){ msg("✓ Added to your calendar.",false); p.updated=stamp(); scheduleProjSave();
         setTimeout(()=>{ close(); loadProjEvents(); if(typeof loadAgenda==="function") loadAgenda(); }, 700); }
-      else msg("Couldn’t create the event"+(r&&r.error?": "+(r.error.message||""):"")+".",true);
-    }catch(e){ msg("Calendar error — "+(e.message||"try again")+".",true); }
+      else { msg("Couldn’t create the event"+(r&&r.error?": "+(r.error.message||""):"")+".",true); if(btn) btn.disabled=false; }
+    }catch(e){ msg("Calendar error — "+(e.message||"try again")+".",true); if(btn) btn.disabled=false; }
   };
+}
+/* When a property project is deleted, its tagged calendar events are orphaned. Offer to remove
+   the upcoming ones. Best-effort across accounts; never blocks the delete. */
+async function cleanupProjEvents(pid){
+  if(!accounts.length) return;
+  try{
+    await loadProjEvents();
+    const evs=projEvents[pid]; if(!evs || !evs.length) return;
+    if(!confirm(`This job had ${evs.length} upcoming calendar event${evs.length===1?"":"s"}. Delete ${evs.length===1?"it":"them"} too?`)) return;
+    for(const ev of evs){ const acct=acctByEmail(ev.acct)||accounts[0]; if(!acct) continue;
+      try{ await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(ev.eventId)}`,{method:"DELETE",headers:{Authorization:"Bearer "+acct.token}}); }catch(e){} }
+    loadProjEvents(); if(typeof loadAgenda==="function") loadAgenda();
+  }catch(e){}
 }
 function fillStageSelect(sel,type){ if(sel) sel.innerHTML=pipeOf(type).map((s,i)=>`<option value="${i}">${s.emoji} ${esc(s.label)} · ${projPct(i,type)}%</option>`).join(""); }
 /* Reflect the chosen type: repopulate the stage list for that pipeline (keeping the current
@@ -1600,6 +1618,7 @@ function initProjModal(){
     // tombstone: keep the record marked deleted so the delete survives a stale-device merge
     if(p){ p.deleted=true; p.updated=stamp(); }
     close(); renderProjects(); saveProjects();
+    if(p && projType(p)==="property") cleanupProjEvents(p.id);   // offer to remove its calendar events
   };
 }
 async function importRepos(){
@@ -1867,7 +1886,8 @@ function googleBoot() {
   const start = () => {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.googleClientId, scope: SCOPES, callback: onToken,
-      error_callback: (err)=>{ console.warn("[google] token error:", err && err.type); },   // silent-refresh misses land here — user can reconnect manually
+      error_callback: (err)=>{ console.warn("[google] token error:", err && err.type);   // silent-refresh misses land here — user can reconnect manually
+        rejectAllTokenWaiters(new Error((err&&err.type)||"token error")); },
     });
     loadAccounts();
     if (accounts.length) afterAuth(); else showConnect();
@@ -1889,8 +1909,28 @@ async function onToken(resp){
   const found=accounts.find(a=>a.email===email);
   if(found){ found.token=resp.access_token; found.exp=exp; if(pic) found.pic=pic; } else accounts.push({email, token:resp.access_token, exp, pic});
   accessToken=accounts[0].token; saveAccounts();
+  resolveTokenWaiter(email, resp.access_token);   // wake any gfetch/gpost awaiting a fresh token
   if(wasEmpty || !found) afterAuth();          // full UI setup only on a new/first connect
   else { renderAccountBar(); startGoogleAutoRefresh(); }   // silent refresh: keep the token fresh, don't reload the world
+}
+
+/* Promise-wrap the GIS silent grant so a tool/loader can await a fresh token and retry, instead
+   of dying on a mid-session 401. Dedupe by email so a burst of expiring calls triggers ONE grant. */
+const tokenWaiters={};      // email -> {resolve,reject,timer}
+const inflightRefresh={};   // email -> Promise
+function resolveTokenWaiter(email, tok){ const w=tokenWaiters[email]; if(w){ clearTimeout(w.timer); delete tokenWaiters[email]; w.resolve(tok); } }
+function rejectAllTokenWaiters(err){ for(const k in tokenWaiters){ const w=tokenWaiters[k]; clearTimeout(w.timer); w.reject(err); delete tokenWaiters[k]; } }
+function refreshTokenFor(email){
+  if(inflightRefresh[email]) return inflightRefresh[email];
+  const p=new Promise((resolve,reject)=>{
+    if(!tokenClient){ reject(new Error("no token client")); return; }
+    tokenWaiters[email]={ resolve, reject, timer:setTimeout(()=>{ delete tokenWaiters[email]; reject(new Error("refresh timeout")); }, 10000) };
+    try{ tokenClient.requestAccessToken({ prompt:"", hint:email }); }
+    catch(e){ const w=tokenWaiters[email]; if(w){ clearTimeout(w.timer); delete tokenWaiters[email]; } reject(e); }
+  });
+  inflightRefresh[email]=p;
+  p.catch(()=>{}).then(()=>{ delete inflightRefresh[email]; });
+  return p;
 }
 
 /* Keep Google signed in past the 1-hour token: silently re-request a fresh token before it
@@ -1965,9 +2005,16 @@ function refreshLive(){
   els.forEach(e=>e.classList.add("spin"));
   Promise.allSettled([loadAgenda(), loadMail(), loadContacts(), loadTasks()]).finally(()=>setTimeout(()=>els.forEach(e=>e.classList.remove("spin")),500));
 }
-async function gfetch(url, token){
-  const r=await fetch(url,{headers:{Authorization:"Bearer "+(token||accessToken)}});
-  if(r.status===401){ throw new Error("expired"); }
+async function gfetch(url, token, _retried){
+  const useTok=token||accessToken;
+  const r=await fetch(url,{headers:{Authorization:"Bearer "+useTok}});
+  if(r.status===401){
+    if(!_retried){                                   // token likely expired mid-session → silent refresh + one retry
+      const acct=accounts.find(a=>a.token===useTok)||accounts[0];
+      if(acct){ try{ const nt=await refreshTokenFor(acct.email); return gfetch(url, nt, true); }catch(e){} }
+    }
+    throw new Error("expired");
+  }
   return r.json();
 }
 function loadLive(){ loadAgenda(); loadMail(); loadContacts(); loadTasks(); loadProjEvents(); }
@@ -2033,7 +2080,7 @@ function attendeesLabel(x){
 }
 function eventRow(o){
   const t = o.timed ? o.dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "all day";
-  const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
+  const href = safeUrl(o.x.htmlLink) ? ` href="${escAttr(safeUrl(o.x.htmlLink))}" target="_blank" rel="noopener"` : "";
   const tag = accounts.length>1 ? acctPill(o.acct) : "";
   const p = accounts.length>1 ? acctColor(o.acct) : "var(--accent)";
   const att = attendeesLabel(o.x);
@@ -2063,7 +2110,7 @@ function agendaRowHTML(o, showDate){
   const dlab=`${o.dt.toLocaleDateString([],{month:"short"})}, ${o.dt.toLocaleDateString([],{weekday:"short"})}`.toUpperCase();
   const time = o.timed ? `${fmtT(o.dt)}${o.end?` – ${fmtT(o.end)}`:""}` : "All day";
   const color = multi ? acctColor(o.acct) : "var(--accent)";
-  const href = o.x.htmlLink ? ` href="${o.x.htmlLink}" target="_blank" rel="noopener"` : "";
+  const href = safeUrl(o.x.htmlLink) ? ` href="${escAttr(safeUrl(o.x.htmlLink))}" target="_blank" rel="noopener"` : "";
   const loc = o.x.location ? `<span class="agloc">${esc(o.x.location)}</span>` : "";
   const idtag = multi ? acctPill(o.acct) : "";
   const att = attendeesLabel(o.x);
@@ -2194,7 +2241,10 @@ function renderMailPage(){
 
 function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
+function escAttr(s){ return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+/* Only allow http(s) links to render — blocks javascript:/data:/vbscript: hrefs coming from
+   external sources (Tracker42 PR urls, Google event links). Returns "" for anything else. */
+function safeUrl(u){ const s=String(u||"").trim(); return /^https?:\/\//i.test(s) ? s : ""; }
 /* Turn any upstream error (string, {message}, object, or a stray HTML error page) into one
    tidy line — so a card never dumps a wall of markup or a giant JSON blob. */
 function cleanErr(x){
@@ -3127,7 +3177,7 @@ function renderTickets(d){
   const start=tkTicketPage*TK_PER;
   const rows=list.slice(start,start+TK_PER).map(t=>{
     const crit=t.is_critical?`<span class="tk-crit" title="critical">🔥</span>`:"";
-    const pr=t.priority?`<span class="tk-pri tk-pri-${esc(t.priority)}">${esc(t.priority)}</span>`:"";
+    const pr=t.priority?`<span class="tk-pri tk-pri-${escAttr(t.priority)}">${esc(t.priority)}</span>`:"";
     const due=t.due_date?`<span class="tk-due" title="due">📅 ${esc(tkDate(t.due_date))}</span>`:"";
     const who=t.assignee?`<span class="tk-assignee">👤 ${esc(t.assignee)}</span>`:"";
     return `<div class="tkt-row" data-id="${t.id}">
@@ -3191,7 +3241,7 @@ function renderTicketDetail(t){
   if(tl) tl.textContent=(t.ticket_number?t.ticket_number+" · ":"")+(t.title||"Ticket");
   const field=(k,v)=> (v!=null&&v!=="") ? `<div class="tkd-field"><span class="tkd-k">${esc(k)}</span><span class="tkd-v">${esc(String(v))}</span></div>` : "";
   const block=(k,v)=> v ? `<div class="tkd-bk">${esc(k)}</div><div class="tkd-bv">${esc(String(v))}</div>` : "";
-  let h=`<div class="tkd-meta">${statusChip(t.status,t.status_label)}${t.priority?`<span class="tk-pri tk-pri-${esc(t.priority)}">${esc(t.priority)} priority</span>`:""}${t.ticket_type?`<span class="tk-type">${esc(t.ticket_type)}</span>`:""}${t.is_critical?`<span class="tk-crit">🔥 critical</span>`:""}</div>`;
+  let h=`<div class="tkd-meta">${statusChip(t.status,t.status_label)}${t.priority?`<span class="tk-pri tk-pri-${escAttr(t.priority)}">${esc(t.priority)} priority</span>`:""}${t.ticket_type?`<span class="tk-type">${esc(t.ticket_type)}</span>`:""}${t.is_critical?`<span class="tk-crit">🔥 critical</span>`:""}</div>`;
   h+=`<div class="tkd-fields">`+
     field("Assignee", t.assignee)+field("Due", tkDate(t.due_date))+field("Effort", t.effort_points!=null?t.effort_points+" pts":"")+
     field("Release", t.release_number)+field("BA owner", t.ba_owner)+field("QA", t.qa_assigned)+
@@ -3205,7 +3255,7 @@ function renderTicketDetail(t){
     h+=`<div class="tkd-bk">History</div><div class="tkd-history">`+t.history.slice(-8).reverse().map(x=>
       `<div class="tkd-hrow"><span class="tkd-when">${x.created_at?rel(x.created_at):""}</span> · ${esc(x.user||"")} — ${esc(x.action||"")}${x.old_value!=null?` (${esc(x.old_value)} → ${esc(x.new_value)})`:""}</div>`).join("")+`</div>`;
   }
-  if(t.pr_url) h+=`<div class="tkd-bk">PR</div><div class="tkd-bv"><a href="${esc(t.pr_url)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(t.branch_name||t.pr_url)} ↗</a></div>`;
+  if(t.pr_url){ const prU=safeUrl(t.pr_url); h+=`<div class="tkd-bk">PR</div><div class="tkd-bv">${prU?`<a href="${escAttr(prU)}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(t.branch_name||t.pr_url)} ↗</a>`:esc(t.branch_name||t.pr_url)}</div>`; }
   // Write controls (live — tickets:write). admin_bypass → every status offered.
   const statuses=(tkStatuses&&tkStatuses.length)?tkStatuses:[{key:t.status,label:t.status_label||t.status}];
   h+=`<div class="tkd-write">
@@ -3635,10 +3685,14 @@ async function executeTool(name,a){
         }
         if(!confirm(`Create this event on ${acct.email}?\n\n${a.summary}\n${whenLbl}${a.location?"\n@ "+a.location:""}`)) return {cancelled:true,note:"User declined — do not retry."};
         const ev={summary:a.summary, start:startObj, end:endObj}; if(a.location) ev.location=a.location; if(a.description) ev.description=a.description;
+        // tag agent-created events to a project so they show on the property board like manually-scheduled ones
+        let linkedProj=null;
+        if(a.projectId){ linkedProj=liveProjects().find(x=>x.id===a.projectId) || liveProjects().find(x=>x.name.toLowerCase()===String(a.projectId).toLowerCase()) || liveProjects().find(x=>x.name.toLowerCase().includes(String(a.projectId).toLowerCase())); }
+        if(linkedProj) ev.extendedProperties={private:{ midashApp:"1", midashProject:linkedProj.id, midashProp:linkedProj.property||"", midashArea:linkedProj.area||"" }};
         const r=await fetch("https://www.googleapis.com/calendar/v3/calendars/primary/events",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(ev)});
-        loadAgenda();
+        loadAgenda(); if(linkedProj) loadProjEvents();
         if(!r.ok) return {error:"create failed "+r.status};
-        const created=await r.json(); return {created:true, eventId:created.id, link:created.htmlLink, account:acct.email};
+        const created=await r.json(); return {created:true, eventId:created.id, link:created.htmlLink, account:acct.email, linkedProject:linkedProj?linkedProj.name:null};
       }
       case "list_tasks": {
         let out=[];
@@ -3828,6 +3882,9 @@ function initKeyModal(){
 function notesHeaders(extra){ return {...(extra||{}), ...dashAuthHeader()}; }
 function getNotes(){ try{ return localStorage.getItem("midash_notes")||""; }catch(e){ return ""; } }    // local cache
 function cacheNotes(v){ try{ localStorage.setItem("midash_notes",v); }catch(e){} }
+// djb2 — KEEP IN SYNC with notesHash() in worker.js. Detects "notes changed under me".
+function notesHash(s){ let h=5381; s=String(s||""); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0).toString(36); }
+let notesBaseHash=null;   // hash of the text this device last loaded/saved — sent on PUT for clobber detection
 
 async function fetchNotes(){   // {notes} on success, else {error, status}
   if(!NOTES_URL) return {error:"none"};
@@ -3837,14 +3894,24 @@ async function fetchNotes(){   // {notes} on success, else {error, status}
     if(r.status===404||r.status===405) return {error:"route", status:r.status};   // worker not redeployed with /notes
     if(r.status===501) return {error:"kv", status:501};                            // KV namespace not bound
     if(!r.ok) return {error:"http", status:r.status};
-    const d=await r.json(); return {notes:typeof d.notes==="string"?d.notes:""};
+    const d=await r.json();
+    const notes=typeof d.notes==="string"?d.notes:"";
+    notesBaseHash = (typeof d.hash==="string") ? d.hash : notesHash(notes);
+    return {notes};
   }catch(e){ return {error:"net"}; }
 }
-async function pushNotes(text){
+async function pushNotes(text){   // true=saved, false=net/other fail, "conflict"=changed elsewhere
   if(!NOTES_URL) return false;
-  try{ const r=await fetch(NOTES_URL,{method:"PUT",headers:notesHeaders({"Content-Type":"text/plain"}),body:text}); return r.ok; }
-  catch(e){ return false; }
+  try{
+    const hdrs=notesHeaders({"Content-Type":"text/plain"});
+    if(notesBaseHash!=null) hdrs["X-Notes-Based-On"]=notesBaseHash;
+    const r=await fetch(NOTES_URL,{method:"PUT",headers:hdrs,body:text});
+    if(r.status===409){ notesConflict=await r.json().catch(()=>({})); return "conflict"; }
+    if(r.ok){ const d=await r.json().catch(()=>null); notesBaseHash=(d&&d.hash)||notesHash(text); return true; }
+    return false;
+  }catch(e){ return false; }
 }
+let notesConflict=null;
 
 function initNotes(){
   const ta=document.getElementById("notes-area"), st=document.getElementById("notes-status");
@@ -3866,8 +3933,20 @@ function initNotes(){
   ta.addEventListener("input",()=>{
     st.textContent="saving…"; cacheNotes(ta.value);
     clearTimeout(t); t=setTimeout(async()=>{
-      const ok=await pushNotes(ta.value);
-      st.textContent = NOTES_URL ? (ok?"synced":"saved locally (sync failed)") : "saved";
+      const res=await pushNotes(ta.value);
+      if(res==="conflict"){
+        // another device saved since we loaded — don't silently clobber; let the user choose
+        const mine=ta.value, theirs=(notesConflict&&notesConflict.current)||"";
+        st.textContent="⚠ changed on another device"; st.title="";
+        if(confirm("Your notes were changed on another device.\n\nOK = keep the OTHER version (discard your unsynced edits here).\nCancel = keep YOURS and overwrite the other version.")){
+          ta.value=theirs; cacheNotes(theirs); notesBaseHash=(notesConflict&&notesConflict.hash)||notesHash(theirs); st.textContent="synced (took other version)";
+        } else {
+          notesBaseHash=(notesConflict&&notesConflict.hash)||notesBaseHash;   // adopt their hash so our overwrite is accepted
+          const ok2=await pushNotes(ta.value); st.textContent = ok2===true?"synced (kept yours)":"save failed";
+        }
+        notesConflict=null; return;
+      }
+      st.textContent = NOTES_URL ? (res===true?"synced":"saved locally (sync failed)") : "saved";
     },500);
   });
 }

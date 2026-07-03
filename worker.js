@@ -136,8 +136,8 @@ const TOOLS = [
     description: "Read Q's free-form Notes scratchpad from the dashboard. Use when he references his notes/ideas or asks you to draft from them.",
     input_schema: { type: "object", properties: {}, required: [] } },
   { name: "create_event",
-    description: "Create a NEW calendar event. Q confirms on screen before it's created. Give 'start' (and ideally 'end') as ISO 8601 local time, e.g. 2026-07-02T15:00:00. For an all-day event, pass a date-only 'start' (YYYY-MM-DD) and allDay:true. Defaults to Q's primary calendar on his primary account unless 'account' is set.",
-    input_schema: { type: "object", properties: { summary: { type: "string" }, start: { type: "string" }, end: { type: "string" }, allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, account: { type: "string" } }, required: ["summary", "start"] } },
+    description: "Create a NEW calendar event. Q confirms on screen before it's created. Give 'start' (and ideally 'end') as ISO 8601 local time, e.g. 2026-07-02T15:00:00. For an all-day event, pass a date-only 'start' (YYYY-MM-DD) and allDay:true. Defaults to Q's primary calendar on his primary account unless 'account' is set. When the event is work on a tracked PROPERTY project, pass projectId (the project's name is fine) so it's tagged and shows on that project's card.",
+    input_schema: { type: "object", properties: { summary: { type: "string" }, start: { type: "string" }, end: { type: "string" }, allDay: { type: "boolean" }, location: { type: "string" }, description: { type: "string" }, account: { type: "string" }, projectId: { type: "string" } }, required: ["summary", "start"] } },
   { name: "send_email",
     description: "Send a NEW email (not a reply — use reply_email for replies). Q confirms on screen before it sends. Sends from his primary account unless 'account' is set.",
     input_schema: { type: "object", properties: { to: { type: "string" }, subject: { type: "string" }, body: { type: "string" }, cc: { type: "string" }, account: { type: "string" } }, required: ["to", "subject", "body"] } },
@@ -245,16 +245,27 @@ function rateLimited(request, bucket, max, windowMs) {
 }
 
 // Notes read/write. Access is gated upstream by authed() once DASH_KEY is set.
+// Cheap deterministic string hash (djb2) — KEEP IN SYNC with notesHash() in index.html.
+// Used only to detect "did the notes change under me" for clobber protection, not for security.
+function notesHash(s) { let h = 5381; s = String(s || ""); for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); }
 async function handleNotes(request, env) {
   if (!env.NOTES) return json({ error: { message: "Notes storage not configured — create a KV namespace bound as NOTES (see README)." } }, 501);
   if (request.method === "GET") {
     const notes = (await env.NOTES.get("notes")) || "";
-    return json({ notes });
+    return json({ notes, hash: notesHash(notes) });
   }
   if (request.method === "PUT") {
     const text = await request.text();
+    // Clobber protection: the client sends the hash of the text it started from. If KV has since
+    // changed (another device saved), reject instead of overwriting — the client reconciles.
+    const basedOn = request.headers.get("X-Notes-Based-On");
+    if (basedOn != null) {
+      const current = (await env.NOTES.get("notes")) || "";
+      const curHash = notesHash(current);
+      if (basedOn !== curHash) return json({ error: { message: "notes changed elsewhere", code: "conflict" }, current, hash: curHash }, 409);
+    }
     await env.NOTES.put("notes", text);
-    return json({ ok: true, chars: text.length });
+    return json({ ok: true, chars: text.length, hash: notesHash(text) });
   }
   return new Response("method not allowed", { status: 405, headers: cors() });
 }
@@ -480,8 +491,8 @@ async function runAgentTool(name, a, env) {
   a = a || {};
   try {
     switch (name) {
-      case "read_notes": { const n = await env.NOTES.get("notes"); return { notes: (n || "").slice(0, 4000) }; }
-      case "add_note": { if (!a.text) return { error: "need text" }; const cur = (await env.NOTES.get("notes")) || ""; const next = "- " + String(a.text) + "  · " + new Date().toISOString().slice(0, 10) + "\n" + cur; await env.NOTES.put("notes", next.slice(0, 20000)); return { added: true }; }
+      case "read_notes": { const n = (await env.NOTES.get("notes")) || ""; const slice = n.slice(0, 8000); return { notes: slice, truncated: n.length > slice.length, totalChars: n.length }; }
+      case "add_note": { if (!a.text) return { error: "need text" }; const cur = (await env.NOTES.get("notes")) || ""; const CAP = 100000; const next = ("- " + String(a.text) + "  · " + new Date().toISOString().slice(0, 10) + "\n" + cur); const truncated = next.length > CAP; await env.NOTES.put("notes", next.slice(0, CAP)); return { added: true, truncated }; }
       case "list_projects": { const ps = (await agentGetProjects(env)).filter(p => !p.deleted); return { projects: ps.map(p => { const t = agentType(p); const o = { name: p.name, type: t, stage: agentPipe(t)[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null }; if (t === "property") { o.property = p.property || null; o.area = p.area || null; o.people = p.people || null; } return o; }) }; }
       case "add_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const t = AGENT_PIPELINES[a.type] ? a.type : "software"; const si = a.stage ? agentPipe(t).indexOf(String(a.stage).toLowerCase()) : 0; const isProp = t === "property"; const np = { id: "p_" + Date.now().toString(36), name: String(a.name), type: t, property: isProp && a.property ? String(a.property) : "", area: isProp && a.area ? String(a.area) : "", people: isProp && a.people ? String(a.people) : "", url: String(a.url || ""), repo: t === "software" ? String(a.repo || "") : "", stage: si >= 0 ? si : 0, next: String(a.next || ""), notes: "", updated: Date.now(), pinned: false, order: (ps.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1) }; ps.push(np); await env.NOTES.put("projects", JSON.stringify(ps)); return { added: true, name: np.name, type: t }; }
       case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const live = ps.filter(x => !x.deleted); const p = live.find(x => x.name.toLowerCase() === q) || live.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; const pipe = agentPipe(agentType(p)); if (a.stage) { const si = pipe.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage for this " + agentType(p) + " project; use one of " + pipe.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); if (a.property != null) p.property = String(a.property); if (a.area != null) p.area = String(a.area); if (a.people != null) p.people = String(a.people); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, type: agentType(p), stage: pipe[p.stage] }; }

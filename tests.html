@@ -34,9 +34,12 @@ const PIPELINES = {
 };
 function pipeOf(t){ return PIPELINES[t]||PIPELINES.software; }
 
-// --- esc / escAttr (index.html) ---
+// --- esc / escAttr / safeUrl (index.html) ---
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-function escAttr(s){ return esc(s).replace(/"/g,"&quot;"); }
+function escAttr(s){ return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function safeUrl(u){ const s=String(u||"").trim(); return /^https?:\/\//i.test(s) ? s : ""; }
+// --- notesHash (index.html + worker.js — must match) ---
+function notesHash(s){ let h=5381; s=String(s||""); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0).toString(36); }
 
 // --- verNewer (index.html) ---
 function verNewer(a,b){ const pa=String(a).split(".").map(Number),pb=String(b).split(".").map(Number); for(let i=0;i<3;i++){ if((pa[i]||0)>(pb[i]||0))return true; if((pa[i]||0)<(pb[i]||0))return false; } return false; }
@@ -186,12 +189,28 @@ section("verNewer");
   ok(verNewer("1.30","1.30.0")===false, "malformed (missing patch) treated as 0, not newer");
 }
 
-section("esc / escAttr — XSS payloads neutralized");
+section("esc / escAttr / safeUrl — XSS payloads neutralized");
 {
   ok(esc('<img src=x onerror=alert(1)>')==="&lt;img src=x onerror=alert(1)&gt;", "angle brackets escaped");
   ok(esc('a & b')==="a &amp; b", "ampersand escaped");
-  ok(escAttr('" onmouseover="alert(1)')==='&quot; onmouseover=&quot;alert(1)', "quotes escaped for attribute context");
+  ok(escAttr('" onmouseover="alert(1)')==='&quot; onmouseover=&quot;alert(1)', "double-quotes escaped for attribute context");
+  ok(escAttr("' onmouseover='x").indexOf("'")===-1, "single-quotes escaped too (attr breakout via single quote)");
+  ok(escAttr('high" onclick="steal()').indexOf('"')===-1, "priority-style breakout neutralized");
   ok(esc('normal text')==="normal text", "plain text unchanged");
+  // safeUrl blocks non-http(s) schemes used for script execution / exfil
+  ok(safeUrl("javascript:alert(1)")==="", "javascript: url blocked");
+  ok(safeUrl("data:text/html,<script>")==="", "data: url blocked");
+  ok(safeUrl("  JavaScript:alert(1)")==="", "case/whitespace-obfuscated javascript: blocked");
+  ok(safeUrl("https://github.com/x/y")==="https://github.com/x/y", "https url allowed");
+  ok(safeUrl("http://example.com")==="http://example.com", "http url allowed");
+}
+
+section("notesHash — deterministic conflict detection");
+{
+  ok(notesHash("hello")===notesHash("hello"), "same text → same hash");
+  ok(notesHash("hello")!==notesHash("hello world"), "different text → different hash");
+  ok(notesHash("")===notesHash(null), "empty and null hash the same (both empty)");
+  ok(typeof notesHash("x")==="string" && notesHash("x").length>0, "returns a non-empty string");
 }
 
 section("repairChat — dangling tool_use gets a synthetic error result");
