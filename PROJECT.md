@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.25.2` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.37.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-02
+**Last updated:** 2026-07-02 (external-review hardening + property projects + debt calc + weekly review)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -26,9 +26,11 @@ is a core strength — protect it.
   Runs on a 5-min timer + on tab focus. Falls back to manual "Connect Google" only if the
   browser's Google session actually dies. Do **not** build a backend refresh-token flow — this
   client-side silent renew is the intended fix.
-- **Real risk to fix = the open `/chat` and `/notes` Worker endpoints.** Anyone who finds
-  the URL could spam Anthropic → surprise bill. Lock them with a simple shared passphrase
-  stored locally — not passkeys, not OAuth, not accounts.
+- **Worker access is locked (v1.31.0).** `authed()` gates every route once `DASH_KEY` is set;
+  constant-time compare. Fail-open is now **narrow** — with no key set only `GET /notes` and
+  `GET /discord-status` are open; `/chat`, `/agent`, the finance WRITE proxy, `/tracker`, and all
+  PUTs return `401 {code:"setup"}`. `/chat` + `/agent` are rate-limited (30 / 5 min per isolate).
+  **A hard spend cap is set in the Anthropic Console (done 2026-07-02)** — the real cost ceiling.
 - **Vision:** miDash as the "operating system for Quentin" — every service as just another
   *card* (Google, Discord, Portal42, La Palma, weather, solar, cameras, recipes, Spanish,
   daily briefing…). New cards don't touch the login architecture. Keep it simple/fast/cheap.
@@ -59,19 +61,23 @@ moved to the Pi so both stay up when the Mac is closed.
 
 - **Site:** https://qforgues.github.io  (repo: `qforgues/midash`, branch `main`, root)
 - **Worker (brain):** https://midash-chat.quentin-forgues.workers.dev
-- **Worker chat endpoint:** `POST /`  (Anthropic messages + tools)
-- **Notes endpoint:** `GET/PUT /notes`  (Cloudflare KV, currently open/no-auth)
+- **Worker chat endpoint:** `POST /`  (Anthropic messages + tools; rate-limited)
+- **Notes endpoint:** `GET/PUT /notes`  (Cloudflare KV; PUT is **merge/clobber-guarded** via an
+  `X-Notes-Based-On` hash → `409` on concurrent change, v1.32.0)
 - **Finance proxy:** `POST /finance`  (42payments/FreshBooks; key held server-side)
-- **CC payoff plan:** `GET/PUT /ccplan`  (KV `ccplan` blob — debt card)
-- **Projects board:** `GET/PUT /projects`  (KV `projects` array — projects tracker, v1.20.0)
+- **CC payoff plan:** `GET/PUT /ccplan`  (KV `ccplan` blob — now holds `{strategy,target,monthly,cards[]}`)
+- **Projects board:** `GET/PUT /projects`  (KV `projects` array; **PUT merges server-side**,
+  tombstone-aware, and returns the merged set — v1.31.0)
+- **Contacts meta:** `GET/PUT /contacts-meta`  (KV `contacts_meta` — tags/hidden/usage for Stay-connected)
 - **Tracker42 proxy:** `GET/POST /tracker?action=…`  (Portal42 tickets; `PORTAL42_TOKEN` server-side)
-- **Discord agent brain:** `POST /agent`  (server-side tool loop for Discord/SMS — no browser)
+- **Discord agent brain:** `POST /agent`  (server-side tool loop for Discord/SMS — no browser; rate-limited)
 - **Discord heartbeat:** `GET/POST /discord-status`  (bot posts liveness; switchboard reads it)
-- All non-chat endpoints are gated by the `DASH_KEY` passphrase via `authed()`. The whole
-  Worker fetch handler is wrapped in try/catch so a crash returns a CORS-safe JSON error
-  (never Cloudflare's bare error page, which the browser misreports as a CORS failure).
+- **Tool inspection:** `GET /tools`  (canonical tool names + chat schemas; v1.36.0)
+- Every route is gated by `DASH_KEY` via `authed()` (constant-time; narrow fail-open — see
+  Strategic direction). The whole fetch handler is wrapped in try/catch so a crash returns a
+  CORS-safe JSON error (never Cloudflare's bare error page, which the browser misreports as CORS).
 
-## Current system map (2026-07-02, v1.25.2)
+## Current system map (2026-07-02, v1.37.0)
 
 The "operating system for Quentin" vision is now largely realized. What runs where:
 
@@ -87,13 +93,20 @@ The "operating system for Quentin" vision is now largely realized. What runs whe
 DHCP IP was `.211`). It also runs a *separate* Python bot (`pi-bot.service` = claw42) — unrelated to Dash.
 The Mac's old 42payments + tunnel LaunchAgents are disabled (`*.plist.disabled`).
 
-**Cards on the dashboard (top→bottom):** 🎛️ Switchboard (connection lights: Brain/Passphrase/Google/
-42pay/Tracker42/Discord/Notes — click one for a copyable diagnostic + fix) · Command bar (⏰ Remind
-→ Google Task **with parsed due date**, ✉️ Draft, 💡 Idea; Show: focus filters) · Unread inbox + Next 3
-events · 🚀 Portal42 Tickets (Tracker42: tickets list + detail + status-change/reply writes; Notifications
-w/ click-to-clear) · 🚀 Projects (idea→ship grid, agent-writable) · Credit Card Debt + payoff plan ·
-Tasks + Stay-connected (now a real **Send email** button) · Notes. *(Finance summary card removed v1.25.0;
-42payments still powers Debt + the switchboard + agent finance tools.)*
+**Cards on the dashboard (top→bottom):** 🎛️ Switchboard (connection lights; the **Google** light now
+hosts the account pills, one per row) · Command bar (⏰ Remind → Google Task w/ parsed due date, ✉️ Draft,
+💡 Idea) · Unread inbox (🚫 unsubscribe icon next to refresh — the old "Show:" filter row was removed
+v1.27.3) + Next 3 events · **Portal42 Tickets ‖ Tasks** (50/50 split) · 🚀 Projects · **Stay-connected ‖
+Notes** (50/50 split). **Every card header has a collapse chevron** (state persists). *(Credit Card Debt
+moved OUT of the flow → ☰ Tools menu modal, v1.27.3.)*
+
+**☰ Tools menu:** 🗓️ **Weekly review** (rollup modal, "• due" after 7d) · 💳 **Credit Card Debt**
+(balances + card editor + deterministic payoff schedule + agent handoff).
+
+**Header:** date reads "Wednesday, 2 July"; clock shows 12h with 24h in small parens, e.g. `2:34 PM (14:34)`.
+"miDash" is large, the version small.
+
+*(Finance summary card removed v1.25.0; 42payments still powers Debt + the switchboard + agent finance tools.)*
 
 **Discord = another front door to the same brain.** DM the bot → `/agent` runs a server-side tool loop
 (no browser) with **notes, projects, Tracker42 tickets, and 42payments finance** tools. Gmail/Calendar/
@@ -113,15 +126,17 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
   **fails open** if unset. `wrangler secret delete DASH_KEY` to disable.
 - **KV namespace:** `NOTES`, id `f095586747ee4a47b524082986e8f725` (in `wrangler.jsonc`)
 - **Model:** switchable from the chat header (picker). Default `claude-haiku-4-5`
-  (cheapest); options `claude-sonnet-4-6`, `claude-opus-4-8`. The dashboard sends
-  `model` in the chat POST body; the Worker validates it against `ALLOWED_MODELS`
-  and falls back to `DEFAULT_MODEL`. **This is the metered Anthropic API — billed
-  per token, separate from any Max plan. Cap spend in the Anthropic Console.**
+  (cheapest); options `claude-sonnet-4-6`, `claude-opus-4-8`, **`claude-fable-5`** (newest,
+  added v1.27.4). Worker validates `model` against `ALLOWED_MODELS`, falls back to `DEFAULT_MODEL`;
+  `SMART_MODELS` (sonnet/opus/fable) get thinking + effort + tools. **Metered Anthropic API —
+  hard spend cap set in the Anthropic Console (2026-07-02).**
 - **OAuth scopes:** `openid email`, `calendar.events`, `gmail.modify`, `gmail.send`,
-  `contacts.readonly` (People API → Contacts dropdown + daily reach-out),
-  **`tasks`** (full read+write — upgraded from `tasks.readonly` in v1.13.0 for the
-  idea→task flow; **requires a one-time reconnect** to grant write). The **People API +
-  Tasks API must be enabled** in the Google Cloud project behind the OAuth client.
+  `contacts.readonly` (People → Contacts + reach-out), **`tasks`** (full read+write). The **People
+  API + Tasks API must be enabled** in the Google Cloud project.
+  ⚠️ **`contacts.other.readonly` was DROPPED (v1.27.0):** it's a *sensitive* scope Google gates
+  behind app verification, so requesting it on the unverified app failed the whole consent with
+  Google's generic "Something went wrong." `loadContacts()` tolerates the auto-collected
+  "otherContacts" pool being absent (My Contacts still load). Re-add only after the app is verified.
 
 ---
 
@@ -134,6 +149,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `wrangler.jsonc`| Worker config incl. KV binding. |
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
+| `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`) with a **KEEP IN SYNC** note — 56 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -157,10 +173,21 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 ## Agent tools (defined in `worker.js`, executed in `index.html`)
 
 `search_emails`, `get_email`, `reply_email`, `trash_email`, `archive_email`,
-`mark_read`, `list_events`, `create_event`, `delete_event`, `send_email`,
-`list_tasks`, `create_task`, `complete_task`, `read_notes`,
-`list_projects`, `update_project`, `add_project`,
-`finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
+`mark_read`, `list_events`, `create_event` (takes optional **`projectId`** to tag property
+work so it shows on the project card), `delete_event`, `send_email`,
+`list_tasks`, `create_task`, `complete_task`, `read_notes`, `add_note` (Discord path),
+`list_projects`, `update_project`, `add_project` (all **type-aware**: software|property, with
+property/area/people), `finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
+
+> **Tool schemas are single-sourced (v1.36.0):** the project tools live in one `PROJECT_TOOLS`
+> const in `worker.js`, spread into both `TOOLS` (chat) and `AGENT_TOOLS` (Discord) so they can't
+> drift. `GET /tools` returns the canonical list.
+
+> **Robustness (v1.31.0–1.33.1):** tool errors carry `is_error:true`; a tool whose input JSON was
+> truncated mid-stream is NOT executed on `{}` (returns a retry error); `repairChat()` on load
+> injects a synthetic error `tool_result` for any dangling `tool_use` (interrupted loop) so the chat
+> can't brick; `pushUserMessage()` never creates two consecutive user turns. Google `gfetch`/`gpost`
+> silently refresh the token and retry once on a 401 (`refreshTokenFor`, deduped per email).
 
 **Idea → reality flow (v1.13.0):** ideas incubate in **Notes** (capture box "💡 Save this
 idea" + `read_notes`); **Tasks** are the actionable layer (Google Tasks, now read+write).
@@ -205,28 +232,62 @@ spend from each response's `usage`, accumulated per local day, resetting at midn
 
 ---
 
-## Projects tracker (v1.20.0)
+## Projects tracker (v1.20.0 → typed v1.28–1.29)
 
-A main-column **🚀 Projects** card — an idea→shipped progress board so every
-software/website/app project keeps moving and none gets left behind. Lives entirely
-in `index.html` (search `PROJECTS — idea→shipped`), backed by the Worker's
-`GET/PUT /projects` KV blob (mirrors `/ccplan`) with a localStorage cache.
+A main-column **🚀 Projects** card, backed by `GET/PUT /projects` KV (server-merged) + a
+localStorage cache. Projects now have a **type**, each with its own pipeline (`PIPELINES` const):
 
-- **Pipeline:** `PIPELINE` const — 💡 Idea → 🔬 Validate → 📝 Plan → 🛠️ Build →
-  🧪 Test → 🚀 Ship → 📈 Grow. Progress % is the stage index over the last stage.
-- **One record = all values:** `{id,name,url,repo,stage,next,notes,updated,pinned,order}`.
-  `normalizeProject()` coerces/clamps; `next` is the single "push it forward" action.
-- **Neglect surfacing:** `projStale()` flags un-shipped projects amber >14d / red >30d
-  (touched = `updated`); the header + summary show "N need a push". Stages ≥ Ship are
-  "live" and never nagged.
-- **Sources:** ＋ Add (manual) and ⇪ Import GitHub repos (pulls `githubUser`'s repos as
-  Idea-stage, de-duped by repo/name — imported repos inherit `pushed_at` so old ones show
-  red on purpose). Sort: most-neglected / stage / A–Z / manual.
-- **Agent:** `list_projects` / `update_project` / `add_project` (worker.js TOOLS +
-  `executeTool` in index.html). They run in the browser like the other tools, need no
-  Google (`noGoogle` exemption: `/projects?$/`), and act without a confirm. So
-  "what's most neglected?", "move La Palma to ship", "track a new idea: …" work in chat.
-- First-run seed: miDash + the `pinnedProjects` entries.
+- **software:** 💡 Idea → 🔬 Validate → 📝 Plan → 🛠️ Build → 🧪 Test → 🚀 Ship → 📈 Grow
+- **property** (physical builds/renos on Q's two properties, the **House** & the **Cabin**):
+  💡 Idea → 📐 Scope → 📋 Design/permits → 🧰 Materials/crew → 🔨 Build → 🎨 Finish → 🏡 Done
+
+Both are 7 stages so the progress bar + summary spill line up. `PROJ_TYPES` sets each type's
+label/emoji and `ship` index (software 5, property 6 = only "done" is complete).
+
+- **Record:** `{id,name,type,property,area,people,url,repo,stage,next,notes,updated,deleted,pinned,order}`.
+  Property extras: `property` (house|cabin), `area` (`PROP_AREAS`: inside/outside/plumbing/electric/
+  handyman/cleaning/other), `people` (free-text names). `normalizeProject()` coerces/clamps per type.
+- **Filter chips** appear when property projects exist (All · House · Cabin · trades). `projFiltered()`.
+- **Calendar (both ways):** each property card has 📅 **schedule** → `openSchedModal` creates a Google
+  Calendar event tagged via private `extendedProperties` (`midashApp=1` + project id). `loadProjEvents()`
+  pulls those back per project (one query/account); the next event shows on the card and in the
+  **"Scheduled this week"** strip (`renderPropWeek`, next 7 days across House/Cabin). Deleting a
+  property project offers to remove its linked events (`cleanupProjEvents`).
+- **People typeahead:** the People field (project modal) + Who field (scheduler) autocomplete against
+  Google contacts (`attachContactTypeahead`, matches the text after the last comma, free-text fallback).
+- **Neglect:** `projStale()` flags un-done projects amber >14d / red >30d; header/summary show "N need a
+  push". `updateSyncAgo()` shows "synced Xm ago · N projects" (sync visibility, v1.35.0).
+- **Sources:** ＋ Add (manual, with Type select) · ⇪ Import GitHub repos. Sort: neglected / **type** /
+  stage / A–Z / manual.
+- **Agent:** `list_projects`/`update_project`/`add_project` are type-aware (browser + Discord).
+
+### Sync + deletes (v1.30–1.31, the P0 review fix)
+- **Tombstones:** a delete is NOT an array removal — it sets `deleted:true` + a fresh `stamp()`, so the
+  delete survives a stale-device merge (union-by-id + LWW alone can't express deletion). GC'd after 90d.
+  `liveProjects()` filters tombstones at every read site. **`stamp()` = `max(now, newestUpdated+1)`** so a
+  skewed device clock can't win/lose every conflict.
+- **Server-side merge:** the browser used to blind-`PUT` the whole array (racing the Discord agent's
+  read-modify-write on the same key). Now `/projects` PUT **merges** incoming into KV (tombstone-aware)
+  and returns the merged set; the browser adopts it (`saveProjects` coalesces concurrent saves). Same
+  `mergeProjects` logic is duplicated in `index.html` and `worker.js` — **KEEP IN SYNC**.
+
+## Credit-card debt — deterministic payoff calculator (v1.33.0)
+
+The CC Debt tool (☰ menu modal) now computes the payoff schedule **exactly** — the agent narrates it,
+never does the math (LLMs make arithmetic errors on money).
+- `computePayoff(cards, monthly, strategy)` (pure, unit-tested): month-by-month sim — accrue interest,
+  pay every card its minimum, throw the remainder at the target (avalanche = highest APR, snowball =
+  lowest balance), cascade as cards clear. Returns months-to-debt-free, total interest, payoff order with
+  dates, and interest saved vs minimums-only. Rejects below-minimum / never-clears with a reason.
+- The modal has a **card editor** (name/balance/APR/min per card, persisted in `/ccplan` as `cards[]`) +
+  a live results panel. "Build my payoff strategy" hands the **computed** schedule to the agent.
+
+## Weekly review (v1.37.0)
+
+☰ Tools → 🗓️ **Weekly review** modal assembles, from data already in memory (`buildWeeklyDigest`):
+projects needing a push, property work scheduled this week, who to reach out to (least-recently-shown
+contacts), and a money snapshot. A "• due" marker shows on the link after 7 days (`updateWeeklyDue`,
+`midash_lastreview`). "Plan my week with the agent" hands the rollup to the agent.
 
 ## Version-driven look + menu lock (v1.21.0)
 
@@ -282,12 +343,20 @@ cd ~/miDash && wrangler deploy
 - **Gmail deep links:** `/u/<email>/` is flaky; prefer the literal email, and for
   unsubscribe we now read the email's `List-Unsubscribe` header and open that URL directly
   (no Gmail bounce).
-- **Notes are currently open (no auth)** for simplicity. To lock later: set a `NOTES_KEY`
-  Worker secret and have the dashboard send `Authorization: Bearer <key>` (the UI scaffolding
-  for a sync-key prompt was removed but easy to restore).
+- **Notes are gated + clobber-guarded** (v1.32.0): `/notes` is behind `DASH_KEY` like everything
+  else; PUT sends `X-Notes-Based-On: <djb2 hash>` and the Worker `409`s on a concurrent change so
+  the client can offer keep-mine/keep-theirs instead of silently overwriting. `notesHash()` must
+  match in `index.html` and `worker.js`.
+- **XSS discipline** (v1.32.0): external strings (Gmail/ticket/contact/agent-set) render through
+  `esc()` (body) or `escAttr()` (attribute — it also escapes single quotes). URLs from external
+  sources go through `safeUrl()` (http(s) only — blocks `javascript:`/`data:`). Don't interpolate a
+  raw variable into `innerHTML`; audit was done, keep it clean.
 - **`color-mix()`** is used for tints — fine on modern Chrome/Safari (Q's setup).
-- **Caching:** after a push, GitHub Pages can serve the old file for ~10 min; always
-  hard-refresh and confirm `CONFIG.version` before assuming a change didn't work.
+- **Caching / updates:** after a push, GitHub Pages' CDN can serve the old file for a minute+.
+  The **⚙️ → 🔄 Check for update** button (v1.27.2) reads the DEPLOYED version (same-origin,
+  cache-busted — NOT raw.githubusercontent, which updates instantly and would loop) and, if newer,
+  clears caches + unregisters the SW + reloads. Landing on a *new* build the first time still needs
+  one hard-refresh (the old build has the old button).
 
 ## First-time / re-setup checklist
 
@@ -301,13 +370,19 @@ cd ~/miDash && wrangler deploy
 
 ## Backlog / next up
 
-- [ ] **Raspberry Pi / "claw42" (OpenClaw) cleanup** — the big one. Make the Pi a clean
-      Discord retriever that calls the **same Worker brain**. Tidy the project to match the
-      dashboard's quality.
-- [ ] **Update `server.js`** (Pi backend) to match `worker.js`: add `/notes`, `delete_event`,
-      `read_notes`, multi-account tool behavior, updated SYSTEM prompt.
-- [ ] **Lock Notes** with `NOTES_KEY` when ready (restore the 🔑 sync-key UI).
-- [ ] Optional: scheduled briefings (daily agenda/inbox digest), school-portal link for Kids.
+- [ ] **Bank Sync (BLOCKED on Dart):** the Dart Bank SFTP importer (42payments `/bank`) is built
+      but blocked on **Adam Baker adding the Pi's egress IP `66.9.164.11` to Dart's allowlist**
+      (the questionnaire listed the wrong IP). Waiting to hear back (as of 2026-07-02). Once
+      access works, build the BAI2/CSV importer. ⚠️ **Never handle Q's bank password** — he enters
+      it into 42payments' own form; we only verify via logs. (Dart's Credit/Debit is backwards.)
+- [ ] **Notes: tombstone/merge** like projects (currently conflict-guarded, not merged).
+- [ ] **Discord weekly-digest push** — the rollup exists (`buildWeeklyDigest`); add a cron + send.
+- [ ] Prompt caching on the system block (`cache_control` in `worker.js`) to cut per-turn input cost.
+- [ ] **Static IP for the Pi** — Q wants FREE only (noted Oracle Cloud always-free VM); staying on
+      home IP for now.
+- [x] Deterministic CC-debt payoff calculator (v1.33.0).
+- [x] Property/physical projects — House/Cabin, trades, people, calendar (v1.28–1.29).
+- [x] External code-review hardening — tombstones, server merge, chat repair, auth, XSS, tests (v1.31–1.33.1).
 - [x] Richer Projects — idea→shipped tracker card (v1.20.0).
 
 ## Quick "where were we" log
@@ -318,6 +393,22 @@ cd ~/miDash && wrangler deploy
 - v1.16–1.19: 42payments finance card + tools; Credit-Card Debt card + payoff plan;
   La Palma TV pinned atop the Projects quick-links.
 - v1.20.0: **Projects tracker** card (idea→shipped board, `/projects` KV, agent tools).
-- v1.21.0: **version-driven look** (major→design, minor→colors) + **hamburger gated**
-  behind the dashboard passphrase.
-- Next session likely starts on the **Pi/claw42** cleanup.
+- v1.21.0: **version-driven look** (major→design, minor→colors) + **hamburger gated**.
+- v1.22–1.26: Tracker42 ticket writes; Switchboard; Discord `/agent` + Pi migration; 42payments →
+  Pi; silent Google renewal; Phase B contacts/Stay-connected overhaul (cross-account, tags,
+  least-shown reach-out, contacts manager, from-account selector).
+- v1.27.x: 🔄 check-for-update button (reads deployed version); Google account pills moved into the
+  Switchboard; collapsible cards; Tickets ‖ Tasks + Stay-connected ‖ Notes 50/50 splits; date/time
+  reformat; dropped `contacts.other.readonly` (fixed "Something went wrong" connect); **Fable 5** model;
+  CC Debt → ☰ menu modal; inbox "Show:" filters → single 🚫 unsubscribe icon.
+- v1.28–1.29: **property/physical projects** — type-aware pipelines, House/Cabin, trades, people,
+  Google Calendar (both ways).
+- v1.30–1.31: union-merge (seeding can't clobber) → **tombstones + server-side merge** (P0 review fix);
+  auth hardening (narrow fail-open, constant-time, rate limit); XSS fixes; token auto-refresh; notes
+  clobber-guard; calendar idempotency; **`tests.html`** (56 assertions).
+- v1.33.0–1.33.1: **deterministic debt calculator**; two real chat-repair bugs (consecutive-user-turn,
+  tool_result ordering) fixed after external review.
+- v1.34–1.37: property "Scheduled this week" strip + contact typeahead; sync visibility; tool-schema
+  single-source + `/tools`; **Weekly review** rollup.
+- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Next likely: Discord weekly
+  digest push, or Notes merge.
