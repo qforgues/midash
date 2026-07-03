@@ -234,6 +234,7 @@
   .proj-spill b { font-variant-numeric:tabular-nums; }
   .proj-spill.zero { opacity:.38; }
   .proj-summary-meta { font-size:12.5px; color:var(--muted); margin-top:9px; }
+  .proj-sync-ago { opacity:.75; }
   .proj-need { color:var(--warn); font-weight:600; }
   /* property filter chips */
   .proj-filters { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:13px; }
@@ -993,7 +994,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.34.0",
+  version: "1.35.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1313,6 +1314,7 @@ async function loadProjectsState(){
     projects=m.list; renderProjects();
     if(m.changed && server!=null) saveProjects();   // push merged set up so KV catches local-only items
     else cacheProjects();
+    if(server!=null){ projLastSync=Date.now(); updateSyncAgo(); }   // we reached KV this load
   } else {
     seedProjects();   // nothing stored anywhere → first-run seed
   }
@@ -1341,13 +1343,19 @@ async function saveProjects(){
     const r=await fetch(PROJ_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(projects)});
     if(r.ok){ const j=await r.json().catch(()=>null);
       if(j && Array.isArray(j.projects)){ projects=j.projects.map(normalizeProject); cacheProjects(); renderProjects(); }  // adopt the server-merged set → devices converge
-      projState("synced ✓");
+      projLastSync=Date.now(); projState("synced ✓"); updateSyncAgo();
     } else projState("saved here (sync "+r.status+")");
   }
   catch(e){ projState("saved on this device"); }
   finally{ projSaveInFlight=false; if(projSaveAgain){ projSaveAgain=false; saveProjects(); } }
 }
 function scheduleProjSave(){ clearTimeout(projSaveTimer); projSaveTimer=setTimeout(saveProjects,500); }
+/* Sync visibility — shows when this device last reached KV. Makes a stale device obvious and
+   the tombstone/merge behavior debuggable. Refreshed on each tick so the "ago" stays live. */
+let projLastSync=0;
+function syncAgoLabel(ts){ if(!ts) return ""; const s=Math.round((Date.now()-ts)/1000);
+  if(s<10) return "just now"; if(s<60) return s+"s ago"; const m=Math.round(s/60); if(m<60) return m+"m ago"; const h=Math.round(m/60); if(h<24) return h+"h ago"; return Math.round(h/24)+"d ago"; }
+function updateSyncAgo(){ const el=document.getElementById("proj-sync-ago"); if(!el) return; el.textContent = projLastSync?(" · synced "+syncAgoLabel(projLastSync)):(PROJ_URL?" · not synced yet":""); }
 
 function projState(msg){
   const el=document.getElementById("proj-state"); if(!el) return;
@@ -1419,7 +1427,9 @@ function renderProjSummary(){
   const done=live.filter(p=>p.stage>=projShipOf(projType(p))).length;
   el.innerHTML = rows +
     `<div class="proj-summary-meta">${live.length} project${live.length===1?"":"s"} · ${done} done`+
-      (need?` · <span class="proj-need">${need} need a push</span>`:` · all on track ✓`)+`</div>`;
+      (need?` · <span class="proj-need">${need} need a push</span>`:` · all on track ✓`)+
+      `<span id="proj-sync-ago" class="proj-sync-ago"></span></div>`;
+  updateSyncAgo();
 }
 /* "Scheduled this week" — upcoming tagged property-work events (next 7 days) across House &
    Cabin, joined back to their project for the property/area/people context. Click → open job. */
@@ -1772,6 +1782,7 @@ function tick() {
   const wd=now.toLocaleDateString([], {weekday:"long"}), mo=now.toLocaleDateString([], {month:"long"});
   document.getElementById("datestr").textContent = `${wd}, ${now.getDate()} ${mo}`;
   renderUsageMeter();   // keep the daily meter live; it auto-resets when the day key flips at midnight
+  updateSyncAgo();      // keep the "synced Xm ago" label fresh
 }
 
 /* ============================================================
