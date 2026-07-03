@@ -950,7 +950,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.29.0",
+  version: "1.30.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1236,13 +1236,31 @@ function normalizeProject(p){
 function nextOrder(){ return projects.reduce((m,p)=>Math.max(m,p.order),0)+1; }
 
 function cacheProjects(){ try{ localStorage.setItem("midash_projects", JSON.stringify(projects)); }catch(e){} }
+/* Union-merge server (KV) + local by id — newest `updated` wins on conflict; items on only
+   one side are kept. This stops a KV write (e.g. seeded jobs) from clobbering device-local
+   projects, and finally syncs local-only projects up. If the merge adds anything the server
+   didn't have, we persist so both sides converge. */
+function mergeProjects(server, local){
+  const by={}; let fromServer=0;
+  (server||[]).forEach(p=>{ const n=normalizeProject(p); by[n.id]=n; fromServer++; });
+  let added=0;
+  (local||[]).forEach(p=>{ const n=normalizeProject(p); const ex=by[n.id];
+    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; } });
+  return { list:Object.values(by), changed: added>0 || fromServer===0 };
+}
 async function loadProjectsState(){
   const rb=document.getElementById("projects-refresh"); if(rb) rb.classList.add("spin");
-  let list=null;
-  if(PROJ_URL){ try{ const r=await fetch(PROJ_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); if(Array.isArray(j.projects)) list=j.projects; } }catch(e){} }
-  if(!list){ try{ const v=JSON.parse(localStorage.getItem("midash_projects")||"null"); if(Array.isArray(v)) list=v; }catch(e){} }
-  if(list){ projects = list.map(normalizeProject); renderProjects(); }
-  else { seedProjects(); }   // nothing stored anywhere → first-run seed
+  let server=null, local=null;
+  if(PROJ_URL){ try{ const r=await fetch(PROJ_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); if(Array.isArray(j.projects)) server=j.projects; } }catch(e){} }
+  try{ const v=JSON.parse(localStorage.getItem("midash_projects")||"null"); if(Array.isArray(v)) local=v; }catch(e){}
+  if(server!=null || local!=null){
+    const m=mergeProjects(server, local);
+    projects=m.list; renderProjects();
+    if(m.changed && server!=null) saveProjects();   // push merged set up so KV catches local-only items
+    else cacheProjects();
+  } else {
+    seedProjects();   // nothing stored anywhere → first-run seed
+  }
   projLastLoad=Date.now();
   if(rb) setTimeout(()=>rb.classList.remove("spin"),400);
 }
