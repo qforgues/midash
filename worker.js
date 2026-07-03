@@ -107,6 +107,19 @@ Business finances (42payments):
   reachable right now — say finances are temporarily unavailable and to retry later. Neither
   is your fault; don't treat them as errors.`;
 
+// Project board tool schemas — SINGLE SOURCE shared by both TOOLS (chat) and AGENT_TOOLS
+// (Discord). Defining them once stops the two tool sets from drifting in description/enum.
+const PROJECT_TOOLS = [
+  { name: "list_projects",
+    description: "List Q's tracked projects, most-neglected-first. Two types: SOFTWARE (idea|validate|plan|build|test|ship|grow) and PROPERTY (physical builds/renos on his two properties, House & Cabin: idea|scope|design|source|build|finish|done). Each item has name, type, stage, progressPct, next (may be null), lastTouchedDays (high = neglected), stale, url, repo; property items also have property/area/people. Use for 'what should I work on / what's stalling / how are my projects or properties'.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "add_project",
+    description: "Add a NEW project. Needs name. type is 'software' (default) or 'property' (a physical build/reno on the House or the Cabin). Optional stage (default idea; use that type's vocabulary — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done), next (next action), url (live site or listing/map link), repo (owner/repo — software only). For property jobs also set property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (names like 'Nehemias'). Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, type: { type: "string", enum: ["software","property"] }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
+  { name: "update_project",
+    description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial ok). Set any of: stage, next (the single next action), notes. For PROPERTY projects also: property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (free-text names). Use the stage vocabulary for THAT project's type — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Touches last-updated so it stops looking neglected. Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, notes: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
+];
 const TOOLS = [
   { name: "search_emails",
     description: "Search Gmail across ALL connected accounts. Returns messages with id, account, from, subject, date, snippet. Use Gmail search syntax in 'query' (e.g. 'in:inbox is:unread', 'from:sam newer_than:7d', 'category:promotions').",
@@ -151,16 +164,8 @@ const TOOLS = [
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },
 
-  // ---- Projects board (Q's idea→shipped tracker, miDash-owned) ----
-  { name: "list_projects",
-    description: "List Q's tracked projects, most-neglected-first. Two types: SOFTWARE (idea|validate|plan|build|test|ship|grow) and PROPERTY (physical builds/renos on his two properties: idea|scope|design|source|build|finish|done). Each item has name, type, stage, progressPct, next (the next action, may be null), lastTouchedDays (high = neglected), stale (boolean), url, repo. Use for 'what should I work on / what's stalling / how are my projects / properties'.",
-    input_schema: { type: "object", properties: {}, required: [] } },
-  { name: "update_project",
-    description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial ok). Set any of: stage, next (the single next action), notes. For PROPERTY projects also: property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (free-text names, e.g. 'Nehemias, Marco'). Use the stage vocabulary for THAT project's type — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Touches last-updated so it stops looking neglected. Acts immediately — no confirmation.",
-    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, notes: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
-  { name: "add_project",
-    description: "Add a NEW project to Q's tracker. Needs name. type is 'software' (default) or 'property' (a physical build/reno on one of his two properties, the House or the Cabin). Optional stage (default idea; use that type's vocabulary), next (next action), url (live site or listing/map link), repo (owner/repo — software only). For property jobs also set: property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (names like 'Nehemias'). Acts immediately — no confirmation.",
-    input_schema: { type: "object", properties: { name: { type: "string" }, type: { type: "string", enum: ["software","property"] }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
+  // ---- Projects board (Q's idea→shipped tracker, miDash-owned) — shared schemas ----
+  ...PROJECT_TOOLS,
 
   // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
   { name: "list_tracker_notifications",
@@ -460,9 +465,7 @@ unless he was already explicit. Reading is always fine to do immediately.`;
 const AGENT_TOOLS = [
   { name: "read_notes", description: "Read Q's free-form Notes scratchpad.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "add_note", description: "Jot a line to the TOP of Q's Notes scratchpad.", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
-  { name: "list_projects", description: "List Q's tracked projects (type, stage, next action, days since touched). Software and property (physical build/reno) projects each have their own stages.", input_schema: { type: "object", properties: {}, required: [] } },
-  { name: "add_project", description: "Add a new project. name required. type: 'software' (default) or 'property'. Optional stage — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Optional next, url, repo (software only). Property jobs: property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (names).", input_schema: { type: "object", properties: { name: { type: "string" }, type: { type: "string", enum: ["software","property"] }, stage: { type: "string" }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
-  { name: "update_project", description: "Update a project by name (partial match ok): set stage and/or next action. Use that project type's stage vocabulary (software: idea…grow; property: idea|scope|design|source|build|finish|done). Property jobs also: property (house|cabin), area, people.", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" }, notes: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
+  ...PROJECT_TOOLS,   // shared with TOOLS — single source of truth (see PROJECT_TOOLS above)
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
   { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
@@ -606,6 +609,9 @@ export default {
       if (url.pathname === "/tracker") return handleTracker(request, env);
       if (url.pathname === "/agent") return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleAgent(request, env);
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
+      // Canonical tool schemas — single source of truth for inspection/debugging (the models
+      // are sent TOOLS on /chat and AGENT_TOOLS on /agent; both share PROJECT_TOOLS).
+      if (url.pathname === "/tools") return json({ chatTools: TOOLS.map(t => t.name), agentTools: AGENT_TOOLS.map(t => t.name), schemas: TOOLS });
       return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleChat(request, env);   // chat is the fallback route
     } catch (e) {
       return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
