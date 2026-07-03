@@ -44,6 +44,7 @@
   .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; position:relative; }
   .greeting { font-size:28px; font-weight:600; letter-spacing:-.02em; }
   .sub { color:var(--muted); font-size:28px; }
+  .clock24 { font-size:.62em; opacity:.75; }
   .avatar { width:34px; height:34px; border-radius:50%; object-fit:cover; border:1px solid var(--border); flex:0 0 auto; }
   .gear-menu { position:absolute; top:calc(100% + 10px); right:0; z-index:80; width:300px; max-width:88vw; max-height:74vh;
     overflow-y:auto; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); padding:10px; }
@@ -205,7 +206,9 @@
   .proj-sort select { border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px;
                padding:6px 8px; font-size:13px; font-family:inherit; text-transform:none; letter-spacing:0; outline:none; }
   .proj-summary { margin-bottom:15px; }
-  .proj-summary-row { display:flex; flex-wrap:wrap; gap:6px; }
+  .proj-summary-row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:4px; }
+  .proj-tsum { font-size:13px; margin-right:2px; opacity:.85; }
+  .proj-ttag { font-size:12px; margin-right:5px; opacity:.8; }
   .proj-spill { display:inline-flex; align-items:center; gap:4px; font-size:12.5px; padding:3px 9px; border-radius:20px;
                 background:var(--bg); border:1px solid var(--border); color:var(--text); }
   .proj-spill b { font-variant-numeric:tabular-nums; }
@@ -678,6 +681,7 @@
           <span class="proj-sort">Sort
             <select id="proj-sort">
               <option value="neglected">Most neglected</option>
+              <option value="type">By type</option>
               <option value="stage">By stage</option>
               <option value="name">A–Z</option>
               <option value="manual">Manual</option>
@@ -776,10 +780,11 @@
   <div class="panel">
     <h2>🚀 Project</h2>
     <label class="col"><span>Name</span><input id="proj-f-name" type="text" placeholder="e.g. La Palma TV"></label>
+    <label class="col"><span>Type</span><select id="proj-f-type"></select></label>
     <label class="col"><span>Stage</span><select id="proj-f-stage"></select></label>
     <label class="col"><span>Next action — the one thing to push it forward</span><input id="proj-f-next" type="text" placeholder="e.g. wire up the EPG feed"></label>
-    <label class="col"><span>Live URL (optional)</span><input id="proj-f-url" type="text" placeholder="https://…"></label>
-    <label class="col"><span>GitHub repo (optional)</span><input id="proj-f-repo" type="text" placeholder="owner/repo"></label>
+    <label class="col"><span id="proj-f-url-lbl">Live URL (optional)</span><input id="proj-f-url" type="text" placeholder="https://…"></label>
+    <label class="col" id="proj-f-repo-wrap"><span>GitHub repo (optional)</span><input id="proj-f-repo" type="text" placeholder="owner/repo"></label>
     <label class="col"><span>Notes (optional)</span><textarea id="proj-f-notes" rows="3" placeholder="Context, links, what's blocking it…"></textarea></label>
     <div id="proj-f-msg" class="key-result"></div>
     <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
@@ -899,7 +904,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.27.4",
+  version: "1.28.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1102,34 +1107,58 @@ function rel(iso){ const d=(Date.now()-new Date(iso))/86400000;
    update_project / add_project.
    ============================================================ */
 const PROJ_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/projects" : "";
-const PIPELINE = [
-  { key:"idea",     label:"Idea",     emoji:"💡" },
-  { key:"validate", label:"Validate", emoji:"🔬" },
-  { key:"plan",     label:"Plan",     emoji:"📝" },
-  { key:"build",    label:"Build",    emoji:"🛠️" },
-  { key:"test",     label:"Test",     emoji:"🧪" },
-  { key:"ship",     label:"Ship",     emoji:"🚀" },
-  { key:"grow",     label:"Grow",     emoji:"📈" },
-];
-const PROJ_LAST = PIPELINE.length-1;   // index of the final stage
-const PROJ_SHIP = 5;                    // stages >= this are "live" — never flagged neglected
+/* Each project has a TYPE with its own pipeline. Software runs idea→grow; property (physical
+   builds / renovations on the two properties) runs idea→done with real-world stages. Both are
+   7 stages so the progress bar + summary spill line up. */
+const PIPELINES = {
+  software: [
+    { key:"idea",     label:"Idea",     emoji:"💡" },
+    { key:"validate", label:"Validate", emoji:"🔬" },
+    { key:"plan",     label:"Plan",     emoji:"📝" },
+    { key:"build",    label:"Build",    emoji:"🛠️" },
+    { key:"test",     label:"Test",     emoji:"🧪" },
+    { key:"ship",     label:"Ship",     emoji:"🚀" },
+    { key:"grow",     label:"Grow",     emoji:"📈" },
+  ],
+  property: [
+    { key:"idea",   label:"Idea",           emoji:"💡" },
+    { key:"scope",  label:"Scope & budget", emoji:"📐" },
+    { key:"design", label:"Design & permits", emoji:"📋" },
+    { key:"source", label:"Materials & crew", emoji:"🧰" },
+    { key:"build",  label:"Build",          emoji:"🔨" },
+    { key:"finish", label:"Finish",         emoji:"🎨" },
+    { key:"done",   label:"Done / in use",  emoji:"🏡" },
+  ],
+};
+const PROJ_TYPES = {
+  software: { label:"Software", emoji:"💻", ship:5 },   // Ship/Grow = live, never "neglected"
+  property: { label:"Property", emoji:"🏠", ship:6 },   // only Done/in-use is "complete"
+};
+const PIPELINE = PIPELINES.software;   // back-compat alias
+function projType(p){ return (p && PROJ_TYPES[p.type]) ? p.type : "software"; }
+function pipeOf(t){ return PIPELINES[t] || PIPELINES.software; }
+function projLastOf(t){ return pipeOf(t).length-1; }
+function projShipOf(t){ return (PROJ_TYPES[t] || PROJ_TYPES.software).ship; }
 let projects = [];
 let projSaveTimer=null, projLastLoad=0, editingProjId=null;
 
-function projPct(stage){ return Math.round((Math.max(0,Math.min(PROJ_LAST,stage))/PROJ_LAST)*100); }
+function projPct(stage, type){ const last=projLastOf(type); return Math.round((Math.max(0,Math.min(last,stage))/last)*100); }
 function projAgeDays(p){ return p.updated ? (Date.now()-p.updated)/86400000 : null; }
 function projAgeLabel(p){ const d=projAgeDays(p); if(d==null) return "—"; if(d<1) return "today"; if(d<2) return "yesterday"; if(d<30) return Math.floor(d)+"d ago"; return Math.floor(d/30)+"mo ago"; }
-/* 0 = fresh, 1 = amber (>14d), 2 = red (>30d). Shipped/Grow are live, never "stale". */
-function projStale(p){ const d=projAgeDays(p); if(d==null || p.stage>=PROJ_SHIP) return 0; return d>30?2:d>14?1:0; }
+/* 0 = fresh, 1 = amber (>14d), 2 = red (>30d). A project past its type's "ship" stage is done, never "stale". */
+function projStale(p){ const d=projAgeDays(p); if(d==null || p.stage>=projShipOf(projType(p))) return 0; return d>30?2:d>14?1:0; }
 
 function normalizeProject(p){
   p=p||{};
-  let stage = typeof p.stage==="number" ? p.stage : PIPELINE.findIndex(s=>s.key===p.stage);
+  const type = PROJ_TYPES[p.type] ? p.type : "software";
+  const pipe = pipeOf(type), last = pipe.length-1;
+  let stage = typeof p.stage==="number" ? p.stage : pipe.findIndex(s=>s.key===p.stage);
   if(!(stage>=0)) stage=0;
-  stage = Math.max(0, Math.min(PROJ_LAST, Math.round(stage)));
+  stage = Math.max(0, Math.min(last, Math.round(stage)));
   return {
     id: p.id || ("p_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)),
     name: String(p.name||"Untitled"),
+    type,
     url: String(p.url||"").trim(),
     repo: String(p.repo||"").trim().replace(/^https?:\/\/github\.com\//i,"").replace(/\/+$/,""),
     stage,
@@ -1154,10 +1183,11 @@ async function loadProjectsState(){
   if(rb) setTimeout(()=>rb.classList.remove("spin"),400);
 }
 function seedProjects(){
+  const shipIdx=projShipOf("software");
   const seed=(CONFIG.pinnedProjects||[]).map((p,i)=>normalizeProject({
-    name:p.label, url:p.url, stage: /live/i.test(p.meta||"")?PROJ_SHIP:3, updated:Date.now()-i*1000, order:i+1 }));
+    name:p.label, url:p.url, stage: /live/i.test(p.meta||"")?shipIdx:3, updated:Date.now()-i*1000, order:i+1 }));
   if(!seed.some(s=>/midash/i.test(s.name))) seed.unshift(normalizeProject({
-    name:"miDash", url:"https://qforgues.github.io", repo:"qforgues/midash", stage:PROJ_SHIP,
+    name:"miDash", url:"https://qforgues.github.io", repo:"qforgues/midash", stage:shipIdx,
     next:"Keep shipping cards", updated:Date.now(), order:0 }));
   projects=seed;
   renderProjects();
@@ -1184,7 +1214,8 @@ function projSorted(){
   const mode=(sel&&sel.value)||"neglected";
   const arr=projects.slice();
   const pin=(a,b)=>(b.pinned?1:0)-(a.pinned?1:0);
-  if(mode==="stage") arr.sort((a,b)=>pin(a,b) || (a.stage-b.stage) || a.name.localeCompare(b.name));
+  if(mode==="type") arr.sort((a,b)=>pin(a,b) || projType(a).localeCompare(projType(b)) || (projStale(b)-projStale(a)) || a.name.localeCompare(b.name));
+  else if(mode==="stage") arr.sort((a,b)=>pin(a,b) || (a.stage-b.stage) || a.name.localeCompare(b.name));
   else if(mode==="name") arr.sort((a,b)=>pin(a,b) || a.name.localeCompare(b.name));
   else if(mode==="manual") arr.sort((a,b)=>pin(a,b) || (a.order-b.order));
   else arr.sort((a,b)=>pin(a,b) || (projStale(b)-projStale(a)) || ((projAgeDays(b)||0)-(projAgeDays(a)||0)));
@@ -1193,14 +1224,20 @@ function projSorted(){
 function renderProjSummary(){
   const el=document.getElementById("proj-summary"); if(!el) return;
   if(!projects.length){ el.innerHTML=""; return; }
-  const counts=PIPELINE.map((s,i)=>projects.filter(p=>p.stage===i).length);
+  const types=Object.keys(PROJ_TYPES).filter(t=>projects.some(p=>projType(p)===t));
+  const multi=types.length>1;
+  const rows=types.map(t=>{
+    const pipe=pipeOf(t), ps=projects.filter(p=>projType(p)===t);
+    const counts=pipe.map((s,i)=>ps.filter(p=>p.stage===i).length);
+    return `<div class="proj-summary-row">`+
+      (multi?`<span class="proj-tsum" title="${esc(PROJ_TYPES[t].label)}">${PROJ_TYPES[t].emoji}</span>`:"")+
+      pipe.map((s,i)=>`<span class="proj-spill${counts[i]?"":" zero"}" title="${esc(s.label)}">${s.emoji}<b>${counts[i]}</b></span>`).join("")+
+    `</div>`;
+  }).join("");
   const need=projects.filter(projStale).length;
-  const shipped=projects.filter(p=>p.stage>=PROJ_SHIP).length;
-  el.innerHTML =
-    `<div class="proj-summary-row">`+
-      PIPELINE.map((s,i)=>`<span class="proj-spill${counts[i]?"":" zero"}" title="${esc(s.label)}">${s.emoji}<b>${counts[i]}</b></span>`).join("")+
-    `</div>`+
-    `<div class="proj-summary-meta">${projects.length} project${projects.length===1?"":"s"} · ${shipped} live`+
+  const done=projects.filter(p=>p.stage>=projShipOf(projType(p))).length;
+  el.innerHTML = rows +
+    `<div class="proj-summary-meta">${projects.length} project${projects.length===1?"":"s"} · ${done} done`+
       (need?` · <span class="proj-need">${need} need a push</span>`:` · all on track ✓`)+`</div>`;
 }
 function renderProjects(){
@@ -1208,14 +1245,16 @@ function renderProjects(){
   renderProjSummary(); projState();
   if(!projects.length){ body.innerHTML=`<div class="empty">No projects yet. Tap <b>＋ Add project</b> or <b>⇪ Import GitHub repos</b> to start tracking.</div>`; return; }
   body.innerHTML = projSorted().map(p=>{
-    const st=PIPELINE[p.stage]||PIPELINE[0];
-    const pct=projPct(p.stage), sc=projStale(p);
+    const t=projType(p), pipe=pipeOf(t);
+    const st=pipe[p.stage]||pipe[0];
+    const pct=projPct(p.stage,t), sc=projStale(p);
     const ageCls = sc===2?"bad":sc===1?"warn":"";
     const href = p.url || (p.repo?("https://github.com/"+p.repo):"");
     const link = href ? `<a class="proj-link" href="${esc(href)}" target="_blank" rel="noopener" data-act="open" title="${esc(href)}">↗</a>` : "";
-    return `<div class="proj${sc?" stale":""}${p.stage>=PROJ_LAST?" done":""}" data-id="${p.id}">
+    const tag = `<span class="proj-ttag" title="${esc(PROJ_TYPES[t].label)} project">${PROJ_TYPES[t].emoji}</span>`;
+    return `<div class="proj${sc?" stale":""}${p.stage>=projLastOf(t)?" done":""}" data-id="${p.id}">
       <div class="proj-top">
-        <div class="proj-name">${p.pinned?'<span class="proj-pin" title="pinned">📌</span>':""}${esc(p.name)}${link}</div>
+        <div class="proj-name">${tag}${p.pinned?'<span class="proj-pin" title="pinned">📌</span>':""}${esc(p.name)}${link}</div>
         <div class="proj-stage">${st.emoji} ${esc(st.label)}</div>
       </div>
       <div class="proj-prog" title="${pct}% — ${esc(st.label)}"><div class="proj-prog-fill" style="width:${pct}%"></div></div>
@@ -1245,19 +1284,33 @@ function renderProjects(){
 }
 function advanceProject(id,delta){
   const p=projects.find(x=>x.id===id); if(!p) return;
-  const ns=Math.max(0,Math.min(PROJ_LAST,p.stage+delta));
+  const ns=Math.max(0,Math.min(projLastOf(projType(p)),p.stage+delta));
   if(ns===p.stage) return;
   p.stage=ns; p.updated=Date.now();
   renderProjects(); scheduleProjSave();
 }
-function fillStageSelect(sel){ if(sel) sel.innerHTML=PIPELINE.map((s,i)=>`<option value="${i}">${s.emoji} ${esc(s.label)} · ${projPct(i)}%</option>`).join(""); }
+function fillStageSelect(sel,type){ if(sel) sel.innerHTML=pipeOf(type).map((s,i)=>`<option value="${i}">${s.emoji} ${esc(s.label)} · ${projPct(i,type)}%</option>`).join(""); }
+/* Reflect the chosen type: repopulate the stage list for that pipeline (keeping the current
+   stage index if it still fits) and hide the GitHub-repo field for non-software projects. */
+function projModalApplyType(type, keepStage){
+  const ss=document.getElementById("proj-f-stage");
+  const cur = keepStage!=null ? keepStage : (Number(ss&&ss.value)||0);
+  fillStageSelect(ss, type);
+  if(ss){ const last=projLastOf(type); ss.value=Math.max(0,Math.min(last,cur)); }
+  const repoWrap=document.getElementById("proj-f-repo-wrap"); if(repoWrap) repoWrap.style.display = type==="software" ? "" : "none";
+  const urlLbl=document.getElementById("proj-f-url-lbl"); if(urlLbl) urlLbl.textContent = type==="software" ? "Live URL (optional)" : "Link — listing, docs, map… (optional)";
+}
 function openProjModal(id){
   editingProjId = id||null;
-  const p = id ? projects.find(x=>x.id===id) : {name:"",url:"",repo:"",stage:0,next:"",notes:""};
+  const p = id ? projects.find(x=>x.id===id) : {name:"",type:"software",url:"",repo:"",stage:0,next:"",notes:""};
   if(id && !p) return;
   const set=(k,v)=>{ const el=document.getElementById(k); if(el) el.value=v; };
-  fillStageSelect(document.getElementById("proj-f-stage"));
-  set("proj-f-name",p.name); set("proj-f-stage",p.stage); set("proj-f-next",p.next);
+  const ty=document.getElementById("proj-f-type");
+  if(ty) ty.innerHTML=Object.keys(PROJ_TYPES).map(t=>`<option value="${t}">${PROJ_TYPES[t].emoji} ${esc(PROJ_TYPES[t].label)}</option>`).join("");
+  const type=projType(p);
+  if(ty) ty.value=type;
+  projModalApplyType(type, p.stage);
+  set("proj-f-name",p.name); set("proj-f-next",p.next);
   set("proj-f-url",p.url); set("proj-f-repo",p.repo); set("proj-f-notes",p.notes);
   const msg=document.getElementById("proj-f-msg"); if(msg){ msg.textContent=""; msg.className="key-result"; }
   const del=document.getElementById("proj-f-delete"); if(del) del.style.display = id?"":"none";
@@ -1270,14 +1323,17 @@ function initProjModal(){
   const msg=(s,bad)=>{ const e=document.getElementById("proj-f-msg"); if(e){ e.textContent=s; e.className="key-result"+(bad?" bad":(s?" ok":"")); } };
   document.getElementById("proj-f-close").onclick=close;
   document.getElementById("proj-close-bg").onclick=close;
+  const tsel=document.getElementById("proj-f-type");
+  if(tsel) tsel.onchange=()=>projModalApplyType(tsel.value);
   document.getElementById("proj-f-save").onclick=()=>{
     const name=document.getElementById("proj-f-name").value.trim();
     if(!name){ msg("Name can’t be empty.",true); return; }
-    const fields={ name,
+    const type=(tsel&&tsel.value)||"software";
+    const fields={ name, type,
       stage: Number(document.getElementById("proj-f-stage").value)||0,
       next: document.getElementById("proj-f-next").value.trim(),
       url: document.getElementById("proj-f-url").value.trim(),
-      repo: document.getElementById("proj-f-repo").value.trim(),
+      repo: type==="software" ? document.getElementById("proj-f-repo").value.trim() : "",
       notes: document.getElementById("proj-f-notes").value };
     if(editingProjId){
       const p=projects.find(x=>x.id===editingProjId); if(!p){ close(); return; }
@@ -1331,8 +1387,12 @@ function initProjects(){
 /* ---------- Clock & greeting ---------- */
 function tick() {
   const now=new Date();
-  document.getElementById("clock").textContent = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
-  document.getElementById("datestr").textContent = now.toLocaleDateString([], {weekday:"long",month:"long",day:"numeric"});
+  const t12 = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+  const t24 = now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",hour12:false});
+  document.getElementById("clock").innerHTML = esc(t12)+` <span class="clock24">(${esc(t24)})</span>`;
+  // "2 July" (day before month) rather than "July 2"
+  const wd=now.toLocaleDateString([], {weekday:"long"}), mo=now.toLocaleDateString([], {month:"long"});
+  document.getElementById("datestr").textContent = `${wd}, ${now.getDate()} ${mo}`;
   renderUsageMeter();   // keep the daily meter live; it auto-resets when the day key flips at midnight
 }
 
@@ -3328,29 +3388,31 @@ async function executeTool(name,a){
         return r.ok?{sent:true,account:acct.email}:{error:"send failed "+r.status};
       }
       case "list_projects": {
-        const list=projSorted().map(p=>({
-          name:p.name, stage:(PIPELINE[p.stage]||PIPELINE[0]).key, progressPct:projPct(p.stage),
+        const list=projSorted().map(p=>{ const t=projType(p), pipe=pipeOf(t); return {
+          name:p.name, type:t, stage:(pipe[p.stage]||pipe[0]).key, progressPct:projPct(p.stage,t),
           next:p.next||null, lastTouchedDays: projAgeDays(p)!=null?Math.round(projAgeDays(p)):null,
-          stale:!!projStale(p), url:p.url||null, repo:p.repo||null }));
-        return { projects:list, pipeline:PIPELINE.map(s=>s.key) };
+          stale:!!projStale(p), url:p.url||null, repo:p.repo||null }; });
+        return { projects:list, pipelines:{ software:PIPELINES.software.map(s=>s.key), property:PIPELINES.property.map(s=>s.key) } };
       }
       case "add_project": {
         if(!a.name) return {error:"need a name"};
-        const si=a.stage?PIPELINE.findIndex(s=>s.key===String(a.stage).toLowerCase()):0;
-        const np=normalizeProject({ name:a.name, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"", updated:Date.now(), order:nextOrder() });
+        const t=PROJ_TYPES[a.type]?a.type:"software", pipe=pipeOf(t);
+        const si=a.stage?pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()):0;
+        const np=normalizeProject({ name:a.name, type:t, stage:si>=0?si:0, next:a.next||"", url:a.url||"", repo:a.repo||"", updated:Date.now(), order:nextOrder() });
         projects.push(np); renderProjects(); saveProjects();
-        return { added:true, name:np.name, stage:(PIPELINE[np.stage]||PIPELINE[0]).key };
+        return { added:true, name:np.name, type:t, stage:(pipe[np.stage]||pipe[0]).key };
       }
       case "update_project": {
         if(!a.name) return {error:"need the project name"};
         const q=String(a.name).toLowerCase();
         const p=projects.find(x=>x.name.toLowerCase()===q) || projects.find(x=>x.name.toLowerCase().includes(q));
         if(!p) return {error:"no project matching “"+a.name+"” — call list_projects to see the names."};
-        if(a.stage!=null){ const si=PIPELINE.findIndex(s=>s.key===String(a.stage).toLowerCase()); if(si<0) return {error:"bad stage — use one of "+PIPELINE.map(s=>s.key).join(", ")}; p.stage=si; }
+        const pipe=pipeOf(projType(p));
+        if(a.stage!=null){ const si=pipe.findIndex(s=>s.key===String(a.stage).toLowerCase()); if(si<0) return {error:"bad stage — for this "+projType(p)+" project use one of "+pipe.map(s=>s.key).join(", ")}; p.stage=si; }
         if(a.next!=null) p.next=String(a.next);
         if(a.notes!=null) p.notes=String(a.notes);
         p.updated=Date.now(); renderProjects(); saveProjects();
-        return { updated:true, name:p.name, stage:(PIPELINE[p.stage]||PIPELINE[0]).key, progressPct:projPct(p.stage) };
+        return { updated:true, name:p.name, type:projType(p), stage:(pipe[p.stage]||pipe[0]).key, progressPct:projPct(p.stage,projType(p)) };
       }
       case "list_tracker_notifications": {
         const d=await tracker("notifications",{ since:(a&&a.since!=null)?a.since:0, limit:(a&&a.limit)?a.limit:20 });

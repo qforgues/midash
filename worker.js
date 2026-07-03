@@ -51,14 +51,17 @@ real", or "what should I do next", read_notes first, then create a task per acti
 with create_task. To mark something done, list_tasks to find its listId/taskId, then
 complete_task.
 
-Projects (the bigger picture): Q tracks his software/website/app projects on a board that
-runs idea → validate → plan → build → test → ship → grow. Use list_projects to see them
-(it returns each project's stage, progressPct, its "next" action, and lastTouchedDays — a
-high lastTouchedDays means it's being neglected). His north star is "keep every project
+Projects (the bigger picture): Q tracks projects on a board, in two types. SOFTWARE
+(website/app) runs idea → validate → plan → build → test → ship → grow. PROPERTY (physical
+builds & renovations on his two properties) runs idea → scope → design → source → build →
+finish → done. Use list_projects to see them (each returns type, stage, progressPct, its
+"next" action, and lastTouchedDays — high = neglected). His north star is "keep every project
 moving, leave none behind", so for "what should I work on / what's stalling / how are my
-projects" call list_projects and steer him to the most neglected ones and their next action.
-Use update_project to advance a stage or set the next action (e.g. "move La Palma to ship"),
-and add_project when he wants to start tracking a new idea. These act immediately (no confirm).
+projects or properties" call list_projects and steer him to the most neglected ones and their
+next action. Use update_project to advance a stage or set the next action (e.g. "move La Palma
+to ship", "move the kitchen reno to build") — always use that project type's stage words. Use
+add_project (with type: "property" for a build/reno) to start tracking something new. These act
+immediately (no confirm).
 
 Portal42 / Tracker42 (Q's ticketing system): list_tracker_notifications shows his Tracker42
 notifications newest-first (ticket status changes, comments, approvals, QA pass/fail, releases),
@@ -150,14 +153,14 @@ const TOOLS = [
 
   // ---- Projects board (Q's idea→shipped tracker, miDash-owned) ----
   { name: "list_projects",
-    description: "List Q's tracked projects (his software/website/app ideas → shipped products), most-neglected-first. Each item has name, stage (idea|validate|plan|build|test|ship|grow), progressPct, next (the next action to push it forward, may be null), lastTouchedDays (days since last touched; high = neglected), stale (boolean), url, repo. Use for 'what should I work on / what's stalling / how are my projects'.",
+    description: "List Q's tracked projects, most-neglected-first. Two types: SOFTWARE (idea|validate|plan|build|test|ship|grow) and PROPERTY (physical builds/renos on his two properties: idea|scope|design|source|build|finish|done). Each item has name, type, stage, progressPct, next (the next action, may be null), lastTouchedDays (high = neglected), stale (boolean), url, repo. Use for 'what should I work on / what's stalling / how are my projects / properties'.",
     input_schema: { type: "object", properties: {}, required: [] } },
   { name: "update_project",
-    description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial match ok). Set any of: stage (one of idea|validate|plan|build|test|ship|grow), next (the single next action), notes. Touches its last-updated so it stops looking neglected. Acts immediately — no confirmation.",
-    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow"] }, next: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
+    description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial ok). Set any of: stage, next (the single next action), notes. Use the stage vocabulary for THAT project's type — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Touches last-updated so it stops looking neglected. Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
   { name: "add_project",
-    description: "Add a NEW project to Q's tracker. Needs name. Optional stage (default idea), next (next action), url (live site), repo (owner/repo). Use when Q wants to start tracking a new idea. Acts immediately — no confirmation.",
-    input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" } }, required: ["name"] } },
+    description: "Add a NEW project to Q's tracker. Needs name. type is 'software' (default) or 'property' (a physical build/reno on one of his properties). Optional stage (default idea; use that type's vocabulary), next (next action), url (live site or listing/map link), repo (owner/repo — software only). Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { name: { type: "string" }, type: { type: "string", enum: ["software","property"] }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" } }, required: ["name"] } },
 
   // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
   { name: "list_tracker_notifications",
@@ -391,7 +394,13 @@ async function handleDiscordStatus(request, env) {
 // Takes { messages:[{role,content}] } or { message:"..." }, returns { reply, usage }.
 // NON-streaming (a bot wants the whole reply). Gated by authed() like everything else.
 // ---- Server-side tools for the Discord/SMS agent (no browser needed) ----
-const AGENT_PIPELINE = ["idea", "validate", "plan", "build", "test", "ship", "grow"];
+const AGENT_PIPELINES = {
+  software: ["idea", "validate", "plan", "build", "test", "ship", "grow"],
+  property: ["idea", "scope", "design", "source", "build", "finish", "done"],
+};
+const AGENT_PIPELINE = AGENT_PIPELINES.software;   // back-compat
+function agentPipe(t) { return AGENT_PIPELINES[t] || AGENT_PIPELINES.software; }
+function agentType(p) { return (p && AGENT_PIPELINES[p.type]) ? p.type : "software"; }
 const AGENT_SYSTEM = `You are Q's personal assistant "Dash", reachable over Discord. Be concise, warm, and
 direct — keep replies short enough to read comfortably in a chat app (a few sentences, use line breaks/lists sparingly).
 You have TOOLS for Q's finances (42payments), his Portal42/Tracker42 tickets, his Projects board, and his Notes
@@ -402,9 +411,9 @@ unless he was already explicit. Reading is always fine to do immediately.`;
 const AGENT_TOOLS = [
   { name: "read_notes", description: "Read Q's free-form Notes scratchpad.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "add_note", description: "Jot a line to the TOP of Q's Notes scratchpad.", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
-  { name: "list_projects", description: "List Q's tracked projects with stage, next action, and days since touched.", input_schema: { type: "object", properties: {}, required: [] } },
-  { name: "add_project", description: "Add a new project. name required; optional stage (idea|validate|plan|build|test|ship|grow), next, url.", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" }, url: { type: "string" } }, required: ["name"] } },
-  { name: "update_project", description: "Update a project by name (partial match ok): set stage and/or next action.", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" } }, required: ["name"] } },
+  { name: "list_projects", description: "List Q's tracked projects (type, stage, next action, days since touched). Software and property (physical build/reno) projects each have their own stages.", input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "add_project", description: "Add a new project. name required. type: 'software' (default) or 'property'. Optional stage — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Optional next, url, repo (software only).", input_schema: { type: "object", properties: { name: { type: "string" }, type: { type: "string", enum: ["software","property"] }, stage: { type: "string" }, next: { type: "string" }, url: { type: "string" }, repo: { type: "string" } }, required: ["name"] } },
+  { name: "update_project", description: "Update a project by name (partial match ok): set stage and/or next action. Use that project type's stage vocabulary (software: idea…grow; property: idea|scope|design|source|build|finish|done).", input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string" }, next: { type: "string" }, notes: { type: "string" } }, required: ["name"] } },
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
   { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
@@ -433,9 +442,9 @@ async function runAgentTool(name, a, env) {
     switch (name) {
       case "read_notes": { const n = await env.NOTES.get("notes"); return { notes: (n || "").slice(0, 4000) }; }
       case "add_note": { if (!a.text) return { error: "need text" }; const cur = (await env.NOTES.get("notes")) || ""; const next = "- " + String(a.text) + "  · " + new Date().toISOString().slice(0, 10) + "\n" + cur; await env.NOTES.put("notes", next.slice(0, 20000)); return { added: true }; }
-      case "list_projects": { const ps = await agentGetProjects(env); return { projects: ps.map(p => ({ name: p.name, stage: AGENT_PIPELINE[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null })) }; }
-      case "add_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const si = a.stage ? AGENT_PIPELINE.indexOf(String(a.stage).toLowerCase()) : 0; const np = { id: "p_" + Date.now().toString(36), name: String(a.name), url: String(a.url || ""), repo: "", stage: si >= 0 ? si : 0, next: String(a.next || ""), notes: "", updated: Date.now(), pinned: false, order: (ps.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1) }; ps.push(np); await env.NOTES.put("projects", JSON.stringify(ps)); return { added: true, name: np.name }; }
-      case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const p = ps.find(x => x.name.toLowerCase() === q) || ps.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; if (a.stage) { const si = AGENT_PIPELINE.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage; use one of " + AGENT_PIPELINE.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, stage: AGENT_PIPELINE[p.stage] }; }
+      case "list_projects": { const ps = await agentGetProjects(env); return { projects: ps.map(p => { const t = agentType(p); return { name: p.name, type: t, stage: agentPipe(t)[p.stage] || "idea", next: p.next || null, lastTouchedDays: p.updated ? Math.round((Date.now() - p.updated) / 86400000) : null, url: p.url || null }; }) }; }
+      case "add_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const t = AGENT_PIPELINES[a.type] ? a.type : "software"; const si = a.stage ? agentPipe(t).indexOf(String(a.stage).toLowerCase()) : 0; const np = { id: "p_" + Date.now().toString(36), name: String(a.name), type: t, url: String(a.url || ""), repo: t === "software" ? String(a.repo || "") : "", stage: si >= 0 ? si : 0, next: String(a.next || ""), notes: "", updated: Date.now(), pinned: false, order: (ps.reduce((m, p) => Math.max(m, p.order || 0), 0) + 1) }; ps.push(np); await env.NOTES.put("projects", JSON.stringify(ps)); return { added: true, name: np.name, type: t }; }
+      case "update_project": { if (!a.name) return { error: "need name" }; const ps = await agentGetProjects(env); const q = String(a.name).toLowerCase(); const p = ps.find(x => x.name.toLowerCase() === q) || ps.find(x => x.name.toLowerCase().includes(q)); if (!p) return { error: "no project matching " + a.name }; const pipe = agentPipe(agentType(p)); if (a.stage) { const si = pipe.indexOf(String(a.stage).toLowerCase()); if (si < 0) return { error: "bad stage for this " + agentType(p) + " project; use one of " + pipe.join(", ") }; p.stage = si; } if (a.next != null) p.next = String(a.next); p.updated = Date.now(); await env.NOTES.put("projects", JSON.stringify(ps)); return { updated: true, name: p.name, type: agentType(p), stage: pipe[p.stage] }; }
       case "finance_summary": return await agentFinance(env, "/summary");
       case "list_tracker_notifications": { const d = await agentTracker(env, "notifications", { since: 0, order: "desc", limit: a.limit || 10 }); if (d && d.success === false) return { error: d.error }; return { notifications: (d && d.data) || [], meta: (d && d.meta) || {} }; }
       case "get_ticket": { if (a.id == null) return { error: "need id" }; const d = await agentTracker(env, "ticket", { id: a.id }); return (d && d.data) || d; }
