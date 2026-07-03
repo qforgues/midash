@@ -976,7 +976,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.33.0",
+  version: "1.33.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1275,14 +1275,16 @@ const TOMBSTONE_TTL = 90*86400000;   // GC deletes after 90d — must exceed max
 function mergeProjects(server, local){
   const by={}; let fromServer=0;
   (server||[]).forEach(p=>{ const n=normalizeProject(p); by[n.id]=n; fromServer++; });
-  let added=0;
+  let added=0, over=0;
   (local||[]).forEach(p=>{ const n=normalizeProject(p); const ex=by[n.id];
     // tombstone: a delete is an UPDATE (deleted=true) that must beat a stale live copy from
     // another device — LWW on `updated` carries it, which union-by-id alone could not express.
-    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; } });
+    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; over++; } });
   const now=Date.now();
   const list=Object.values(by).filter(p=>!(p.deleted && (now-(p.updated||0))>TOMBSTONE_TTL));  // GC old tombstones
-  return { list, changed: added>0 || fromServer===0 || list.length!==Object.keys(by).length };
+  // changed = anything the server didn't already have exactly: adds, LWW overwrites (a newer
+  // local edit of an existing id — must still push up), GC, or empty server.
+  return { list, changed: added>0 || over>0 || fromServer===0 || list.length!==Object.keys(by).length };
 }
 async function loadProjectsState(){
   const rb=document.getElementById("projects-refresh"); if(rb) rb.classList.add("spin");
@@ -2857,8 +2859,11 @@ function repairChat(msgs){
       if(nextIsResults) next.content.forEach(b=>{ if(b&&b.type==="tool_result"&&b.tool_use_id) answered.add(b.tool_use_id); });
       const missing=ids.filter(id=>!answered.has(id));
       if(missing.length && nextIsResults){
-        // partial results already follow → merge the missing stubs into that SAME user turn
-        next.content=next.content.concat(missing.map(stub));
+        // partial results already follow → merge missing stubs into that SAME user turn, and
+        // keep ALL tool_result blocks first (the API requires them to lead the turn).
+        const res=next.content.filter(b=>b&&b.type==="tool_result").concat(missing.map(stub));
+        const rest=next.content.filter(b=>!(b&&b.type==="tool_result"));
+        next.content=res.concat(rest);
         out.push(m); continue;
       }
       out.push(m);
@@ -2937,11 +2942,23 @@ async function streamModel(onText, msgs){
   return {content:blocks.filter(Boolean), stop_reason, usage, model};
 }
 
+/* Push a user message WITHOUT ever creating two consecutive user turns. After repairChat()
+   injects a trailing user(tool_result) turn (interrupted tool loop), a plain push here would
+   produce user-then-user → Anthropic 400. If the last turn is already a user turn, append the
+   text as a text block (kept after any tool_result blocks) instead of pushing a new message. */
+function pushUserMessage(text){
+  const last=agentMessages[agentMessages.length-1];
+  if(last && last.role==="user"){
+    if(typeof last.content==="string") last.content=[{type:"text",text:last.content}];
+    if(Array.isArray(last.content)) last.content.push({type:"text",text});
+    else agentMessages.push({role:"user",content:text});
+  } else agentMessages.push({role:"user",content:text});
+}
 document.getElementById("chat-form").addEventListener("submit",async(e)=>{
   e.preventDefault();
   const input=document.getElementById("chat-text"); const text=input.value.trim(); if(!text) return;
   if(!CONFIG.chatEndpoint){ addMsg("No backend configured yet.","sys"); return; }
-  addMsg(text,"user"); agentMessages.push({role:"user",content:text}); saveChat(); input.value="";
+  addMsg(text,"user"); pushUserMessage(text); saveChat(); input.value="";
   const sendBtn=document.getElementById("chat-send"); sendBtn.disabled=true;
   const thinking=addMsg("…","bot");
   try{ await agentLoop(thinking); }
@@ -2984,7 +3001,7 @@ async function agentLoop(thinking){
 function agentAsk(text){
   if(!CONFIG.chatEndpoint){ const p=document.getElementById("chat-panel"); if(p) p.classList.add("open"); addMsg("No agent backend configured yet.","sys"); return; }
   const panel=document.getElementById("chat-panel"); if(panel) panel.classList.add("open");
-  addMsg(text,"user"); agentMessages.push({role:"user",content:text}); saveChat();
+  addMsg(text,"user"); pushUserMessage(text); saveChat();
   const sendBtn=document.getElementById("chat-send"); if(sendBtn) sendBtn.disabled=true;
   const thinking=addMsg("…","bot");
   agentLoop(thinking)

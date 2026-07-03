@@ -98,11 +98,11 @@ function mergeProjects(server, local, now){
   now = now || Date.now();
   const by={}; let fromServer=0;
   (server||[]).forEach(p=>{ const n=normalizeProject(p); by[n.id]=n; fromServer++; });
-  let added=0;
+  let added=0, over=0;
   (local||[]).forEach(p=>{ const n=normalizeProject(p); const ex=by[n.id];
-    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; } });
+    if(!ex){ by[n.id]=n; added++; } else if((n.updated||0)>(ex.updated||0)){ by[n.id]=n; over++; } });
   const list=Object.values(by).filter(p=>!(p.deleted && (now-(p.updated||0))>TOMBSTONE_TTL));
-  return { list, changed: added>0 || fromServer===0 || list.length!==Object.keys(by).length };
+  return { list, changed: added>0 || over>0 || fromServer===0 || list.length!==Object.keys(by).length };
 }
 function liveOf(list){ return list.filter(p=>!p.deleted); }
 
@@ -119,7 +119,11 @@ function repairChat(msgs){
       const answered=new Set();
       if(nextIsResults) next.content.forEach(b=>{ if(b&&b.type==="tool_result"&&b.tool_use_id) answered.add(b.tool_use_id); });
       const missing=ids.filter(id=>!answered.has(id));
-      if(missing.length && nextIsResults){ next.content=next.content.concat(missing.map(stub)); out.push(m); continue; }
+      if(missing.length && nextIsResults){
+        const res=next.content.filter(b=>b&&b.type==="tool_result").concat(missing.map(stub));
+        const rest=next.content.filter(b=>!(b&&b.type==="tool_result"));
+        next.content=res.concat(rest); out.push(m); continue;
+      }
       out.push(m);
       if(missing.length){ out.push({ role:"user", content: missing.map(stub) }); }
       continue;
@@ -127,6 +131,16 @@ function repairChat(msgs){
     out.push(m);
   }
   return out;
+}
+
+// --- pushUserMessage (index.html) — parameterized on the array for testing ---
+function pushUserMessage(msgs, text){
+  const last=msgs[msgs.length-1];
+  if(last && last.role==="user"){
+    if(typeof last.content==="string") last.content=[{type:"text",text:last.content}];
+    if(Array.isArray(last.content)) last.content.push({type:"text",text});
+    else msgs.push({role:"user",content:text});
+  } else msgs.push({role:"user",content:text});
 }
 
 /* ================================ TEST HARNESS ================================ */
@@ -192,6 +206,11 @@ section("Union — adds from both sides, no dupes");
   ok(m.list.length===4, "3 server + 1 new local = 4 unique");
   ok(m.list.find(p=>p.id==="s0").name==="j0-edited", "newer local edit of s0 wins");
   ok(m.changed===true, "changed flag set when local added");
+  // WEAK1 fix: a newer local edit of an existing id (no add) must still mark changed → gets pushed up
+  const m2=mergeProjects([{id:"a",name:"old",updated:1}],[{id:"a",name:"newer",updated:9}], NOW);
+  ok(m2.changed===true, "LWW overwrite (no add) sets changed → syncs up on load");
+  const m3=mergeProjects([{id:"a",name:"same",updated:5}],[{id:"a",name:"same",updated:5}], NOW);
+  ok(m3.changed===false, "identical server+local → changed false (no needless push)");
 }
 
 section("stamp() — monotonic even with a backwards clock");
@@ -253,6 +272,29 @@ section("repairChat — dangling tool_use gets a synthetic error result");
   msgs=[{role:"assistant",content:[{type:"tool_use",id:"z"}]},{role:"user",content:[{type:"tool_result",tool_use_id:"z",content:"ok"}]}];
   r=repairChat(msgs);
   ok(r.length===2 && r[1].content.length===1, "complete tool_use/result pair left unchanged");
+  // merge branch keeps tool_result blocks FIRST even if a text block is present
+  msgs=[{role:"assistant",content:[{type:"tool_use",id:"a"},{type:"tool_use",id:"b"}]},
+        {role:"user",content:[{type:"text",text:"hi"},{type:"tool_result",tool_use_id:"a",content:"ok"}]}];
+  r=repairChat(msgs);
+  const firstType=r[1].content[0].type, lastType=r[1].content[r[1].content.length-1].type;
+  ok(firstType==="tool_result" && lastType==="text", "merged turn keeps tool_results leading, text last (no API 400)");
+}
+
+section("send-after-repair — no consecutive user turns (BUG 1)");
+{
+  // repairChat left a trailing user(tool_result) turn; a new user message must NOT create user,user
+  let msgs=[{role:"assistant",content:[{type:"tool_use",id:"t1"}]}];
+  msgs=repairChat(msgs);                       // → [..assistant, user(tool_result)]
+  const before=msgs.length;
+  pushUserMessage(msgs, "hey what happened");
+  ok(msgs.length===before, "new message merges into trailing user turn (no new message pushed)");
+  const last=msgs[msgs.length-1];
+  ok(last.role==="user" && last.content.some(b=>b.type==="tool_result") && last.content.some(b=>b.type==="text"), "trailing turn holds tool_result + appended text");
+  const roles=msgs.map(m=>m.role);
+  ok(!roles.some((r,i)=>i>0 && r==="user" && roles[i-1]==="user"), "no two consecutive user turns anywhere");
+  // normal case (last is assistant) → push a fresh user turn
+  let m2=[{role:"user",content:"hi"},{role:"assistant",content:"hello"}];
+  pushUserMessage(m2,"again"); ok(m2.length===3 && m2[2].role==="user" && m2[2].content==="again", "after assistant turn → new user message pushed normally");
 }
 
 section("computePayoff — deterministic debt engine");
