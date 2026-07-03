@@ -31,11 +31,12 @@ const ALLOWED_MODELS = new Set([
   "claude-haiku-4-5",   // cheapest  ($1 / $5 per Mtok)
   "claude-sonnet-4-6",  // balanced  ($3 / $15)
   "claude-opus-4-8",    // smartest  ($5 / $25)
+  "claude-fable-5",     // Fable 5   (newest flagship)
 ]);
 const DEFAULT_MODEL = "claude-haiku-4-5";
-// Adaptive thinking + the effort parameter are supported on Sonnet 4.6 / Opus 4.8 but
-// NOT on Haiku 4.5 (sending them to Haiku 400s). So we only enable them on the smart models.
-const SMART_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8"]);
+// Adaptive thinking + the effort parameter are supported on Sonnet 4.6 / Opus 4.8 / Fable 5
+// but NOT on Haiku 4.5 (sending them to Haiku 400s). So we only enable them on the smart models.
+const SMART_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8", "claude-fable-5"]);
 
 const SYSTEM = `You are the assistant embedded in Q's personal dashboard (miDash).
 You can read Q's Google Calendar (across ALL of his connected Google accounts and ALL

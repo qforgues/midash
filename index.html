@@ -899,7 +899,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.27.3",
+  version: "1.27.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -909,6 +909,7 @@ const CONFIG = {
     { id:"claude-haiku-4-5",  label:"Haiku — cheapest" },
     { id:"claude-sonnet-4-6", label:"Sonnet — balanced" },
     { id:"claude-opus-4-8",   label:"Opus — smartest" },
+    { id:"claude-fable-5",    label:"Fable 5 — newest" },
   ],
   defaultModel: "claude-haiku-4-5",
 
@@ -2572,7 +2573,7 @@ function agentAsk(text){
 /* ---------- Daily usage / cost meter ----------
    Estimates metered Anthropic API spend from each response's token usage, accumulated
    per LOCAL day. Resets at midnight (the day key flips), shown live in the chat header. */
-const PRICE={ "claude-haiku-4-5":[1,5], "claude-sonnet-4-6":[3,15], "claude-opus-4-8":[5,25] }; // [$in, $out] per Mtok
+const PRICE={ "claude-haiku-4-5":[1,5], "claude-sonnet-4-6":[3,15], "claude-opus-4-8":[5,25], "claude-fable-5":[5,25] }; // [$in, $out] per Mtok (Fable 5 = estimate)
 function usageDayKey(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
 function getUsage(){ try{ const u=JSON.parse(localStorage.getItem("midash_usage")||"{}"); if(u.day===usageDayKey()) return u; }catch(e){} return {day:usageDayKey(),cost:0,tok:0,msgs:0}; }
 function recordUsage(model, u){
@@ -3543,11 +3544,13 @@ async function checkForUpdate(){
   const st=document.getElementById("update-status"); const set=t=>{ if(st) st.textContent=t; };
   set("Checking…");
   try{
-    // Read the version from the raw GitHub source — this bypasses BOTH the GitHub Pages CDN
-    // and our own service-worker cache (different origin, never cached here), so we always
-    // see the truly-latest committed build. Query string forces a fresh edge fetch too.
-    const raw="https://raw.githubusercontent.com/qforgues/midash/main/index.html?cb="+Date.now();
-    const html=await (await fetch(raw,{cache:"no-store"})).text();
+    // Read the version from the DEPLOYED site (same origin), cache-busted. We must compare
+    // against what a reload can actually serve — NOT raw.githubusercontent.com, which updates
+    // the instant you push while GitHub Pages' build+CDN lags a minute behind. Reading raw made
+    // the button promise a version Pages couldn't hand back yet → endless "Updating…". The SW is
+    // network-first for HTML, so a unique ?cb= query returns the true current deploy.
+    const url=new URL("index.html", location.href); url.search="cb="+Date.now();
+    const html=await (await fetch(url.href,{cache:"no-store"})).text();
     const m=html.match(/version:\s*"([\d.]+)"/); const latest=m&&m[1];
     if(!latest){ set("Couldn't read the latest version."); return; }
     if(!verNewer(latest, CONFIG.version)){ set("✓ You're on the latest ("+CONFIG.version+")."); return; }
