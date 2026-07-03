@@ -193,6 +193,26 @@
   .plan-row select:focus, .plan-row input:focus { border-color:var(--accent); }
   .plan-foot { margin-top:10px; min-height:16px; }
   .plan-status { font-size:12.5px; color:var(--muted); }
+  /* CC payoff — card editor + computed results */
+  .cc-empty { font-size:12.5px; color:var(--muted); padding:4px 0; }
+  .cc-card-row { display:grid; grid-template-columns:1.5fr 1fr .8fr .9fr 22px; gap:7px; align-items:center; margin-bottom:7px; }
+  @media (max-width:640px){ .cc-card-row { grid-template-columns:1fr 1fr; } .cc-card-row .cc-rm { grid-column:2; justify-self:end; } }
+  .cc-f { border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:8px; padding:7px 9px; font-size:13px; font-family:inherit; min-width:0; outline:none; }
+  .cc-f:focus { border-color:var(--accent); }
+  .cc-rm { cursor:pointer; color:var(--muted); text-align:center; font-size:13px; }
+  .cc-rm:hover { color:var(--warn); }
+  .cc-note { font-size:12.5px; color:var(--warn); margin-top:9px; line-height:1.45; }
+  .cc-results { margin-top:6px; }
+  .cc-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; margin:12px 0; }
+  .cc-kpi { background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:9px 11px; }
+  .cc-kl { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .cc-kv { font-size:17px; font-weight:700; color:var(--text); margin-top:3px; font-variant-numeric:tabular-nums; }
+  .cc-ks { font-size:11px; color:var(--muted); margin-top:2px; }
+  .cc-order-h { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:7px; }
+  .cc-ord { display:flex; align-items:center; gap:9px; padding:5px 0; border-top:1px solid var(--border); font-size:13.5px; }
+  .cc-ord-n { width:20px; height:20px; border-radius:50%; background:var(--accent-soft); color:var(--accent); font-size:11px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; }
+  .cc-ord-name { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .cc-ord-m { color:var(--muted); font-size:12px; white-space:nowrap; }
 
   /* Projects — idea→shipped progress tracker */
   .proj-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:13px; }
@@ -916,9 +936,15 @@
       </div>
       <div class="plan-foot"><span id="plan-status" class="plan-status"></span></div>
     </div>
+    <div class="plan-box" id="cards-box" style="margin-top:14px">
+      <div class="plan-head">💳 Your cards <span class="refresh" id="cc-add" style="margin-left:8px">＋ add card</span></div>
+      <p style="font-size:12px;color:var(--muted);margin:5px 0 9px;line-height:1.45">Enter each card's balance, APR and minimum payment. The payoff schedule below is calculated exactly — your agent explains it, it doesn't do the math.</p>
+      <div id="cc-cards"></div>
+      <div id="cc-results" class="cc-results"></div>
+    </div>
     <div class="plan-box" style="margin-top:14px">
       <div class="plan-head">🤖 Strategy with your agent</div>
-      <p style="font-size:12.5px;color:var(--muted);margin:7px 0 11px;line-height:1.5">Hands your current balances and plan settings to your agent. It can pull live finance data and build a concrete month-by-month payoff plan with you — which account to hit first, timeline, interest saved.</p>
+      <p style="font-size:12.5px;color:var(--muted);margin:7px 0 11px;line-height:1.5">Hands your cards, the computed payoff schedule, and your plan settings to your agent to talk through — trade-offs, what to change, how to free up more each month.</p>
       <button class="gbtn" id="debt-agent" style="border-color:var(--accent);color:var(--accent)">🤖 Build my payoff strategy</button>
     </div>
     <div class="pat-actions" style="margin-top:16px"><button id="debt-close" class="gbtn">Close</button></div>
@@ -950,7 +976,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.32.0",
+  version: "1.33.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3543,7 +3569,50 @@ function renderDebt(d){
 
 /* Payoff plan — miDash-owned, stored in the Worker KV (/ccplan) so it syncs across devices;
    localStorage is the offline cache. */
+/* ---------- Deterministic payoff engine (pure — the agent narrates this, never does the math) ----------
+   Simulates month-by-month: accrue monthly interest, pay every card its minimum, then throw the
+   remaining budget at the target card (avalanche = highest APR, snowball = lowest balance),
+   cascading leftovers as cards clear. Returns months-to-debt-free, total interest, payoff order,
+   and interest saved vs paying minimums only. */
+function computePayoff(cards, monthly, strategy){
+  const cs=(cards||[]).map(c=>({ name:String(c.name||"Card"), balance:Math.max(0,+c.balance||0), apr:Math.max(0,+c.apr||0), min:Math.max(0,+c.minPayment||0) }))
+                      .filter(c=>c.balance>0.005);
+  if(!cs.length) return { ok:false, reason:"Add at least one card with a balance." };
+  const totalBal=cs.reduce((s,c)=>s+c.balance,0);
+  const totalMin=cs.reduce((s,c)=>s+c.min,0);
+  const budget=+monthly||0;
+  if(budget<=0) return { ok:false, reason:"Set a monthly budget to run the numbers.", totalBal, totalMin };
+  if(budget < totalMin-0.005) return { ok:false, reason:"Your monthly budget is below the sum of your minimum payments.", totalBal, totalMin };
+  const cmp = strategy==="snowball" ? (a,b)=>a.balance-b.balance||b.apr-a.apr : (a,b)=>b.apr-a.apr||a.balance-b.balance;
+  const MAX=1200;   // 100-year cap
+  const sim=(useExtra)=>{
+    const w=cs.map(c=>({...c, done:null})); let month=0, interest=0; const order=[];
+    while(w.some(c=>c.balance>0.005) && month<MAX){
+      month++;
+      w.forEach(c=>{ if(c.balance>0){ const i=c.balance*(c.apr/100/12); c.balance+=i; interest+=i; } });   // accrue
+      let pool=budget;
+      w.forEach(c=>{ if(c.balance>0){ const pay=Math.min(c.min,c.balance,pool); c.balance-=pay; pool-=pay; } });   // minimums
+      if(useExtra){ let guard=0; while(pool>0.005 && guard++<w.length+2){ const a=w.filter(c=>c.balance>0.005).sort(cmp); if(!a.length) break; const t=a[0], pay=Math.min(pool,t.balance); t.balance-=pay; pool-=pay; } }   // extra → target
+      w.forEach(c=>{ if(c.balance<=0.005 && c.done==null){ c.done=month; order.push({name:c.name, month}); } });   // record payoffs
+    }
+    return { months:month, interest, order, stalled: month>=MAX };
+  };
+  const plan=sim(true);
+  if(plan.stalled) return { ok:false, reason:"At this budget the balance never clears — interest outpaces payments. Raise the monthly amount.", totalBal, totalMin };
+  const base=sim(false);   // minimums-only baseline (leftover budget unused) for interest-saved
+  return {
+    ok:true, strategy, monthly:budget, totalBal, totalMin,
+    months:plan.months, totalInterest:plan.interest, order:plan.order,
+    baselineMonths: base.stalled?null:base.months,
+    baselineInterest: base.stalled?null:base.interest,
+    interestSaved: base.stalled?null:Math.max(0, base.interest-plan.interest),
+  };
+}
+function monthsLabel(n){ if(n==null) return "—"; const y=Math.floor(n/12), m=n%12; return (y?y+"y ":"")+(m||!y?m+"mo":"").trim()||"0mo"; }
+function monthsToDate(n){ const d=new Date(); d.setMonth(d.getMonth()+n); return d.toLocaleDateString([],{month:"short",year:"numeric"}); }
+
 const CC_PLAN_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/ccplan" : "";
+let ccCards=[];   // [{name,balance,apr,minPayment}] — miDash-owned, saved with the plan
 let planSaveTimer=null;
 function planStatus(m){ const el=document.getElementById("plan-status"); if(el) el.textContent=m||""; }
 function applyPlan(p){
@@ -3552,11 +3621,44 @@ function applyPlan(p){
   if(s&&p.strategy) s.value=p.strategy;
   if(t) t.value=p.target||"";
   if(m) m.value=(p.monthly!=null?p.monthly:"");
+  ccCards=Array.isArray(p.cards)?p.cards.map(c=>({name:String(c.name||""),balance:c.balance,apr:c.apr,minPayment:c.minPayment})):[];
+  renderCards(); renderPayoffResults();
 }
 function readPlan(){
   const sv=id=>{ const el=document.getElementById(id); return el?el.value:""; };
   const mv=sv("plan-monthly");
-  return { strategy:sv("plan-strategy")||"avalanche", target:(sv("plan-target")||"").trim(), monthly:mv!==""?Number(mv):null };
+  return { strategy:sv("plan-strategy")||"avalanche", target:(sv("plan-target")||"").trim(), monthly:mv!==""?Number(mv):null, cards:ccCards };
+}
+/* Card editor — rows drive the ccCards array; editing recomputes results but NOT the rows
+   (so focus is never lost mid-typing). renderCards only re-runs on add/remove. */
+function renderCards(){
+  const box=document.getElementById("cc-cards"); if(!box) return;
+  if(!ccCards.length){ box.innerHTML=`<div class="cc-empty">No cards yet — tap ＋ add card.</div>`; return; }
+  box.innerHTML=ccCards.map((c,i)=>`<div class="cc-card-row" data-i="${i}">
+    <input class="cc-f cc-name" data-i="${i}" data-k="name" placeholder="Card name" value="${escAttr(c.name||"")}" autocomplete="off">
+    <input class="cc-f" data-i="${i}" data-k="balance" type="number" inputmode="decimal" min="0" step="50" placeholder="balance" value="${c.balance!=null&&c.balance!==""?c.balance:""}">
+    <input class="cc-f" data-i="${i}" data-k="apr" type="number" inputmode="decimal" min="0" step="0.1" placeholder="APR %" value="${c.apr!=null&&c.apr!==""?c.apr:""}">
+    <input class="cc-f" data-i="${i}" data-k="minPayment" type="number" inputmode="decimal" min="0" step="10" placeholder="min $/mo" value="${c.minPayment!=null&&c.minPayment!==""?c.minPayment:""}">
+    <span class="cc-rm" data-i="${i}" title="Remove card">✕</span>
+  </div>`).join("");
+  box.querySelectorAll(".cc-f").forEach(inp=>inp.oninput=()=>{ const i=+inp.dataset.i, k=inp.dataset.k; if(!ccCards[i]) return;
+    ccCards[i][k]= k==="name" ? inp.value : (inp.value===""?"":Number(inp.value)); renderPayoffResults(); schedulePlanSave(); });
+  box.querySelectorAll(".cc-rm").forEach(x=>x.onclick=()=>{ ccCards.splice(+x.dataset.i,1); renderCards(); renderPayoffResults(); schedulePlanSave(); });
+}
+function renderPayoffResults(){
+  const el=document.getElementById("cc-results"); if(!el) return;
+  const strat=(document.getElementById("plan-strategy")||{}).value||"avalanche";
+  const monthly=Number((document.getElementById("plan-monthly")||{}).value)||0;
+  const r=computePayoff(ccCards, monthly, strat==="custom"?"avalanche":strat);
+  if(!r.ok){ el.innerHTML = ccCards.length?`<div class="cc-note">${esc(r.reason||"")}</div>`:""; return; }
+  const order=r.order.map((o,i)=>`<div class="cc-ord"><span class="cc-ord-n">${i+1}</span><span class="cc-ord-name">${esc(o.name)}</span><span class="cc-ord-m">${esc(monthsToDate(o.month))}</span></div>`).join("");
+  el.innerHTML=`
+    <div class="cc-kpis">
+      <div class="cc-kpi"><div class="cc-kl">Debt-free in</div><div class="cc-kv">${esc(monthsLabel(r.months))}</div><div class="cc-ks">${esc(monthsToDate(r.months))}</div></div>
+      <div class="cc-kpi"><div class="cc-kl">Total interest</div><div class="cc-kv">${esc(fmtMoney(r.totalInterest))}</div>${r.interestSaved!=null&&r.interestSaved>1?`<div class="cc-ks">saves ${esc(fmtMoney(r.interestSaved))}</div>`:""}</div>
+      <div class="cc-kpi"><div class="cc-kl">Balance</div><div class="cc-kv">${esc(fmtMoney(r.totalBal))}</div><div class="cc-ks">min ${esc(fmtMoney(r.totalMin))}/mo</div></div>
+    </div>
+    <div class="cc-order"><div class="cc-order-h">Payoff order — ${strat==="snowball"?"smallest balance first":"highest APR first"}</div>${order}</div>`;
 }
 async function loadCCPlan(){
   let plan=null;
@@ -3576,7 +3678,8 @@ function schedulePlanSave(){ planStatus("saving…"); clearTimeout(planSaveTimer
 function initDebt(){
   const r=document.getElementById("debt-refresh"); if(r) r.onclick=loadDebt;
   const led=document.getElementById("debt-led"); if(led){ led.style.cursor="pointer"; led.onclick=loadDebt; }
-  ["plan-strategy","plan-target","plan-monthly"].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener("change",schedulePlanSave); el.addEventListener("input",schedulePlanSave); } });
+  ["plan-strategy","plan-target","plan-monthly"].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener("change",()=>{schedulePlanSave();renderPayoffResults();}); el.addEventListener("input",()=>{schedulePlanSave();renderPayoffResults();}); } });
+  const add=document.getElementById("cc-add"); if(add) add.onclick=()=>{ ccCards.push({name:"",balance:"",apr:"",minPayment:""}); renderCards(); const rows=document.querySelectorAll("#cc-cards .cc-name"); const last=rows[rows.length-1]; if(last) last.focus(); };
   const bg=document.getElementById("debt-modal-bg"); if(bg) bg.onclick=closeDebtModal;
   const cl=document.getElementById("debt-close"); if(cl) cl.onclick=closeDebtModal;
   const ag=document.getElementById("debt-agent"); if(ag) ag.onclick=debtAskAgent;
@@ -3585,15 +3688,27 @@ function initDebt(){
 function openDebtModal(){
   const m=document.getElementById("debt-modal"); if(!m) return;
   m.style.display="flex";
+  renderCards(); renderPayoffResults();
   loadDebt();   // pull fresh balances each time you open it
 }
 function closeDebtModal(){ const m=document.getElementById("debt-modal"); if(m) m.style.display="none"; }
 function debtAskAgent(){
   const p=readPlan();
   const strat=({avalanche:"Avalanche (highest APR first)",snowball:"Snowball (smallest balance first)",custom:"Custom"})[p.strategy]||p.strategy;
+  const r=computePayoff(ccCards, p.monthly, p.strategy==="custom"?"avalanche":p.strategy);
+  let computed;
+  if(r.ok){
+    computed=`miDash has already computed the exact schedule (deterministic — please DON'T redo the arithmetic, just explain and pressure-test it):\n`
+      +`• Cards: ${ccCards.filter(c=>(+c.balance)>0).map(c=>`${c.name||"Card"} $${(+c.balance||0).toFixed(0)} @ ${(+c.apr||0)}% APR, min $${(+c.minPayment||0)}/mo`).join("; ")}\n`
+      +`• Debt-free in ${monthsLabel(r.months)} (~${monthsToDate(r.months)}) at $${r.monthly}/mo total.\n`
+      +`• Total interest paid: $${r.totalInterest.toFixed(0)}${r.interestSaved!=null?`, which saves ~$${r.interestSaved.toFixed(0)} vs paying only the minimums`:""}.\n`
+      +`• Payoff order: ${r.order.map((o,i)=>`${i+1}) ${o.name} by ${monthsToDate(o.month)}`).join(", ")}.`;
+  } else {
+    computed = ccCards.length ? `miDash couldn't compute a schedule yet: ${r.reason}` : `No cards entered yet — ask me for each card's balance, APR and minimum payment so we can compute the schedule.`;
+  }
   let known="";
-  if(lastDebt && lastDebt.available!==false){ known=` Balances currently loaded in miDash: personal ${fmtMoney(lastDebt.personal)}, business ${fmtMoney(lastDebt.business)}, total ${fmtMoney(lastDebt.total)}.`; }
-  const msg=`Help me build my credit-card payoff strategy. Pull my current card balances from 42payments with your finance tools (personal, business, total).${known}\n\nMy plan settings: strategy = ${strat}; attacking = ${p.target||"(not set yet)"}; monthly budget = ${p.monthly!=null?("$"+p.monthly):"(not set yet)"}.\n\nWalk me through a concrete plan: which card/account to pay first and why, a month-by-month payoff timeline, roughly how much interest it saves, and any changes you'd suggest to my settings. Ask me for anything you need that isn't in the data (like each card's APR).`;
+  if(lastDebt && lastDebt.available!==false){ known=`\n\nFor cross-check, 42payments shows balances: personal ${fmtMoney(lastDebt.personal)}, business ${fmtMoney(lastDebt.business)}, total ${fmtMoney(lastDebt.total)}.`; }
+  const msg=`Help me with my credit-card payoff. Strategy = ${strat}; monthly budget = ${p.monthly!=null?("$"+p.monthly):"(not set yet)"}.\n\n${computed}${known}\n\nTalk me through it: is this the right strategy for my situation, what would change if I found an extra $100–200/mo, any balance-transfer or refinance angles worth considering, and what's the single highest-impact move this month? Keep the math to what miDash computed above.`;
   closeDebtModal();
   agentAsk(msg);
 }

@@ -41,6 +41,30 @@ function safeUrl(u){ const s=String(u||"").trim(); return /^https?:\/\//i.test(s
 // --- notesHash (index.html + worker.js — must match) ---
 function notesHash(s){ let h=5381; s=String(s||""); for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0; return (h>>>0).toString(36); }
 
+// --- computePayoff (index.html) — deterministic debt engine ---
+function computePayoff(cards, monthly, strategy){
+  const cs=(cards||[]).map(c=>({ name:String(c.name||"Card"), balance:Math.max(0,+c.balance||0), apr:Math.max(0,+c.apr||0), min:Math.max(0,+c.minPayment||0) })).filter(c=>c.balance>0.005);
+  if(!cs.length) return { ok:false, reason:"no cards" };
+  const totalBal=cs.reduce((s,c)=>s+c.balance,0), totalMin=cs.reduce((s,c)=>s+c.min,0), budget=+monthly||0;
+  if(budget<=0) return { ok:false, reason:"no budget", totalBal, totalMin };
+  if(budget < totalMin-0.005) return { ok:false, reason:"below minimums", totalBal, totalMin };
+  const cmp = strategy==="snowball" ? (a,b)=>a.balance-b.balance||b.apr-a.apr : (a,b)=>b.apr-a.apr||a.balance-b.balance;
+  const MAX=1200;
+  const sim=(useExtra)=>{ const w=cs.map(c=>({...c,done:null})); let month=0, interest=0; const order=[];
+    while(w.some(c=>c.balance>0.005) && month<MAX){ month++;
+      w.forEach(c=>{ if(c.balance>0){ const i=c.balance*(c.apr/100/12); c.balance+=i; interest+=i; } });
+      let pool=budget; w.forEach(c=>{ if(c.balance>0){ const pay=Math.min(c.min,c.balance,pool); c.balance-=pay; pool-=pay; } });
+      if(useExtra){ let g=0; while(pool>0.005 && g++<w.length+2){ const a=w.filter(c=>c.balance>0.005).sort(cmp); if(!a.length) break; const t=a[0], pay=Math.min(pool,t.balance); t.balance-=pay; pool-=pay; } }
+      w.forEach(c=>{ if(c.balance<=0.005 && c.done==null){ c.done=month; order.push({name:c.name,month}); } });
+    }
+    return { months:month, interest, order, stalled: month>=MAX }; };
+  const plan=sim(true);
+  if(plan.stalled) return { ok:false, reason:"never clears", totalBal, totalMin };
+  const base=sim(false);
+  return { ok:true, strategy, monthly:budget, totalBal, totalMin, months:plan.months, totalInterest:plan.interest, order:plan.order,
+    baselineInterest: base.stalled?null:base.interest, interestSaved: base.stalled?null:Math.max(0,base.interest-plan.interest) };
+}
+
 // --- verNewer (index.html) ---
 function verNewer(a,b){ const pa=String(a).split(".").map(Number),pb=String(b).split(".").map(Number); for(let i=0;i<3;i++){ if((pa[i]||0)>(pb[i]||0))return true; if((pa[i]||0)<(pb[i]||0))return false; } return false; }
 
@@ -229,6 +253,39 @@ section("repairChat — dangling tool_use gets a synthetic error result");
   msgs=[{role:"assistant",content:[{type:"tool_use",id:"z"}]},{role:"user",content:[{type:"tool_result",tool_use_id:"z",content:"ok"}]}];
   r=repairChat(msgs);
   ok(r.length===2 && r[1].content.length===1, "complete tool_use/result pair left unchanged");
+}
+
+section("computePayoff — deterministic debt engine");
+{
+  // single 0% card: pure division, no interest
+  let r=computePayoff([{name:"A",balance:1200,apr:0,minPayment:50}], 100, "avalanche");
+  ok(r.ok && r.months===12, "0% APR, $1200 at $100/mo → 12 months");
+  ok(r.totalInterest===0, "0% APR → zero interest");
+  // below minimums is rejected
+  r=computePayoff([{name:"A",balance:1000,apr:20,minPayment:60},{name:"B",balance:1000,apr:20,minPayment:60}], 100, "avalanche");
+  ok(!r.ok && /minimum/i.test(r.reason), "budget below sum of minimums → rejected");
+  // avalanche targets highest APR first
+  r=computePayoff([{name:"Low",balance:1000,apr:5,minPayment:25},{name:"High",balance:1000,apr:25,minPayment:25}], 400, "avalanche");
+  ok(r.ok && r.order[0].name==="High", "avalanche pays highest-APR card first");
+  // snowball targets smallest balance first
+  r=computePayoff([{name:"Big",balance:3000,apr:20,minPayment:60},{name:"Small",balance:500,apr:20,minPayment:20}], 300, "snowball");
+  ok(r.ok && r.order[0].name==="Small", "snowball pays smallest-balance card first");
+  // avalanche beats or ties snowball on total interest (same inputs)
+  const cards=[{name:"X",balance:2000,apr:8,minPayment:40},{name:"Y",balance:1000,apr:24,minPayment:25}];
+  const av=computePayoff(cards,300,"avalanche"), sn=computePayoff(cards,300,"snowball");
+  ok(av.ok && sn.ok && av.totalInterest<=sn.totalInterest+0.5, "avalanche interest <= snowball interest");
+  // more money → fewer months
+  const slow=computePayoff([{name:"A",balance:5000,apr:18,minPayment:100}],150,"avalanche");
+  const fast=computePayoff([{name:"A",balance:5000,apr:18,minPayment:100}],500,"avalanche");
+  ok(slow.ok && fast.ok && fast.months<slow.months, "higher monthly → fewer months");
+  // interest saved vs minimums is non-negative and present
+  ok(fast.interestSaved!=null && fast.interestSaved>=0, "interestSaved computed and non-negative");
+  // impossibly low budget on high APR → never clears
+  r=computePayoff([{name:"A",balance:10000,apr:29,minPayment:10}], 10, "avalanche");
+  ok(!r.ok, "tiny budget on high APR → not ok (never clears or below-min)");
+  // determinism: same inputs, same output
+  const a=computePayoff(cards,300,"avalanche"), b=computePayoff(cards,300,"avalanche");
+  ok(a.months===b.months && a.totalInterest===b.totalInterest, "same inputs → identical result (deterministic)");
 }
 
 /* ================================ SUMMARY ================================ */
