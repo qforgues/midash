@@ -158,7 +158,7 @@ const TOOLS = [
     description: "List Q's open Google Tasks across ALL connected accounts. Each item has title, account, listId, taskId, due. Use listId+taskId to complete a task.",
     input_schema: { type: "object", properties: {}, required: [] } },
   { name: "create_task",
-    description: "Add a NEW Google Task (a to-do). This is how you turn an idea or a note into an actionable task. Optional 'due' as YYYY-MM-DD. Goes to Q's default task list on his primary account unless 'account' is set. Acts immediately — no confirmation needed.",
+    description: "Add a NEW Google Task (a to-do). This is how you turn an idea or a note into an actionable task. Optional 'due' accepts either an exact YYYY-MM-DD OR a natural phrase like 'tomorrow', 'next tue', 'friday', 'july 10', 'in 3 days', even 'friday 3pm' — the dashboard resolves it to Q's LOCAL date, so just pass whatever day/time he said. ALWAYS set 'due' whenever the reminder or note implies a day or deadline. Goes to Q's default task list on his primary account unless 'account' is set. Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { title: { type: "string" }, due: { type: "string" }, account: { type: "string" } }, required: ["title"] } },
   { name: "complete_task",
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
@@ -563,9 +563,15 @@ async function handleChat(request, env) {
   // The dashboard's model picker sends body.model; fall back to the cheap default.
   const model = (typeof body.model === "string" && ALLOWED_MODELS.has(body.model)) ? body.model : DEFAULT_MODEL;
 
+  // Ground the model in Q's LOCAL date (sent by the browser) so it can resolve "tomorrow",
+  // "next tue", etc. Falls back to the Worker's UTC date if the client didn't send one.
+  const today = (typeof body.today === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.today)) ? body.today : new Date().toISOString().slice(0, 10);
+  const dow = (typeof body.dow === "string") ? body.dow.replace(/[^A-Za-z]/g, "").slice(0, 12) : "";
+  const sys = SYSTEM + `\n\nToday is ${dow ? dow + ", " : ""}${today} in Q's local timezone. Resolve every relative date ("today", "tomorrow", "next Tuesday", "Friday", "in 3 days") against THIS date. Whenever a reminder or note names a day or deadline, pass that phrase to create_task's 'due' — the dashboard turns "tomorrow"/"next tue"/"friday 3pm" into Q's exact local date.`;
+
   // We stream, so timeouts aren't a concern; give the smart models headroom for thinking.
   const smart = SMART_MODELS.has(model);
-  const payload = { model, max_tokens: smart ? 6000 : 1500, system: SYSTEM, tools: TOOLS, messages, stream: true };
+  const payload = { model, max_tokens: smart ? 6000 : 1500, system: sys, tools: TOOLS, messages, stream: true };
   if (smart) {
     payload.thinking = { type: "adaptive" };       // Claude decides when/how much to think
     payload.output_config = { effort: "medium" };  // balance quality vs token spend

@@ -718,8 +718,8 @@
       <!-- Tickets (Tracker42) + Tasks side by side, 50/50 -->
       <div class="split even" id="tickets-tasks-row" style="margin-bottom:20px">
       <div class="card" id="tracker-card">
-        <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Portal42 Tickets
-          <span class="tk-badge" id="tracker-badge">0</span>
+        <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Tracker42
+          <span class="tk-badge" id="tracker-badge" title="Unread Tracker42 notifications">0</span>
           <span class="fin-state" id="tk-state">checking…</span>
           <span class="refresh" id="tracker-refresh"><span class="ricon">↻</span> refresh</span></h2>
         <div class="tk-tabs" id="tk-tabs">
@@ -786,7 +786,6 @@
     </main>
   </div>
 
-  <footer>miDash <span class="ver">v?</span> · edit links &amp; settings in the <code>CONFIG</code> block of index.html</footer>
 </div>
 
 <!-- Settings / profile -->
@@ -1027,7 +1026,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.39.0",
+  version: "1.40.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3038,7 +3037,7 @@ function renderChatHistory(){
    reconstruct the full Anthropic message ({content, stop_reason, usage, model}) so the
    tool loop and the usage meter keep working. The Worker proxies Anthropic's SSE. */
 async function streamModel(onText, msgs){
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:msgs||agentMessages, model:selectedModel()})});
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:msgs||agentMessages, model:selectedModel(), today:new Date().toLocaleDateString("en-CA"), dow:new Date().toLocaleDateString("en-US",{weekday:"long"})})});
   if(res.status===401){
     let body=null; try{ body=await res.json(); }catch(e){}
     if(body && body.error && body.error.code==="auth"){     // the Worker's passphrase gate
@@ -4055,10 +4054,20 @@ async function executeTool(name,a){
       case "create_task": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
         if(!a.title) return {error:"need a title"};
-        const dueISO=a.due?new Date(String(a.due).slice(0,10)+"T00:00:00").toISOString():null;
-        const r=await createTask(acct, a.title, dueISO);
+        // Resolve the due date in Q's LOCAL time. Accept an exact YYYY-MM-DD, OR a natural phrase
+        // ("tomorrow", "next tue", "friday", "july 10", "in 3 days", "friday 3pm") via the same
+        // parser the capture bar uses — so the agent can pass whatever Q said and the date sticks.
+        let title=a.title, ymd=null, timeStr=null;
+        if(a.due!=null && String(a.due).trim()){
+          const iso=String(a.due).match(/\d{4}-\d{2}-\d{2}/);
+          if(iso) ymd=iso[0];
+          else { const p=parseReminder(String(a.due)); ymd=p.ymd; timeStr=p.timeStr; }
+        }
+        if(timeStr && title.indexOf("(")<0) title=title+" ("+timeStr+")";   // Google Tasks stores DATE only — keep the time in the title
+        const dueISO=ymd?new Date(ymd+"T00:00:00").toISOString():null;
+        const r=await createTask(acct, title, dueISO);
         loadTasks(); if(!r.ok) return {error:"create task failed "+r.status+" — reconnect Google for Tasks write access"};
-        const c=await r.json(); return {created:true, taskId:c.id, account:acct.email};
+        const c=await r.json(); return {created:true, taskId:c.id, account:acct.email, due:ymd, title};
       }
       case "complete_task": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
