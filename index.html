@@ -1027,7 +1027,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.38.0",
+  version: "1.39.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1840,6 +1840,14 @@ function loadAccounts(){
   try{ accounts=(JSON.parse(localStorage.getItem("midash_accts")||"[]")).filter(a=>a.exp>Date.now()+60000); }catch(e){ accounts=[]; }
   accessToken = accounts[0] ? accounts[0].token : null;
 }
+/* Every email we've ever connected on this device, INCLUDING ones whose 1h token has since
+   expired (loadAccounts drops those from `accounts`, but they stay in storage). Used on boot to
+   silently re-mint a token — a Google access token can't outlive its hour, so instead we re-grant
+   one with no popup whenever the page loads and the browser's Google session is still alive. */
+function savedAcctHints(){
+  try{ return [...new Set((JSON.parse(localStorage.getItem("midash_accts")||"[]")).map(a=>a && a.email).filter(Boolean))]; }
+  catch(e){ return []; }
+}
 function shortAcct(e){ return (e||"").split("@")[0]; }
 
 /* ---- Account identity: editable alias + editable color, used throughout ---- */
@@ -2046,7 +2054,18 @@ function googleBoot() {
         rejectAllTokenWaiters(new Error((err&&err.type)||"token error")); },
     });
     loadAccounts();
-    if (accounts.length) afterAuth(); else showConnect();
+    // Boot-time silent re-grant: an access token only lives ~1h, so on every load we re-mint one
+    // for any remembered account whose token lapsed while the tab was closed. prompt:"" means NO
+    // popup as long as you're still signed into Google in this browser — the dashboard just comes
+    // up green. If your Google session is truly gone, the silent grant fails quietly and the
+    // Connect button (already shown as the fallback) is there to click. Stays 100% client-side.
+    const relapsed = savedAcctHints().filter(e => !accounts.some(a => a.email === e));
+    if (accounts.length) afterAuth();          // at least one still-valid token → up immediately
+    else if (relapsed.length) showConnect();   // fallback UI while the silent re-grant is attempted
+    else { showConnect(); return; }            // never connected here — nothing to re-mint
+    relapsed.forEach((email, i) => setTimeout(() => {
+      try { tokenClient.requestAccessToken({ prompt: "", hint: email }); } catch (e) {}
+    }, i * 1200));
   };
   // GIS script may still be loading
   if (window.google && google.accounts) start();
