@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.42.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.43.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (dashboard consolidation pass: switchboard→header pill, reminders in Tasks card, ☰ menu declutter)
+**Last updated:** 2026-07-10 (in-dashboard reminder bell: badge + chime + title-flash + OS notification)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -400,10 +400,10 @@ cd ~/miDash && wrangler deploy
 - [ ] **Notes: tombstone/merge** like projects (currently conflict-guarded, not merged).
 - [ ] **Discord weekly-digest push** — the rollup exists (`buildWeeklyDigest`); add a cron + send.
       (The cron plumbing now exists — `scheduled()` in `worker.js` — so this is a smaller lift.)
-- [ ] **In-dashboard reminder bell** (former "Phase 2", deferred) — a bell/badge + sound +
-      Notifications-API alert that rings when a `/reminders` entry is about to fire. Now trivial on
-      top of the queue: poll `GET /reminders`, ring the soonest. The "at-desk" layer atop the
-      Discord push. Pure frontend, fully ours.
+- [x] **In-dashboard reminder bell (v1.43.0):** header 🔔 with a badge; when a pending reminder
+      comes due (detected locally from the `loadReminders` cache) it rings — soft WebAudio chime +
+      tab-title flash + an OS notification when the tab is backgrounded (opt-in via the bell menu).
+      Idempotent per reminder id (localStorage). The at-desk layer atop the Discord push.
 - [x] **Reminders — miDash-owned Discord-DM push (v1.41.0):** KV queue + 1-min cron;
       `set_reminder`/`list_reminders`/`cancel_reminder` tools (browser + Discord agent); capture bar
       "⏰ Remind me to…" also fires a Discord ping when a time is given. Needs secrets
@@ -457,6 +457,9 @@ cd ~/miDash && wrangler deploy
   decluttered:** Weekly review + CC Debt moved to the ⚙️ gear menu; the live GitHub-repos list
   dropped (dup of the Projects card); Contacts is now a "Manage contacts" button opening the existing
   manager (not a 2nd live list). Capture bar slimmed to a top strip. (`loadProjects` is now dead code.)
-- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders live (secrets set,
-  end-to-end verified). Next: **in-dashboard reminder bell** (bell + sound + Notifications API on top of
-  the #reminders-strip), then maybe Discord weekly digest push or Notes merge.
+- v1.43.0: **In-dashboard reminder bell.** Header 🔔 (badge + ring animation); `checkDueReminders`
+  rings due reminders from the `loadReminders` cache — WebAudio `playChime`, `startTitleFlash`, and an
+  OS `Notification` when `document.hidden` (permission opt-in via the bell menu). Once-per-id via
+  localStorage; polls the pending list every 60s, ticks every 20s. Discord stays the guaranteed channel.
+- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM + the
+  in-dash bell) are live and end-to-end verified. Next likely: Discord weekly digest push, or Notes merge.

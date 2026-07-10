@@ -55,6 +55,11 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   CC Debt) + settings; **☰ links menu** = navigation only (external links + "Manage contacts" button).
   **Reminders render in the Tasks card** (`#reminders-strip` via `loadReminders`, refreshed inside
   `loadTasks`). `loadProjects` (the old menu repos list) is now dead code.
+- **Reminder bell (v1.43.0):** header 🔔 (`#bell-btn`/`#bell-badge`/`#bell-menu`, `initBell`). Rings due
+  reminders locally from the `loadReminders` → `reminderCache`, checked by `checkDueReminders`
+  (WebAudio chime + title flash + OS notification when hidden). Idempotent per id via localStorage
+  (`midash_rem_alerted`). It's the at-desk layer — **Discord DM stays the guaranteed channel**; don't
+  make the bell load-bearing.
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).

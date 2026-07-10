@@ -596,6 +596,17 @@
   .rem-text { color:var(--text); overflow-wrap:anywhere; flex:1; }
   .rem-x { color:var(--muted); cursor:pointer; flex:none; padding:0 3px; opacity:.7; }
   .rem-x:hover { color:var(--bad,#ff6b6b); opacity:1; }
+  /* Reminder bell (v1.43.0) — at-desk nudge when a reminder comes due. */
+  .bell-badge { display:none; position:absolute; top:-5px; right:-5px; min-width:16px; height:16px; padding:0 4px; border-radius:9px; background:#ff5a5a; color:#fff; font-size:10.5px; line-height:16px; text-align:center; font-weight:700; box-shadow:0 0 0 2px var(--surface); }
+  .bell-badge.show { display:block; }
+  @keyframes bellRing { 0%,60%,100%{ transform:rotate(0); } 8%{ transform:rotate(16deg); } 20%{ transform:rotate(-13deg); } 32%{ transform:rotate(9deg); } 44%{ transform:rotate(-6deg); } }
+  #bell-btn.ring { animation:bellRing 1.4s ease-in-out infinite; border-color:var(--accent); color:var(--accent); }
+  #bell-menu { width:280px; }
+  .bell-list { display:flex; flex-direction:column; }
+  .bell-item { display:flex; gap:8px; align-items:baseline; padding:6px 0; font-size:13px; border-bottom:1px solid var(--border); }
+  .bell-item:last-child { border-bottom:none; }
+  .bell-perm { margin-top:9px; padding-top:9px; border-top:1px solid var(--border); color:var(--accent); cursor:pointer; font-size:13px; }
+  .bell-perm:hover { text-decoration:underline; }
   .cap-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
   /* capture mode = one pill with a dropdown */
   .cap-mode-pick { position:relative; flex:0 0 auto; }
@@ -666,6 +677,8 @@
             <div style="margin-top:10px"><span class="refresh" id="sb-refresh"><span class="ricon">↻</span> re-check all</span></div>
           </div>
         </div>
+        <button id="bell-btn" class="gbtn" title="Reminders" style="padding:8px 10px;position:relative">🔔<span id="bell-badge" class="bell-badge"></span></button>
+        <div id="bell-menu" class="gear-menu" style="display:none"></div>
         <button id="gear-btn" class="gbtn" title="Profile &amp; settings" style="padding:8px 11px">⚙️</button>
         <button id="menu-btn" class="gbtn" title="Links &amp; apps" style="padding:8px 12px">☰</button>
         <div id="gear-menu" class="gear-menu" style="display:none">
@@ -1054,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.42.0",
+  version: "1.43.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -4289,10 +4302,13 @@ function fmtReminderWhen(d){
   return d.toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})+" "+t;
 }
 async function loadReminders(){
-  const box=document.getElementById("reminders-strip"); if(!box) return;
-  if(!REMINDERS_URL){ box.innerHTML=""; return; }
+  const box=document.getElementById("reminders-strip");
+  if(!REMINDERS_URL){ if(box) box.innerHTML=""; return; }
   let list=[];
   try{ const r=await fetch(REMINDERS_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); list=(j&&j.reminders)||[]; } }catch(e){ return; }
+  reminderCache=list;      // drives the bell's local due-check (see checkDueReminders)
+  checkDueReminders();
+  if(!box) return;
   if(!list.length){ box.innerHTML=""; return; }
   list.sort((a,b)=>a.at-b.at);
   const rows=list.map(r=>`<div class="rem-row"><span class="rem-when">⏰ ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span><span class="rem-x" data-id="${escAttr(r.id)}" title="Cancel this reminder">✕</span></div>`).join("");
@@ -4303,6 +4319,72 @@ async function cancelReminderId(id){
   if(!REMINDERS_URL||!id) return;
   try{ await fetch(REMINDERS_URL+"?id="+encodeURIComponent(id),{method:"DELETE",headers:{...dashAuthHeader()}}); }catch(e){}
   loadReminders();
+}
+
+/* ---- In-dashboard reminder BELL (v1.43.0) ----------------------------------------------------
+   At-desk layer on top of the Discord DM: when a pending reminder comes due (detected locally from
+   the loadReminders cache), ring it — badge + soft chime + tab-title flash + an OS notification if
+   the tab is backgrounded. Best-effort by design; Discord stays the guaranteed channel. Firing is
+   idempotent per reminder id (localStorage), so a reminder rings once even across polls/reloads. */
+let reminderCache=[];      // most recent pending list (set by loadReminders)
+let rung=[];               // reminders that rang this session (newest first) — shown in the bell menu
+let bellCount=0;
+let audioCtx=null, _baseTitle=null, _titleTimer=null;
+function unlockAudio(){ try{ if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)(); if(audioCtx.state==="suspended") audioCtx.resume(); }catch(e){} }
+function playChime(){
+  if(!audioCtx || audioCtx.state!=="running") return;
+  const t0=audioCtx.currentTime;
+  [[880,0],[1174.66,0.13]].forEach(([f,dt])=>{ const o=audioCtx.createOscillator(), g=audioCtx.createGain(); o.type="sine"; o.frequency.value=f;
+    g.gain.setValueAtTime(0.0001,t0+dt); g.gain.exponentialRampToValueAtTime(0.16,t0+dt+0.02); g.gain.exponentialRampToValueAtTime(0.0008,t0+dt+0.34);
+    o.connect(g); g.connect(audioCtx.destination); o.start(t0+dt); o.stop(t0+dt+0.4); });
+}
+function startTitleFlash(){ if(_titleTimer) return; if(_baseTitle==null) _baseTitle=document.title; let on=false;
+  _titleTimer=setInterval(()=>{ on=!on; document.title = on ? `🔔 (${bellCount}) reminder${bellCount>1?"s":""}` : (_baseTitle||"miDash"); }, 1000); }
+function stopTitleFlash(){ if(_titleTimer){ clearInterval(_titleTimer); _titleTimer=null; } if(_baseTitle!=null) document.title=_baseTitle; }
+function _remAlerted(){ try{ return JSON.parse(localStorage.getItem("midash_rem_alerted")||"{}")||{}; }catch(e){ return {}; } }
+function _markAlerted(id){ try{ const a=_remAlerted(); a[id]=Date.now(); const cut=Date.now()-2*86400000; for(const k in a) if(a[k]<cut) delete a[k]; localStorage.setItem("midash_rem_alerted", JSON.stringify(a)); }catch(e){} }
+function renderBellBadge(){ const b=document.getElementById("bell-badge"); if(b){ b.textContent=bellCount>0?String(bellCount):""; b.classList.toggle("show", bellCount>0); }
+  const btn=document.getElementById("bell-btn"); if(btn) btn.classList.toggle("ring", bellCount>0); }
+function ringReminder(rem){
+  bellCount++; rung.unshift({text:rem.text, at:rem.at}); rung=rung.slice(0,20);
+  renderBellBadge(); playChime(); startTitleFlash();
+  if(document.hidden){ try{ if("Notification" in window && Notification.permission==="granted"){ const n=new Notification("⏰ miDash reminder",{body:String(rem.text||""), tag:"midash-rem-"+rem.id}); n.onclick=()=>{ window.focus(); n.close(); }; } }catch(e){} }
+}
+function checkDueReminders(){
+  const now=Date.now(), a=_remAlerted();
+  reminderCache.forEach(r=>{ if(!r||a[r.id]) return; if(r.at<=now && (now-r.at)<5*60000){ _markAlerted(r.id); ringReminder(r); } });
+}
+function ackBell(){ bellCount=0; renderBellBadge(); stopTitleFlash(); }
+function renderBellMenu(){
+  const box=document.getElementById("bell-menu"); if(!box) return;
+  const items = rung.length
+    ? rung.map(r=>`<div class="bell-item"><span class="rem-when">⏰ ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span></div>`).join("")
+    : `<div class="empty" style="padding:6px 2px">No reminders have rung yet. Pending ones show in the Tasks card.</div>`;
+  const perm = ("Notification" in window && Notification.permission!=="granted")
+    ? `<div class="bell-perm" id="bell-enable">🔔 Enable desktop alerts</div>` : "";
+  box.innerHTML=`<div class="gear-sec"><h3><span class="dot">🔔</span>Reminders</h3><div class="bell-list">${items}</div>${perm}</div>`;
+  const en=document.getElementById("bell-enable");
+  if(en) en.onclick=(e)=>{ e.stopPropagation(); try{ Notification.requestPermission().then(()=>renderBellMenu()); }catch(err){} };
+}
+function initBell(){
+  // Unlock the audio context on the first real user gesture (browsers block audio before one).
+  const unlock=()=>{ unlockAudio(); window.removeEventListener("pointerdown",unlock); window.removeEventListener("keydown",unlock); };
+  window.addEventListener("pointerdown",unlock); window.addEventListener("keydown",unlock);
+  const btn=document.getElementById("bell-btn"), menu=document.getElementById("bell-menu");
+  if(btn&&menu){
+    btn.onclick=(e)=>{ e.stopPropagation();
+      ["gear-menu","links-menu","sb-menu"].forEach(id=>{ const m=document.getElementById(id); if(m) m.style.display="none"; });
+      const open=menu.style.display==="block";
+      if(open){ menu.style.display="none"; return; }
+      renderBellMenu(); menu.style.display="block"; ackBell();   // opt into OS alerts via the menu's "Enable desktop alerts" link
+    };
+    menu.addEventListener("click",(e)=>e.stopPropagation());
+    document.addEventListener("click",()=>{ menu.style.display="none"; });
+  }
+  window.addEventListener("focus", stopTitleFlash);   // you're looking now — stop nagging the title
+  loadReminders();
+  setInterval(loadReminders, 60000);      // refresh the pending list
+  setInterval(checkDueReminders, 20000);  // ring due ones promptly between polls
 }
 
 /* ---- Dashboard passphrase ----
@@ -4732,7 +4814,7 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initWeekly(); initCollapsible(); showVersion(); googleBoot();
+loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initWeekly(); initCollapsible(); initBell(); showVersion(); googleBoot();
 </script>
 </body>
 </html>
