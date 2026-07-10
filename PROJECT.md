@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.43.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.44.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (in-dashboard reminder bell: badge + chime + title-flash + OS notification)
+**Last updated:** 2026-07-10 (resilient boot + curated theme palettes; fixes v?/collapse/modal cascade)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -461,5 +461,12 @@ cd ~/miDash && wrangler deploy
   rings due reminders from the `loadReminders` cache — WebAudio `playChime`, `startTitleFlash`, and an
   OS `Notification` when `document.hidden` (permission opt-in via the bell menu). Once-per-id via
   localStorage; polls the pending list every 60s, ticks every 20s. Discord stays the guaranteed channel.
+- v1.44.0: **Resilient boot + better theme.** Boot is now a `boot()` runner that isolates every init
+  in its own try/catch (a single throw used to cascade — `v?` version, panels not collapsing, weekly
+  modal not wiring its Close). `showVersion` runs first; failures `console.error("[boot] <step> failed")`.
+  Theme generator rebuilt: **curated `THEME_PALETTES`** (coloured darks like navy/forest/plum + soft
+  lights — no more "black + harsh accent"), pattern ink is now a **subtle tint** so patterns read as soft
+  texture, plus a new `soft` mesh pattern and repeat-avoidance between rolls.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM + the
-  in-dash bell) are live and end-to-end verified. Next likely: Discord weekly digest push, or Notes merge.
+  in-dash bell) live + verified. ⚠️ **Follow-up:** find which boot step threw (check console for
+  `[boot] … failed`) — the isolated boot masks it but the underlying init may still no-op.

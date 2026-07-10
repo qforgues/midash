@@ -1067,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.43.0",
+  version: "1.44.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1926,10 +1926,12 @@ const BG_PATTERNS = {
   solid:    (a,b)=>({color:a, image:"none", size:"auto"}),
   gradient: (a,b)=>({color:a, image:`linear-gradient(135deg, ${a}, ${b})`, size:"cover"}),
   vertical: (a,b)=>({color:a, image:`linear-gradient(${a}, ${b})`, size:"cover"}),
-  stripes:  (a,b)=>({color:a, image:`repeating-linear-gradient(45deg, ${a} 0 14px, ${b} 14px 28px)`, size:"auto"}),
-  dots:     (a,b)=>({color:a, image:`radial-gradient(${b} 2.5px, transparent 2.6px)`, size:"22px 22px"}),
-  grid:     (a,b)=>({color:a, image:`linear-gradient(${b} 1px, transparent 1px), linear-gradient(90deg, ${b} 1px, transparent 1px)`, size:"28px 28px"}),
-  checker:  (a,b)=>({color:a, image:`conic-gradient(${b} 25%, transparent 0 50%, ${b} 0 75%, transparent 0)`, size:"40px 40px"}),
+  stripes:  (a,b)=>({color:a, image:`repeating-linear-gradient(45deg, ${a} 0 22px, ${b} 22px 44px)`, size:"auto"}),
+  dots:     (a,b)=>({color:a, image:`radial-gradient(${b} 2px, transparent 2.4px)`, size:"24px 24px"}),
+  grid:     (a,b)=>({color:a, image:`linear-gradient(${b} 1px, transparent 1px), linear-gradient(90deg, ${b} 1px, transparent 1px)`, size:"32px 32px"}),
+  checker:  (a,b)=>({color:a, image:`conic-gradient(${b} 25%, transparent 0 50%, ${b} 0 75%, transparent 0)`, size:"44px 44px"}),
+  // Soft two-glow mesh — modern, calm; the accent hint sits in a corner over the base.
+  soft:     (a,b)=>({color:a, image:`radial-gradient(120% 120% at 0% 0%, ${b} 0%, ${a} 45%), radial-gradient(120% 120% at 100% 100%, ${b} 0%, transparent 45%)`, size:"cover"}),
 };
 function bgSettings(){ try{ return JSON.parse(localStorage.getItem("midash_bg")||"null"); }catch(e){ return null; } }
 function saveBg(s){ try{ localStorage.setItem("midash_bg", JSON.stringify(s)); }catch(e){} applyBackground(); }
@@ -1983,12 +1985,35 @@ function hsl2hex(h,s,l){
   const hx=v=>v.toString(16).padStart(2,"0");
   return "#"+hx(f(0))+hx(f(8))+hx(f(4));
 }
-function randomPattern(){ const pool=["gradient","vertical","stripes","dots","grid","checker"]; return pool[randInt(pool.length)]; }
+// Weighted toward the soft patterns (gradient/vertical/dots/grid); stripes/checker are rarer.
+function randomPattern(){ const pool=["gradient","gradient","vertical","vertical","dots","grid","soft","soft","stripes","checker"]; return pool[randInt(pool.length)]; }
+/* Curated palettes — the fix for "always black + something". Each is [a: background base,
+   b: SUBTLE pattern ink (a low-contrast tint of a, so patterns read as soft texture not loud
+   lines), accent: the one vivid colour, used for buttons/links via applyTheme]. Dark palettes
+   are *coloured* darks (navy/forest/plum/espresso), never pure black. Mixed with soft lights. */
+const THEME_PALETTES = [
+  { a:"#0f1a2b", b:"#1c2a44", accent:"#5b9dff", name:"deep navy" },
+  { a:"#101a15", b:"#1c2d23", accent:"#4fd39a", name:"forest night" },
+  { a:"#1a1222", b:"#2a1b37", accent:"#c58cff", name:"plum dusk" },
+  { a:"#101819", b:"#1c2b2d", accent:"#3fd0c9", name:"charcoal teal" },
+  { a:"#1c1511", b:"#2d211a", accent:"#e0975a", name:"espresso" },
+  { a:"#201223", b:"#311b34", accent:"#ff86b4", name:"deep magenta" },
+  { a:"#14141f", b:"#212132", accent:"#8b8dff", name:"indigo slate" },
+  { a:"#0d1712", b:"#17281f", accent:"#5ad986", name:"midnight green" },
+  { a:"#221a12", b:"#33281b", accent:"#f0b64f", name:"amber dark" },
+  { a:"#f6f2ea", b:"#ece4d6", accent:"#b5794a", name:"warm paper" },
+  { a:"#edf1f6", b:"#dde6f0", accent:"#3f7fd6", name:"cool mist" },
+  { a:"#eef1ea", b:"#dfe7d8", accent:"#5a9161", name:"sage" },
+  { a:"#f7eef1", b:"#efdee5", accent:"#c65f83", name:"blush" },
+  { a:"#f0eef7", b:"#e3def1", accent:"#7a6bd6", name:"lavender" },
+  { a:"#f4efe5", b:"#e9e1d1", accent:"#b98a2e", name:"sand" },
+];
 function randomThemeColors(){
-  const h=randInt(360), h2=(h+150+randInt(80))%360, dark=Math.random()<0.5;
-  return dark
-    ? { a:hsl2hex(h,30+randInt(20),10+randInt(8)),  b:hsl2hex(h2,55+randInt(25),52+randInt(12)), accent:hsl2hex(h2,60+randInt(20),58+randInt(10)) }
-    : { a:hsl2hex(h,25+randInt(25),92+randInt(5)),  b:hsl2hex(h2,50+randInt(25),42+randInt(12)), accent:hsl2hex(h2,55+randInt(20),40+randInt(12)) };
+  let last=-1; try{ last=parseInt(localStorage.getItem("midash_palette_idx"),10); }catch(e){}
+  let i=randInt(THEME_PALETTES.length), guard=0;
+  while(i===last && guard++<8) i=randInt(THEME_PALETTES.length);   // avoid repeating the last look
+  try{ localStorage.setItem("midash_palette_idx", String(i)); }catch(e){}
+  const p=THEME_PALETTES[i]; return { a:p.a, b:p.b, accent:p.accent };
 }
 function rollTheme(newPattern,newColors){
   const cur=bgSettings()||{}, cols=randomThemeColors();
@@ -4814,7 +4839,26 @@ function initPWA(){
 }
 
 /* ---------- Boot ---------- */
-loadAliases(); loadAcctColors(); applyVersionTheme(); applyBackground(); render(); tick(); setInterval(tick,10000); initModelPicker(); initGearMenu(); initSettings(); initChat(); initNotes(); initCapture(); initFocus(); initPWA(); initKeyModal(); initTasksAdd(); initTaskModal(); initContactsManager(); initProjects(); initTracker(); initSwitchboard(); initDebt(); initWeekly(); initCollapsible(); initBell(); showVersion(); googleBoot();
+/* Boot — each step isolated so one throwing init can't cascade and kill the rest (a single
+   failure used to silently break everything after it: version stuck on "v?", panels not
+   collapsing, modals not wiring). Failures are logged with their step name for diagnosis. */
+function boot(){
+  const steps=[
+    ["showVersion",showVersion],          // first, so the header version is always right
+    ["loadAliases",loadAliases],["loadAcctColors",loadAcctColors],
+    ["applyVersionTheme",applyVersionTheme],["applyBackground",applyBackground],
+    ["render",render],["tick",tick],["tickTimer",()=>setInterval(tick,10000)],
+    ["initModelPicker",initModelPicker],["initGearMenu",initGearMenu],["initSettings",initSettings],
+    ["initChat",initChat],["initNotes",initNotes],["initCapture",initCapture],["initFocus",initFocus],
+    ["initPWA",initPWA],["initKeyModal",initKeyModal],["initTasksAdd",initTasksAdd],
+    ["initTaskModal",initTaskModal],["initContactsManager",initContactsManager],["initProjects",initProjects],
+    ["initTracker",initTracker],["initSwitchboard",initSwitchboard],["initDebt",initDebt],
+    ["initWeekly",initWeekly],["initCollapsible",initCollapsible],["initBell",initBell],
+    ["googleBoot",googleBoot],
+  ];
+  for(const [name,fn] of steps){ try{ fn(); }catch(e){ console.error("[boot] "+name+" failed:", e); } }
+}
+boot();
 </script>
 </body>
 </html>

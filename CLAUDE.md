@@ -17,9 +17,13 @@ state. When a feature could ride a vendor's built-in behavior OR be built on our
 ours (see reminders vs Google Calendar's native reminders). Keep it simple/fast/cheap while doing so.
 
 ## Every change
+- **Boot is isolated** (`boot()` at the bottom of `index.html`): each init runs in its own try/catch
+  and logs `[boot] <step> failed`. Add new inits to that `steps` array — do NOT chain them on one line
+  (a single throw used to cascade: `v?`, no collapse, unwired modals). `showVersion` runs first.
 - **Dashboard change** → bump `CONFIG.version` in `index.html` (this is how Q tells builds apart).
   Versioning is Q's, NOT semver: **middle** segment = new background *design* + colors; **last**
-  segment = new *colors* only. Commit + push; landing on the new build the first time needs a hard
+  segment = new *colors* only. The look comes from **curated `THEME_PALETTES`** (edit that array to add
+  looks) + `BG_PATTERNS`; a middle/last bump re-rolls via `applyVersionTheme`→`rollTheme`. Commit + push; landing on the new build the first time needs a hard
   refresh (GitHub Pages CDN is sticky).
 - **Worker change** → `npx wrangler deploy` (from repo root; uses `wrangler.jsonc`). Also commit it.
 - **Validate before committing:**
