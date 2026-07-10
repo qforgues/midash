@@ -197,8 +197,10 @@ function parseReminder(text){
   }
   let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
   title=title.replace(/\s{2,}/g," ").trim();
+  title=title.replace(/^\s*(please\s+)?(remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|don'?t forget to)\s+/i,"");
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
+  if(title) title=title.charAt(0).toUpperCase()+title.slice(1);
   return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
 }
 function resolveAt(v){
@@ -420,6 +422,16 @@ section("resolveAt — reminder time resolution (epoch / ISO-local / relative / 
   const r3=resolveAt("friday 3pm"); ok(typeof r3==="number" && r3>Date.now(), "'friday 3pm' → a future epoch-ms");
   // junk / empty → null so callers can reject it
   ok(resolveAt(null)===null && resolveAt("")===null && resolveAt("someday")===null, "unparseable → null");
+}
+
+section("parseReminder — title reads as a clean action (strip 'remind me to…', capitalize)");
+{
+  ok(parseReminder("remind me to have Rachel call Michigan").title==="Have Rachel call Michigan", "'remind me to X' → 'X' (capitalized)");
+  ok(parseReminder("remember to buy milk").title==="Buy milk", "'remember to X' → 'X'");
+  ok(parseReminder("reminder: send the invoice").title==="Send the invoice", "'reminder: X' → 'X'");
+  ok(parseReminder("call the dentist friday at 3pm").title==="Call the dentist", "no lead-in: still cleaned + capitalized, date/time stripped");
+  ok(parseReminder("remind me that groceries are low tomorrow").title==="Groceries are low", "'remind me that X …tomorrow' → 'X' (date stripped)");
+  ok(parseReminder("Buy groceries").title==="Buy groceries", "plain text unchanged");
 }
 
 /* ================================ SUMMARY ================================ */

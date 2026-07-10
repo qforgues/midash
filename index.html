@@ -1067,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.2",
+  version: "1.44.3",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2901,55 +2901,54 @@ async function loadTasks(){
   }
   renderTasks(out, err, failedAccts);
 }
-const TASKS_PER=3;             // show 3 at a time, page through the rest
-let taskItems=[], taskPage=0, taskFailed=[];
+// Show ALL tasks (v1.44.3 — retired the 3-at-a-time pager). Completing a task removes just that
+// row in place — no reload, no page reset, no scroll jump (clearing #14 used to snap back to 1–3).
+let taskItems=[], taskFailed=[];
+function hideTaskPager(){ const pg=document.getElementById("tasks-pager"); if(pg) pg.style.display="none"; }
 function renderTasks(items, err, failedAccts){
-  const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
+  const box=document.getElementById("tasks");
   taskFailed=failedAccts||[];
-  if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; if(pager)pager.style.display="none"; wireReconnect("reconnect-tasks"); return; }
+  if(!items.length && err){ box.innerHTML=`<div class="needsauth" style="line-height:1.4">${err}<br>${reconnectBtn("reconnect-tasks")}</div>`; hideTaskPager(); wireReconnect("reconnect-tasks"); return; }
   // sort by due date ascending (string compare on YYYY-MM-DD); undated tasks fall to the bottom
   items.sort((a,b)=>{ const av=a.dueDate||"9999-99-99", bv=b.dueDate||"9999-99-99"; return av<bv?-1:av>bv?1:0; });
-  taskItems=items; taskPage=0;
-  renderTasksPage();
+  taskItems=items;
+  renderTasksList();
 }
-function renderTasksPage(){
-  const box=document.getElementById("tasks"), pager=document.getElementById("tasks-pager");
+function taskRowHTML(t, multi){
+  const p=multi?acctColor(t.acct):"var(--accent)";
+  const due=t.dueDate?`<span class="att">📅 ${fmtDue(t.dueDate)}</span>`:`<span class="att" style="opacity:.55">add due ›</span>`;
+  const tag=multi?acctPill(t.acct):"";
+  return `<div class="item taskrow" style="--p:${p}" data-acct="${escAttr(t.acct)}" data-list="${escAttr(t.listId||"")}" data-task="${escAttr(t.taskId||"")}" title="Tap to edit">
+      <span class="tcheck" title="Mark done"></span><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
+}
+function wireTaskRow(row){
+  row.style.cursor="pointer";
+  row.onclick=()=>openTaskModal(row.dataset.task);
+  const el=row.querySelector(".tcheck");
+  if(!el) return;
+  el.onclick=async(e)=>{
+    e.stopPropagation();   // don't open the editor when ticking it off
+    const acct=acctByEmail(row.dataset.acct);
+    if(!acct||!row.dataset.task) return;
+    el.textContent="✓"; row.style.opacity=".5";
+    const r=await completeTaskApi(acct, row.dataset.list, row.dataset.task);
+    if(!r.ok){ el.textContent=""; row.style.opacity="1"; alert("Couldn't complete the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google)."); return; }
+    // Remove JUST this row, in place — collapse it out smoothly, leave the rest untouched.
+    taskItems=taskItems.filter(t=>t.taskId!==row.dataset.task);
+    row.style.maxHeight=row.offsetHeight+"px"; row.style.overflow="hidden";
+    requestAnimationFrame(()=>{ row.style.transition="opacity .18s, max-height .25s .04s, padding .25s .04s"; row.style.opacity="0"; row.style.maxHeight="0"; row.style.paddingTop="0"; row.style.paddingBottom="0"; });
+    setTimeout(()=>{ row.remove(); if(!taskItems.length){ const box=document.getElementById("tasks"); if(box) box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; } }, 300);
+  };
+}
+function renderTasksList(){
+  const box=document.getElementById("tasks"); hideTaskPager();
   const failNote = taskFailed.length
     ? `<div class="needsauth" style="margin-top:12px;line-height:1.4">${taskFailed.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>` : "";
-  if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(pager)pager.style.display="none"; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
+  if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
   const multi=accounts.length>1;
-  const pages=Math.ceil(taskItems.length/TASKS_PER);
-  taskPage=Math.max(0,Math.min(taskPage,pages-1));
-  const start=taskPage*TASKS_PER;
-  box.innerHTML=taskItems.slice(start,start+TASKS_PER).map(t=>{
-    const p=multi?acctColor(t.acct):"var(--accent)";
-    const due=t.dueDate?`<span class="att">📅 ${fmtDue(t.dueDate)}</span>`:`<span class="att" style="opacity:.55">add due ›</span>`;
-    const tag=multi?acctPill(t.acct):"";
-    return `<div class="item taskrow" style="--p:${p}" data-acct="${escAttr(t.acct)}" data-list="${escAttr(t.listId||"")}" data-task="${escAttr(t.taskId||"")}" title="Tap to edit">
-      <span class="tcheck" title="Mark done"></span><span class="s">${esc(t.title)}${tag}</span>${due}</div>`;
-  }).join("")+failNote;
-  box.querySelectorAll(".taskrow").forEach(row=>{
-    row.style.cursor="pointer";
-    row.onclick=()=>openTaskModal(row.dataset.task);
-    const el=row.querySelector(".tcheck");
-    if(el) el.onclick=async(e)=>{
-      e.stopPropagation();   // don't open the editor when ticking it off
-      const acct=acctByEmail(row.dataset.acct);
-      if(!acct||!row.dataset.task) return;
-      el.textContent="✓"; row.style.opacity=.5;
-      const r=await completeTaskApi(acct, row.dataset.list, row.dataset.task);
-      if(r.ok){ setTimeout(loadTasks,350); }
-      else { el.textContent=""; row.style.opacity=1; alert("Couldn't complete the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google)."); }
-    };
-  });
+  box.innerHTML=`<div class="tasks-list">${taskItems.map(t=>taskRowHTML(t,multi)).join("")}</div>`+failNote;
+  box.querySelectorAll(".taskrow").forEach(wireTaskRow);
   if(taskFailed.length) wireReconnect("reconnect-tasks");
-  if(pages<=1){ if(pager)pager.style.display="none"; return; }
-  pager.style.display="flex";
-  pager.innerHTML=`<button id="t-prev"${taskPage===0?" disabled":""}>‹ prev</button>
-    <span>${start+1}–${Math.min(start+TASKS_PER,taskItems.length)} of ${taskItems.length}</span>
-    <button id="t-next"${taskPage>=pages-1?" disabled":""}>next ›</button>`;
-  document.getElementById("t-prev").onclick=()=>{ taskPage--; renderTasksPage(); };
-  document.getElementById("t-next").onclick=()=>{ taskPage++; renderTasksPage(); };
 }
 function initTasksAdd(){
   const f=document.getElementById("task-add"); if(!f) return;
@@ -4691,8 +4690,12 @@ function parseReminder(text){
   }
   let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
   title=title.replace(/\s{2,}/g," ").trim();
+  // Strip a leading "remind me (to/that/about)…" / "remember to…" / "reminder:" lead-in so the
+  // task/reminder reads as a proper action ("Have Rachel call…", not "remind me to have Rachel…").
+  title=title.replace(/^\s*(please\s+)?(remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|don'?t forget to)\s+/i,"");
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
+  if(title) title=title.charAt(0).toUpperCase()+title.slice(1);   // read as a sentence
   return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
 }
 /* "Remind me to…" → a REAL Google Task with a parsed due date. Say "…by Friday 3pm" and it
