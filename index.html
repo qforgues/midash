@@ -596,9 +596,11 @@
   /* ---- Command bar: universal capture + focus filters (v1.8) ---- */
   .cmd-card { padding:9px 12px; }   /* thin top strip (v1.42.0 consolidation) */
   /* Reminders live in the Tasks card (v1.42.0). Timed Discord-DM pings; ✕ cancels one. */
-  .reminders-strip { margin-top:12px; }
-  .reminders-strip:empty { margin-top:0; }
-  .rem-head { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; display:flex; align-items:center; gap:7px; border-top:1px solid var(--border); padding-top:11px; }
+  .reminders-strip { margin:0; }
+  .reminders-strip:not(:empty) { margin-bottom:13px; padding-bottom:11px; border-bottom:1px solid var(--border); }
+  .rem-head { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; display:flex; align-items:center; gap:7px; }
+  .tasks-toggle { margin-top:10px; font-size:12.5px; color:var(--muted); cursor:pointer; display:inline-block; }
+  .tasks-toggle:hover { color:var(--accent); text-decoration:underline; }
   .rem-row { display:flex; align-items:baseline; gap:9px; padding:5px 0; font-size:13.5px; }
   .rem-when { color:var(--accent); white-space:nowrap; font-variant-numeric:tabular-nums; flex:none; }
   .rem-text { color:var(--text); overflow-wrap:anywhere; flex:1; }
@@ -774,10 +776,10 @@
         <div class="card" id="tasks-card">
           <h2><span class="dot" data-ic="checks"></span>Tasks &amp; Reminders
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="reminders-strip" class="reminders-strip"></div>
           <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
           <div id="tasks-pager" class="pager" style="display:none"></div>
-          <div id="reminders-strip" class="reminders-strip"></div>
         </div>
       </div>
 
@@ -1070,7 +1072,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.6",
+  version: "1.44.7",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2941,10 +2943,16 @@ async function loadTasks(){
   }
   renderTasks(out, err, failedAccts);
 }
-// Show ALL tasks (v1.44.3 — retired the 3-at-a-time pager). Completing a task removes just that
-// row in place — no reload, no page reset, no scroll jump (clearing #14 used to snap back to 1–3).
-let taskItems=[], taskFailed=[];
+// Tasks toggle between the first 5 and ALL (v1.44.7). Completing a task removes just that row in
+// place — no reload, no page reset, no scroll jump (clearing #14 used to snap back to 1–3).
+const TASKS_SHOW=5;
+let taskItems=[], taskFailed=[], tasksExpanded=false;
 function hideTaskPager(){ const pg=document.getElementById("tasks-pager"); if(pg) pg.style.display="none"; }
+function syncTasksToggle(){
+  const tg=document.getElementById("tasks-toggle"); if(!tg) return;
+  if(taskItems.length<=TASKS_SHOW){ tg.remove(); return; }   // no longer worth a toggle
+  tg.textContent = tasksExpanded ? "show fewer" : "show all "+taskItems.length;
+}
 function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks");
   taskFailed=failedAccts||[];
@@ -2977,7 +2985,7 @@ function wireTaskRow(row){
     taskItems=taskItems.filter(t=>t.taskId!==row.dataset.task);
     row.style.maxHeight=row.offsetHeight+"px"; row.style.overflow="hidden";
     requestAnimationFrame(()=>{ row.style.transition="opacity .18s, max-height .25s .04s, padding .25s .04s"; row.style.opacity="0"; row.style.maxHeight="0"; row.style.paddingTop="0"; row.style.paddingBottom="0"; });
-    setTimeout(()=>{ row.remove(); if(!taskItems.length){ const box=document.getElementById("tasks"); if(box) box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; } }, 300);
+    setTimeout(()=>{ row.remove(); if(!taskItems.length){ const box=document.getElementById("tasks"); if(box) box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; } else syncTasksToggle(); }, 300);
   };
 }
 function renderTasksList(){
@@ -2985,9 +2993,13 @@ function renderTasksList(){
   const failNote = taskFailed.length
     ? `<div class="needsauth" style="margin-top:12px;line-height:1.4">${taskFailed.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>` : "";
   if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
-  const multi=accounts.length>1;
-  box.innerHTML=`<div class="tasks-list">${taskItems.map(t=>taskRowHTML(t,multi)).join("")}</div>`+failNote;
+  const multi=accounts.length>1, total=taskItems.length;
+  const showAll = tasksExpanded || total<=TASKS_SHOW;
+  const shown = showAll ? taskItems : taskItems.slice(0, TASKS_SHOW);
+  const toggle = total>TASKS_SHOW ? `<div class="tasks-toggle" id="tasks-toggle">${showAll?"show fewer":"show all "+total}</div>` : "";
+  box.innerHTML=`<div class="tasks-list">${shown.map(t=>taskRowHTML(t,multi)).join("")}</div>${toggle}`+failNote;
   box.querySelectorAll(".taskrow").forEach(wireTaskRow);
+  const tg=document.getElementById("tasks-toggle"); if(tg) tg.onclick=()=>{ tasksExpanded=!tasksExpanded; renderTasksList(); };
   if(taskFailed.length) wireReconnect("reconnect-tasks");
 }
 function initTasksAdd(){
