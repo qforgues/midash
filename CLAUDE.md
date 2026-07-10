@@ -53,7 +53,15 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   merges server-side (tombstone-aware); notes PUT is hash-guarded (409 on concurrent change).
 - **Render safety:** external strings (Gmail/ticket/contact/agent-set) → `esc()` (body) / `escAttr()`
   (attribute); external URLs → `safeUrl()` (http(s) only). Never raw-interpolate into `innerHTML`.
-- **Header layout (v1.42.0 consolidation):** the Switchboard is a header **🎛️ pill** (`#sb-pill` →
+- **Icons, not emoji (v1.44.6):** UI chrome uses a minimalist inline-SVG set — `ICON_PATHS` +
+  `ic(name[,cls])` for dynamic HTML, `data-ic="name"` placeholders filled by `renderIcons()` (runs at
+  boot; call `renderIcons(subtree)` after rendering dynamic content with `data-ic`). Do NOT add emoji
+  to chrome; add a path to `ICON_PATHS` and use it. `.ic` is stroke=currentColor, sized to text. (A
+  long tail of emoji still lives in transient flashes / deep features — replace opportunistically.)
+- **Menus (v1.44.6):** ⚙️ gear = Appearance, Weekly review, CC Debt, Check-update, Install (icon
+  pills). ☰ burger = link sections + **Dashboard passphrase** (moved here). Contacts is no longer a
+  menu item — it lives with the **Stay connected** card (`reach-manage`).
+- **Header layout (v1.42.0 consolidation):** the Switchboard is a header **pill** (`#sb-pill` →
   `#sb-menu` dropdown, wired via the `pairs` array in `initGearMenu`); its LED mirrors the worst
   connection state (set in `renderSwitchboard`). **⚙️ gear menu** = dashboard tools (Weekly review,
   CC Debt) + settings; **☰ links menu** = navigation only (external links + "Manage contacts" button).

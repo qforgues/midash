@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.44.5` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.44.6` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (agent can now reschedule tasks — new update_task tool)
+**Last updated:** 2026-07-10 (minimalist icon system — de-emoji the chrome; menu reorg; Google-light fix)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -483,6 +483,16 @@ cd ~/miDash && wrangler deploy
   to/remember to/reminder:" and capitalizes so names read as actions. **Tasks card**: retired the
   3-at-a-time pager (shows ALL), and completing a task removes just that row in place — no reload, no
   page reset, no scroll jump (`renderTasksList`/`wireTaskRow`; clearing #14 used to snap back to 1–3).
+- v1.44.5: **update_task** agent tool — reschedule/rename a Google Task (change due date). Fixed the
+  agent telling Q to edit Tasks manually.
+- v1.44.6: **Minimalist icon system + menu reorg.** Replaced emoji in the chrome (header bell/gear/menu/
+  switchboard, card headers, capture modes, Tracker tabs, menus, reminders strip) with an inline-SVG
+  set (`ICON_PATHS`/`ic()`/`data-ic`+`renderIcons`). Gear menu = icon pills (Appearance, Weekly, CC
+  Debt, Check-update, Install); **Dashboard passphrase moved to the ☰ burger**; **Contacts removed from
+  the menu** (lives with the Stay-connected card). Fixed the **Google switchboard light** going amber
+  after an update (it ran before Google finished connecting — now re-checks in `afterAuth`).
+  ⚠️ Long tail of emoji remains in transient flashes / deep features (property-area glyphs, model
+  picker, agent chat, flash ticks ✓🎉) — de-emoji opportunistically next.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
-  in-dash bell), consolidation, curated theme, boot fix, and the capture/tasks rework are all live +
-  on `main`. Possible next: "🎨 shuffle look" button (cycle `THEME_PALETTES`), Discord weekly-digest, Notes merge.
+  in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, and the
+  icon pass are all live + on `main`. Possible next: finish de-emoji sweep, "shuffle look" button, Discord weekly-digest.

@@ -88,7 +88,15 @@
   @media (max-width:560px){ .side-sec .links { left:auto; right:0; } }
   .card h2 { font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:16px; }
-  .card h2 .dot { font-size:16px; }
+  .card h2 .dot { font-size:16px; display:inline-flex; }
+  /* ---- Minimalist line icons (no emoji). Inline SVG, stroke=currentColor, sized to text. ---- */
+  .ic { width:1.15em; height:1.15em; display:inline-block; vertical-align:-0.18em; flex:none;
+        fill:none; stroke:currentColor; stroke-width:1.85; stroke-linecap:round; stroke-linejoin:round; }
+  .card h2 .dot .ic { width:17px; height:17px; vertical-align:middle; color:var(--accent); }
+  .icon-btn { width:34px; height:34px; padding:0; display:inline-flex; align-items:center; justify-content:center; }
+  .icon-btn .ic { width:18px; height:18px; }
+  .cap-mode-btn .ic, .cap-mode-opt .ic { width:15px; height:15px; }
+  .gbtn .ic { width:15px; height:15px; margin-right:1px; }
   .card h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
   .card h2 .refresh:hover { color:var(--accent); }
 
@@ -668,37 +676,32 @@
       <div class="hright">
         <div id="acct-bar"></div>
         <img id="avatar" class="avatar" alt="" style="display:none">
-        <button id="sb-pill" class="gbtn" title="Connections — status" style="padding:8px 10px"><span class="led" id="sb-pill-led"></span></button>
+        <button id="sb-pill" class="gbtn icon-btn" title="Connections — status"><span class="led" id="sb-pill-led"></span></button>
         <div id="sb-menu" class="gear-menu" style="display:none">
           <div class="gear-sec">
-            <h3><span class="dot">🎛️</span>Switchboard
+            <h3><span class="dot" data-ic="sliders"></span>Switchboard
               <span class="fin-state" id="sb-summary" style="margin-left:auto">checking…</span></h3>
             <div class="switchboard" id="switchboard"></div>
-            <div style="margin-top:10px"><span class="refresh" id="sb-refresh"><span class="ricon">↻</span> re-check all</span></div>
+            <div style="margin-top:10px"><span class="refresh" id="sb-refresh"><span class="ricon" data-ic="refresh"></span> re-check all</span></div>
           </div>
         </div>
-        <button id="bell-btn" class="gbtn" title="Reminders" style="padding:8px 10px;position:relative">🔔<span id="bell-badge" class="bell-badge"></span></button>
+        <button id="bell-btn" class="gbtn icon-btn" title="Reminders" style="position:relative"><span data-ic="bell"></span><span id="bell-badge" class="bell-badge"></span></button>
         <div id="bell-menu" class="gear-menu" style="display:none"></div>
-        <button id="gear-btn" class="gbtn" title="Profile &amp; settings" style="padding:8px 11px">⚙️</button>
-        <button id="menu-btn" class="gbtn" title="Links &amp; apps" style="padding:8px 12px">☰</button>
+        <button id="gear-btn" class="gbtn icon-btn" title="Settings"><span data-ic="settings"></span></button>
+        <button id="menu-btn" class="gbtn icon-btn" title="Menu"><span data-ic="menu"></span></button>
         <div id="gear-menu" class="gear-menu" style="display:none">
-          <div class="gear-sec">
-            <h3><span class="dot">🧰</span>Tools</h3>
-            <div class="links">
-              <a href="#" id="weekly-link"><span class="lhs"><span class="ldot set"></span>🗓️ Weekly review <span id="weekly-due" class="weekly-due"></span></span><span><span class="arrow">→</span></span></a>
-              <a href="#" id="cc-debt-link"><span class="lhs"><span class="ldot set"></span>💳 Credit Card Debt</span><span><span class="arrow">→</span></span></a>
-            </div>
-          </div>
           <div class="gear-foot" style="border-top:none;margin-top:0;padding-top:0">
-            <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px">👤 Appearance &amp; profile</button>
-            <button id="check-update" class="gbtn" style="width:100%;margin-bottom:4px">🔄 Check for update</button>
+            <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="user"></span>Appearance &amp; profile</button>
+            <button id="weekly-link" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="calcheck"></span>Weekly review <span id="weekly-due" class="weekly-due"></span></button>
+            <button id="cc-debt-link" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="card"></span>Credit Card Debt</button>
+            <button id="check-update" class="gbtn" style="width:100%;margin-bottom:4px"><span data-ic="refresh"></span>Check for update</button>
             <div id="update-status" style="font-size:11.5px;color:var(--muted);text-align:center;min-height:14px;margin-bottom:8px"></div>
-            <button id="dash-key-btn" class="gbtn" style="width:100%;margin-bottom:8px">🔒 Dashboard passphrase</button>
-            <button id="pwa-install" class="gbtn" style="width:100%;display:none;border-color:var(--accent);color:var(--accent)">📲 Install miDash</button>
+            <button id="pwa-install" class="gbtn" style="width:100%;display:none;border-color:var(--accent);color:var(--accent)"><span data-ic="download"></span>Install miDash</button>
           </div>
         </div>
         <div id="links-menu" class="gear-menu" style="display:none">
           <div id="gear-sections"></div>
+          <div class="gear-foot"><button id="dash-key-btn" class="gbtn" style="width:100%"><span data-ic="lock"></span>Dashboard passphrase</button></div>
         </div>
       </div>
     </div>
@@ -713,11 +716,11 @@
       <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
         <div class="cap-row">
           <div class="cap-mode-pick">
-            <button type="button" class="cap-mode-btn" id="cap-mode-btn">⏰ Remind me to… ▾</button>
+            <button type="button" class="cap-mode-btn" id="cap-mode-btn"></button>
             <div class="cap-mode-menu" id="cap-mode-menu" style="display:none">
-              <button type="button" class="cap-mode-opt" data-mode="remind">⏰ Remind me to…</button>
-              <button type="button" class="cap-mode-opt" data-mode="draft">✉️ Draft email to…</button>
-              <button type="button" class="cap-mode-opt" data-mode="idea">💡 Save this idea (note/keep)</button>
+              <button type="button" class="cap-mode-opt" data-mode="remind"><span data-ic="clock"></span> Remind me to…</button>
+              <button type="button" class="cap-mode-opt" data-mode="draft"><span data-ic="pencil"></span> Draft email to…</button>
+              <button type="button" class="cap-mode-opt" data-mode="idea"><span data-ic="idea"></span> Save this idea</button>
             </div>
           </div>
           <form class="cap-input" id="cap-form">
@@ -731,7 +734,7 @@
       <!-- Live Today panel: Unread inbox (60%) + Next 3 days (40%), separated like the rows below -->
       <div class="split live" id="today-row" style="margin-bottom:20px">
         <div class="card">
-          <h2><span class="dot">✉️</span>Unread in inbox
+          <h2><span class="dot" data-ic="mail"></span>Unread in inbox
             <span class="refresh" id="today-refresh" style="display:none"><span class="ricon">↻</span> refresh</span>
             <span class="refresh" id="inbox-unsub" title="Unsubscribe queue" style="margin-left:10px">🚫 <span id="unsub-count"></span></span></h2>
           <div id="mail"><div class="empty">—</div></div>
@@ -743,7 +746,7 @@
           </div>
         </div>
         <div class="card">
-          <h2><span class="dot">📅</span>Next 3 events
+          <h2><span class="dot" data-ic="calendar"></span>Next 3 events
             <span class="refresh" id="agenda3-refresh" style="display:none"><span class="ricon">↻</span> refresh</span></h2>
           <div id="agenda"><div class="empty">—</div></div>
         </div>
@@ -760,16 +763,16 @@
         <h2><span class="led" id="tk-led" title="Tracker42 connection"></span>Tracker42
           <span class="tk-badge" id="tracker-badge" title="Unread Tracker42 notifications">0</span>
           <span class="fin-state" id="tk-state">checking…</span>
-          <span class="refresh" id="tracker-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <span class="refresh" id="tracker-refresh"><span class="ricon"></span> refresh</span></h2>
         <div class="tk-tabs" id="tk-tabs">
-          <button type="button" class="tk-tab" data-tab="tickets">🎫 Tickets</button>
-          <button type="button" class="tk-tab" data-tab="notifs">🔔 Notifications</button>
-          <button type="button" class="pbtn" id="tk-new-btn" style="margin-left:auto">＋ New ticket</button>
+          <button type="button" class="tk-tab" data-tab="tickets"><span data-ic="ticket"></span> Tickets</button>
+          <button type="button" class="tk-tab" data-tab="notifs"><span data-ic="bell"></span> Notifications</button>
+          <button type="button" class="pbtn" id="tk-new-btn" style="margin-left:auto"><span data-ic="plus"></span> New ticket</button>
         </div>
         <div id="tracker-body"><div class="empty">—</div></div>
       </div>
         <div class="card" id="tasks-card">
-          <h2><span class="dot">✅</span>Tasks &amp; Reminders
+          <h2><span class="dot" data-ic="checks"></span>Tasks &amp; Reminders
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
           <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
@@ -781,7 +784,7 @@
       <!-- Projects — idea→shipped progress tracker (miDash-owned, syncs via /projects KV).
            Keep every project moving; the "last touched" age flags neglected ones. -->
       <div class="card" id="projects-card" style="margin-bottom:20px">
-        <h2><span class="dot">🚀</span>Projects
+        <h2><span class="dot" data-ic="trending"></span>Projects
           <span class="fin-state" id="proj-state">—</span>
           <span class="refresh" id="projects-refresh"><span class="ricon">↻</span> refresh</span></h2>
         <div class="proj-toolbar">
@@ -811,13 +814,13 @@
       <!-- Stay connected (#6) + Notes, 50/50 -->
       <div class="split even" id="agenda-notes-row" style="margin-bottom:20px">
         <div class="card" id="reachout-card">
-          <h2><span class="dot">🤝</span>Stay connected
-            <span class="refresh" id="reachout-shuffle">🎲 shuffle</span></h2>
+          <h2><span class="dot" data-ic="users"></span>Stay connected
+            <span class="refresh" id="reachout-shuffle">shuffle</span></h2>
           <div id="reachout"><div class="empty">—</div></div>
         </div>
         <!-- Notes — your scratchpad; the agent can read this on request -->
         <div class="card" id="notes">
-          <h2><span class="dot">📝</span>Notes
+          <h2><span class="dot" data-ic="note"></span>Notes
             <span class="refresh" id="notes-sync" style="display:none">🔑 sync</span>
             <span class="refresh" id="notes-status" style="cursor:default;margin-left:10px">saved</span></h2>
           <textarea id="notes-area" placeholder="Jot ideas, writings, links, anything… ask your agent things like “use my notes to draft…” and it’ll read what’s here."></textarea>
@@ -1067,7 +1070,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.5",
+  version: "1.44.6",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1172,10 +1175,13 @@ function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
    GitHub-repos list was dropped (it duplicated the Projects card's Import); Contacts is now a
    button that opens the existing Contacts manager instead of a second live list. loadContacts
    still runs elsewhere (it feeds the Stay-connected card + the manager) — just not rendered here. */
+const SECTION_ICON = { "✉️":"mail","📅":"calendar","💼":"note","🧒":"users","🎮":"idea","🎵":"idea","🏠":"note" };
 function render() {
-  const sections = CONFIG.sections.map(s => `
+  const sections = CONFIG.sections.map(s => {
+    const icn = SECTION_ICON[String(s.icon||"").trim()];
+    return `
     <div class="gear-sec">
-      <h3><span class="dot">${s.icon}</span>${s.title}</h3>
+      <h3><span class="dot"${icn?` data-ic="${icn}"`:""}></span>${s.title}</h3>
       <div class="links">
         ${s.links.map(l => {
           const u = urlFor(l);
@@ -1186,18 +1192,11 @@ function render() {
           </a>`;
         }).join("")}
       </div>
-    </div>`).join("");
-  const people = `
-    <div class="gear-sec">
-      <h3><span class="dot">👤</span>People</h3>
-      <div class="links">
-        <a href="#" id="contacts-open"><span class="lhs"><span class="ldot set"></span>👥 Manage contacts</span><span><span class="arrow">→</span></span></a>
-      </div>
-    </div>`;
-  document.getElementById("gear-sections").innerHTML = sections + people;
-  const co=document.getElementById("contacts-open");
-  if(co) co.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openContactsManager(); };
-  // Weekly review + CC Debt now live in the ⚙️ gear menu (static HTML) — wire them, close that menu.
+    </div>`;}).join("");
+  // Contacts is no longer a menu section — it lives with the Stay-connected card now.
+  document.getElementById("gear-sections").innerHTML = sections;
+  renderIcons(document.getElementById("gear-sections"));
+  // Weekly review + CC Debt live in the ⚙️ gear menu (static HTML) — wire them, close that menu.
   const ccl=document.getElementById("cc-debt-link");
   if(ccl) ccl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openDebtModal(); };
   const wkl=document.getElementById("weekly-link");
@@ -2232,6 +2231,9 @@ function afterAuth(){
   document.getElementById("reachout-shuffle").onclick=()=>renderReachout(true);
   startGoogleAutoRefresh(); refreshGoogleTokens();   // keep Google signed in past 1h (silent renew)
   loadLive();
+  // The switchboard ran on boot BEFORE Google finished connecting, so its Google light went amber
+  // ("not connected"). Re-check now that we're authed so it flips green on its own — no manual re-check.
+  if(typeof runSwitchboard==="function") runSwitchboard();
 }
 function refreshLive(){
   const els=["today-refresh","agenda3-refresh","agenda-refresh"].map(i=>document.getElementById(i)).filter(Boolean);
@@ -2475,6 +2477,44 @@ function renderMailPage(){
 function cleanFrom(s){ const m=s.match(/^(.*?)</); return (m?m[1]:s).replace(/"/g,"").trim()||s; }
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function escAttr(s){ return esc(s).replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+/* ---- Minimalist line-icon set (replaces UI emojis). 24×24 viewBox, stroke=currentColor. ---- */
+const ICON_PATHS = {
+  bell:      '<path d="M18 8A6 6 0 0 0 6 8c0 6-3 8-3 8h18s-3-2-3-8Z"/><path d="M9.5 19a2.5 2.5 0 0 0 5 0"/>',
+  settings:  '<circle cx="12" cy="12" r="3.1"/><path d="M12 3v2.4M12 18.6V21M4.4 12H2M22 12h-2.4M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/>',
+  menu:      '<path d="M3 6h18M3 12h18M3 18h18"/>',
+  mail:      '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/>',
+  calendar:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/>',
+  checks:    '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.6 2.6L16 9"/>',
+  trending:  '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  users:     '<circle cx="9" cy="8" r="3.2"/><path d="M2.7 20a6.3 6.3 0 0 1 12.6 0"/><path d="M16 5.2a3.2 3.2 0 0 1 0 5.6M21.3 20a6.3 6.3 0 0 0-3.3-4.9"/>',
+  note:      '<path d="M5 4h14v11l-4 4H5Z"/><path d="M15 19v-4h4"/><path d="M8.5 9h7M8.5 12.5h4.5"/>',
+  ticket:    '<path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2 2 2 0 0 0 0 4 2 2 0 0 1-2 2H6a2 2 0 0 1-2-2 2 2 0 0 0 0-4Z"/><path d="M13 6.5v11"/>',
+  clock:     '<circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3 1.8"/>',
+  pencil:    '<path d="M4 20h4L18.5 9.5a2 2 0 0 0-3-3L5 17Z"/><path d="M14 8l2 2"/>',
+  idea:      '<path d="M9.5 18h5"/><path d="M10 21h4"/><path d="M12 3a5.5 5.5 0 0 0-3.5 9.8c.7.6.9 1.3.9 2.2h5.2c0-.9.2-1.6.9-2.2A5.5 5.5 0 0 0 12 3Z"/>',
+  refresh:   '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v5.5h-5.5"/>',
+  plus:      '<path d="M12 5v14M5 12h14"/>',
+  x:         '<path d="M6 6l12 12M18 6 6 18"/>',
+  lock:      '<rect x="4.5" y="10" width="15" height="10.5" rx="2.2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  unlock:    '<rect x="4.5" y="10" width="15" height="10.5" rx="2.2"/><path d="M8 10V7a4 4 0 0 1 7.6-1.7"/>',
+  check:     '<path d="M4.5 12.5 9 17 19.5 6.5"/>',
+  alert:     '<path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9.5v4.5M12 17.4v.01"/>',
+  user:      '<circle cx="12" cy="8" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/>',
+  download:  '<path d="M12 3v12M7.5 10.5 12 15l4.5-4.5"/><path d="M4.5 20.5h15"/>',
+  card:      '<rect x="3" y="5" width="18" height="14" rx="2.2"/><path d="M3 9.5h18M7 15h4"/>',
+  calcheck:  '<rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><path d="m9 15 2 2 4-4"/>',
+  wrench:    '<path d="M15 5.2a3.6 3.6 0 0 0-4.9 4.6L4 15.9 8.1 20l6.1-6.1a3.6 3.6 0 0 0 4.6-4.9l-2.4 2.4-2.2-2.2Z"/>',
+  sliders:   '<path d="M4 7h11M19 7h1M4 17h1M9 17h11"/><circle cx="17" cy="7" r="2.3"/><circle cx="7" cy="17" r="2.3"/>',
+  unsub:     '<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>',
+};
+function ic(name, cls){ const p=ICON_PATHS[name]; if(!p) return ""; return `<svg class="ic${cls?" "+cls:""}" viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`; }
+/* Fill [data-ic="name"] placeholders + convert legacy ↻ refresh glyphs to the line icon. Runs at
+   boot and can be called on a freshly-rendered subtree (renderIcons(box)) for dynamic content. */
+function renderIcons(root){
+  const r=root||document;
+  r.querySelectorAll("[data-ic]").forEach(el=>{ if(el.dataset.icDone) return; el.innerHTML=ic(el.dataset.ic); el.dataset.icDone="1"; });
+  r.querySelectorAll(".ricon").forEach(el=>{ if(el.dataset.icDone) return; if(!el.querySelector("svg")) el.innerHTML=ic("refresh"); el.dataset.icDone="1"; });
+}
 /* Only allow http(s) links to render — blocks javascript:/data:/vbscript: hrefs coming from
    external sources (Tracker42 PR urls, Google event links). Returns "" for anything else. */
 function safeUrl(u){ const s=String(u||"").trim(); return /^https?:\/\//i.test(s) ? s : ""; }
@@ -4358,8 +4398,8 @@ async function loadReminders(){
   if(!box) return;
   if(!list.length){ box.innerHTML=""; return; }
   list.sort((a,b)=>a.at-b.at);
-  const rows=list.map(r=>`<div class="rem-row"><span class="rem-when">⏰ ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span><span class="rem-x" data-id="${escAttr(r.id)}" title="Cancel this reminder">✕</span></div>`).join("");
-  box.innerHTML=`<div class="rem-head">⏰ Reminders <span class="fin-state">${list.length}</span></div>${rows}`;
+  const rows=list.map(r=>`<div class="rem-row"><span class="rem-when">${ic("clock")} ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span><span class="rem-x" data-id="${escAttr(r.id)}" title="Cancel this reminder">✕</span></div>`).join("");
+  box.innerHTML=`<div class="rem-head">${ic("clock")} Reminders <span class="fin-state">${list.length}</span></div>${rows}`;
   box.querySelectorAll(".rem-x").forEach(x=>x.onclick=()=>cancelReminderId(x.dataset.id));
 }
 async function cancelReminderId(id){
@@ -4405,11 +4445,11 @@ function ackBell(){ bellCount=0; renderBellBadge(); stopTitleFlash(); }
 function renderBellMenu(){
   const box=document.getElementById("bell-menu"); if(!box) return;
   const items = rung.length
-    ? rung.map(r=>`<div class="bell-item"><span class="rem-when">⏰ ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span></div>`).join("")
+    ? rung.map(r=>`<div class="bell-item"><span class="rem-when">${ic("clock")} ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span></div>`).join("")
     : `<div class="empty" style="padding:6px 2px">No reminders have rung yet. Pending ones show in the Tasks card.</div>`;
   const perm = ("Notification" in window && Notification.permission!=="granted")
-    ? `<div class="bell-perm" id="bell-enable">🔔 Enable desktop alerts</div>` : "";
-  box.innerHTML=`<div class="gear-sec"><h3><span class="dot">🔔</span>Reminders</h3><div class="bell-list">${items}</div>${perm}</div>`;
+    ? `<div class="bell-perm" id="bell-enable">Enable desktop alerts</div>` : "";
+  box.innerHTML=`<div class="gear-sec"><h3><span class="dot">${ic("bell")}</span>Reminders</h3><div class="bell-list">${items}</div>${perm}</div>`;
   const en=document.getElementById("bell-enable");
   if(en) en.onclick=(e)=>{ e.stopPropagation(); try{ Notification.requestPermission().then(()=>renderBellMenu()); }catch(err){} };
 }
@@ -4623,10 +4663,12 @@ const CAP_PLACEHOLDER = {
   idea:   "Save this idea… e.g. rewrite the landing-page hero",
 };
 let capMode = "remind";
+const CAP_ICON = { remind:"clock", draft:"pencil", idea:"idea" };
+const CAP_TEXT = { remind:"Remind me to…", draft:"Draft email to…", idea:"Save this idea" };
 function initCapture(){
   const btn=document.getElementById("cap-mode-btn"), menu=document.getElementById("cap-mode-menu");
   const input=document.getElementById("cap-text"); if(!btn||!menu||!input) return;
-  const setMode=(m)=>{ capMode=m; const opt=menu.querySelector(`[data-mode="${m}"]`); btn.textContent=(opt?opt.textContent:m)+" ▾"; input.placeholder=CAP_PLACEHOLDER[m]||""; menu.style.display="none"; };
+  const setMode=(m)=>{ capMode=m; btn.innerHTML=ic(CAP_ICON[m])+" "+esc(CAP_TEXT[m]||m)+' <span class="cap-caret">▾</span>'; input.placeholder=CAP_PLACEHOLDER[m]||""; menu.style.display="none"; };
   btn.onclick=(e)=>{ e.stopPropagation(); menu.style.display=menu.style.display==="none"?"block":"none"; };
   menu.querySelectorAll(".cap-mode-opt").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); setMode(b.dataset.mode); input.focus(); }; });
   document.addEventListener("click",()=>{ if(menu) menu.style.display="none"; });
@@ -4867,7 +4909,7 @@ function renderNotesFocus(body){
 function isStandalone(){ return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone===true; }
 function initPWA(){
   if("serviceWorker" in navigator){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
-  const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openKeyModal(); };
+  const kb=document.getElementById("dash-key-btn"); if(kb) kb.onclick=(e)=>{ e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openKeyModal(); };
   const cu=document.getElementById("check-update"); if(cu) cu.onclick=(e)=>{ e.stopPropagation(); checkForUpdate(); };
   const btn=document.getElementById("pwa-install"); if(!btn) return;
   let deferred=null;
@@ -4890,6 +4932,7 @@ function initPWA(){
 function boot(){
   const steps=[
     ["showVersion",showVersion],          // first, so the header version is always right
+    ["renderIcons",()=>renderIcons()],     // fill static [data-ic] placeholders + ↻ glyphs in the shell
     ["loadAliases",loadAliases],["loadAcctColors",loadAcctColors],
     ["applyVersionTheme",applyVersionTheme],["applyBackground",applyBackground],
     ["render",render],["tick",tick],["tickTimer",()=>setInterval(tick,10000)],
