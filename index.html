@@ -1067,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.0",
+  version: "1.44.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3632,8 +3632,13 @@ function renderSwitchboard(){
     return `<button type="button" class="sb-chip" data-id="${c.id}" title="${escAttr(c.label+" — "+(s.summary||s.state))}"><span class="led ${sbStateClass(s.state)}"></span><span class="sb-label">${esc(c.label)}</span></button>`;
   }).join("");
   bar.querySelectorAll(".sb-chip").forEach(b=>b.onclick=()=>openSbDetail(b.dataset.id));
+  // Function-scoped (NOT inside the if(sum) block) — the pill LED below reads them too. Scoping
+  // these to the block previously threw a ReferenceError here, which cascaded through boot.
+  const reds=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="off").length;
+  const ambers=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="warn").length;
+  const checking=SB_CONNS.some(c=>!sbState[c.id]||sbState[c.id].state==="check");
   const sum=document.getElementById("sb-summary");
-  if(sum){ const reds=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="off").length, ambers=SB_CONNS.filter(c=>(sbState[c.id]||{}).state==="warn").length, checking=SB_CONNS.some(c=>!sbState[c.id]||sbState[c.id].state==="check");
+  if(sum){
     sum.textContent = checking?"checking…": reds?`${reds} down`: ambers?`${ambers} need attention`:"all systems go ✓";
     sum.className="fin-state "+(reds?"sb-red":ambers?"sb-amber":checking?"":"sb-green");
   }
