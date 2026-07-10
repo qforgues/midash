@@ -64,6 +64,12 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   (WebAudio chime + title flash + OS notification when hidden). Idempotent per id via localStorage
   (`midash_rem_alerted`). It's the at-desk layer — **Discord DM stays the guaranteed channel**; don't
   make the bell load-bearing.
+- **Capture bar "⏰ Remind me to…"** (`captureRemind`) always tries to make a real reminder: pings at
+  the parsed time (date-only → 9am; no time at all → `defaultReminderAt()`, a same-day ~3h nudge that
+  avoids 9pm–7am), adds a Google Task too, and only writes to Notes if BOTH the ping and the task
+  fail — never task+note together. `parseReminder` strips leading "remind me to…"/"remember to…" and
+  capitalizes the name. Tasks render ALL at once (no pager) and complete in place (`wireTaskRow`
+  removes just the row — no reload/scroll-jump).
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).

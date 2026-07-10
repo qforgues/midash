@@ -1067,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.3",
+  version: "1.44.4",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -4701,34 +4701,47 @@ function parseReminder(text){
 /* "Remind me to…" → a REAL Google Task with a parsed due date. Say "…by Friday 3pm" and it
    sets the task's due date (time kept in the title, since Google Tasks stores date only).
    Falls back to a Notes checkbox line if Google/Tasks-write isn't available yet. */
+/* Timeless reminders default to a same-day nudge ~3h out (Q's choice), rounded to :15, but never
+   in the middle of the night — a late/pre-dawn default snaps to the next 8am instead. */
+function defaultReminderAt(){
+  const d=new Date(Math.ceil((Date.now()+3*3600000)/(15*60000))*(15*60000));
+  const h=d.getHours();
+  if(h>=21){ d.setDate(d.getDate()+1); d.setHours(8,0,0,0); }   // late night → tomorrow 8am
+  else if(h<7){ d.setHours(8,0,0,0); }                          // pre-dawn → 8am same day
+  return d.getTime();
+}
 async function captureRemind(text){
   const acct=defaultAcct();
   const p=parseReminder(text);
   const title=p.title||text;
   const taskTitle = p.timeStr ? title+" ("+p.timeStr+")" : title;   // Google Tasks store DATE only
   const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
-  // THE REMINDER = a Discord ping at the resolved time. parseReminder gives a due for ANY date
-  // (defaulting to 9am when no clock time is written), so date-only reminders ping too — not just
-  // timed ones. This is independent of Google Tasks, so a reminder still fires if Tasks write fails.
+  // THE REMINDER = a Discord ping. Use the parsed time if given (parseReminder defaults date-only to
+  // 9am); if there's NO day/time at all, default to a same-day nudge so "remind me to…" always
+  // becomes a real reminder, not a note. Independent of Google Tasks, so it fires even if Tasks is down.
+  let atMs=null, defaulted=false;
+  if(p.due && p.due.getTime()>Date.now()) atMs=p.due.getTime();
+  else if(!p.due){ atMs=defaultReminderAt(); defaulted=true; }
   let pinged=false;
-  if(p.due && REMINDERS_URL && p.due.getTime()>Date.now()){
-    try{ const r=await scheduleReminder(p.due.getTime(), title); pinged=!!r.ok; }catch(e){}
+  if(atMs && REMINDERS_URL){
+    try{ const r=await scheduleReminder(atMs, title); pinged=!!r.ok; }catch(e){}
     if(pinged) loadReminders();
   }
   // ALSO drop it on the Google Tasks list as a to-do (independent of the ping).
   let tasked=false;
   if(acct){ try{ const r=await createTask(acct, taskTitle, dueISO); tasked=!!r.ok; }catch(e){} if(tasked) loadTasks(); }
   if(pinged || tasked){
-    const when = p.due ? (" — "+fmtDue(p.ymd)+" "+(p.timeStr||"9am")) : "";
+    let when="";
+    if(p.due) when=" — "+fmtDue(p.ymd)+" "+(p.timeStr||"9am");
+    else if(defaulted && pinged) when=" — "+fmtReminderWhen(new Date(atMs));
     const bits=[]; if(pinged) bits.push("⏰ reminder set"); if(tasked) bits.push("✅ task added");
     capFlash(bits.join(" · ")+when);
     return;
   }
-  // Nothing landed → save to Notes so it isn't lost, and say WHY (missing time vs Google offline).
+  // Nothing landed (backend unreachable AND Google Tasks didn't take) → Notes so it isn't lost.
   const ta=document.getElementById("notes-area");
   if(ta){ ta.value=`- [ ] ${taskTitle}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
-  capFlash(p.due ? "📝 Saved to Notes — reconnect Google for Tasks (the reminder ping needs the backend reachable)"
-                 : "📝 Saved to Notes — add a day/time (e.g. “…tomorrow 3pm”) to set an actual reminder");
+  capFlash("📝 Saved to Notes — couldn't reach the reminder backend or Google Tasks; it's not lost");
 }
 /* Draft email → hand it to the chat agent (it resolves the contact, can pull
    context from Notes/mail, and drafts). We prefill + open the panel but leave the

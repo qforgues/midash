@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.44.1` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.44.4` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (fix switchboard ReferenceError — the root boot throw; dots were stuck gray)
+**Last updated:** 2026-07-10 (reminder capture rework + Tasks show-all/in-place-complete)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -474,6 +474,14 @@ cd ~/miDash && wrangler deploy
   cascaded into `v?`/collapse/weekly (the v1.44.0 isolated boot masked it everywhere but the
   switchboard itself). Hoisted the three counts to function scope. Root cause: introduced by the
   v1.42.0 pill-LED addition.
+- v1.44.2–1.44.4: **Reminder capture rework + Tasks UX.** The "⏰ Remind me to…" bar now schedules a
+  Discord ping for **any** reminder (timed → that time; date-only → 9am; **no day/time → a same-day
+  nudge ~3h out**, guarded away from 9pm–7am → next 8am — `defaultReminderAt()`), decoupled from
+  Google Tasks so it fires even if Tasks write fails; it also adds the Task, and only falls back to
+  Notes if *both* fail (never task+note together). `parseReminder` strips a leading "remind me
+  to/remember to/reminder:" and capitalizes so names read as actions. **Tasks card**: retired the
+  3-at-a-time pager (shows ALL), and completing a task removes just that row in place — no reload, no
+  page reset, no scroll jump (`renderTasksList`/`wireTaskRow`; clearing #14 used to snap back to 1–3).
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
-  in-dash bell), consolidation, curated theme, and the boot fix are all live + on `main`. Possible
-  next: "🎨 shuffle look" button (cycle `THEME_PALETTES` on demand), Discord weekly-digest push, Notes merge.
+  in-dash bell), consolidation, curated theme, boot fix, and the capture/tasks rework are all live +
+  on `main`. Possible next: "🎨 shuffle look" button (cycle `THEME_PALETTES`), Discord weekly-digest, Notes merge.
