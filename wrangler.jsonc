@@ -10,5 +10,10 @@
 			"binding": "NOTES",
 			"id": "f095586747ee4a47b524082986e8f725"
 		}
-	]
+	],
+	// Reminders: run scheduled() every minute to DM Q about due reminders (see fireDueReminders).
+	// Needs two secrets: `wrangler secret put DISCORD_BOT_TOKEN` and `wrangler secret put DISCORD_USER_ID`.
+	"triggers": {
+		"crons": ["* * * * *"]
+	}
 }

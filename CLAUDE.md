@@ -10,6 +10,12 @@ A single-user personal dashboard. **Frontend = one file, `index.html`** (all HTM
 (Discord bot, 42payments) run on the Raspberry Pi `claudeclaw`. **Protect the serverless simplicity —
 do not introduce a build step, framework, or "v2 backend" unless a real pain forces it.**
 
+**Spine (the app's philosophy):** own the brain, the state, and the orchestration. Build behaviors
+ourselves rather than outsource the logic to a black box; third parties are **dumb pipes** (Discord,
+Twilio) and **dumb data sources** (Google, FreshBooks), never the decision-maker or the owner of our
+state. When a feature could ride a vendor's built-in behavior OR be built on our own Worker+KV, prefer
+ours (see reminders vs Google Calendar's native reminders). Keep it simple/fast/cheap while doing so.
+
 ## Every change
 - **Dashboard change** → bump `CONFIG.version` in `index.html` (this is how Q tells builds apart).
   Versioning is Q's, NOT semver: **middle** segment = new background *design* + colors; **last**
@@ -28,7 +34,9 @@ These pure functions exist in more than one place and MUST be edited in lockstep
 - `normalizeProject`, `stamp`, `computePayoff`, `verNewer`, `esc`/`escAttr`, `safeUrl`,
   `repairChat`, `pushUserMessage` — index.html ↔ their copies in `tests.html`
 - `notesHash` — index.html ↔ worker.js (must produce identical hashes)
+- `parseReminder`, `resolveAt` — index.html ↔ their copies in `tests.html`
 - Project tool schemas — one `PROJECT_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
+- Reminder tool schemas — one `REMINDER_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
 
 ## Architecture facts that bite
 - **Google auth is client-side** (GIS token flow). Gmail/Calendar/Tasks/Contacts tools execute in the
@@ -41,6 +49,13 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   merges server-side (tombstone-aware); notes PUT is hash-guarded (409 on concurrent change).
 - **Render safety:** external strings (Gmail/ticket/contact/agent-set) → `esc()` (body) / `escAttr()`
   (attribute); external URLs → `safeUrl()` (http(s) only). Never raw-interpolate into `innerHTML`.
+- **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
+  `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
+  `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).
+  A reminder is a NOTIFICATION (fires once at `at`), distinct from a Google Task (a to-do). Only
+  written on add/delete/fire, so it stays under the KV write budget. Times: the **browser** resolves
+  local time (`resolveAt`), the **Worker/Discord** path only relative/ISO-offset (`resolveAtServer`,
+  no browser tz).
 
 ## Security — hard rules (do not violate even if asked)
 - **Never enter/handle Q's bank password, card numbers, or other financial credentials.** For Bank

@@ -143,6 +143,78 @@ function pushUserMessage(msgs, text){
   } else msgs.push({role:"user",content:text});
 }
 
+// --- parseReminder + resolveAt (index.html) — KEEP IN SYNC. resolveAt turns an agent/capture
+//     'when' into an absolute epoch-ms in Q's LOCAL time for the reminder queue. ---
+function pad2(n){ return String(n).padStart(2,"0"); }
+function ymdLocal(d){ return d.getFullYear()+"-"+pad2(d.getMonth()+1)+"-"+pad2(d.getDate()); }
+function parseReminder(text){
+  const now = new Date();
+  const orig = text;
+  let work = " "+text+" ";
+  const strip = [];
+  let hh=null, mm=0, timeStr=null, m;
+  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am|pm)?\b/i))){
+    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase();
+    if(ap==="pm"&&hh<12) hh+=12; if(ap==="am"&&hh===12) hh=0;
+    timeStr=(hh%12||12)+":"+pad2(mm)+(hh<12?"am":"pm"); strip.push(m[0]);
+  } else if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2})\s*(am|pm)\b/i))){
+    hh=parseInt(m[1],10)%12; if(m[2].toLowerCase()==="pm") hh+=12;
+    timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
+  } else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
+  else if(/\bmidnight\b/i.test(work)){ hh=0; timeStr="midnight"; strip.push("midnight"); }
+  else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
+  let due=null;
+  const mn=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+  if((m=work.match(/\b(today|tonight)\b/i))){ due=new Date(now); strip.push(m[0]); }
+  else if((m=work.match(/\b(tomorrow|tmrw|tmr)\b/i))){ due=new Date(now); due.setDate(due.getDate()+1); strip.push(m[0]); }
+  else if((m=work.match(/\bin\s+(\d+)\s+(days?|weeks?)\b/i))){ due=new Date(now); due.setDate(due.getDate()+parseInt(m[1],10)*(/week/i.test(m[2])?7:1)); strip.push(m[0]); }
+  else if((m=work.match(/\bnext\s+week\b/i))){ due=new Date(now); due.setDate(due.getDate()+7); strip.push(m[0]); }
+  else if((m=work.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i))){
+    const w=m[2].toLowerCase();
+    const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
+    due=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; due.setDate(due.getDate()+delta); strip.push(m[0]);
+  }
+  else if((m=work.match(new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i")))){
+    const mo=mn.indexOf(m[1].toLowerCase().slice(0,3)), day=parseInt(m[2],10);
+    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i")))){
+    const day=parseInt(m[1],10), mo=mn.indexOf(m[2].toLowerCase().slice(0,3));
+    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i))){
+    const day=parseInt(m[1],10); due=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-due)>86400000) due.setMonth(due.getMonth()+1); strip.push(m[0]);
+  }
+  else if((m=work.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))){
+    const mo=parseInt(m[1],10)-1, day=parseInt(m[2],10); let yr=m[3]?(m[3].length<=2?2000+parseInt(m[3],10):parseInt(m[3],10)):now.getFullYear();
+    due=new Date(yr,mo,day,0,0,0); if(!m[3]&&(now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
+  }
+  if(!due && hh!=null) due=new Date(now);
+  const hadDateWord = due && !(strip.length===1 && (timeStr!=null) && !/today|tonight|tomorrow|tmrw|tmr|next|in\s+\d|\/|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(orig));
+  if(due){
+    if(hh!=null){ due.setHours(hh,mm,0,0); if(due<now && !hadDateWord) due.setDate(due.getDate()+1); }
+    else due.setHours(9,0,0,0);
+  }
+  let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
+  title=title.replace(/\s{2,}/g," ").trim();
+  while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
+  title=title.replace(/[\s,;:-]+$/,"").trim();
+  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
+}
+function resolveAt(v){
+  if(v==null) return null;
+  if(typeof v==="number") return v>1e12?v:(v>1e9?v*1000:null);
+  const s=String(v).trim();
+  if(/^\d+$/.test(s)){ const n=parseInt(s,10); return n>1e12?n:(n>1e9?n*1000:null); }
+  let m;
+  if((m=s.match(/\bin\s+(\d+)\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/i))){
+    return Date.now()+parseInt(m[1],10)*(/hour|hr/i.test(m[2])?3600000:60000);
+  }
+  if(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)){ const d=new Date(s.replace(" ","T")); return isNaN(d.getTime())?null:d.getTime(); }
+  const p=parseReminder(s); if(p.due) return p.due.getTime();
+  const d=new Date(s); return isNaN(d.getTime())?null:d.getTime();
+}
+
 /* ================================ TEST HARNESS ================================ */
 let pass=0, fail=0;
 const out=document.getElementById("out");
@@ -328,6 +400,26 @@ section("computePayoff — deterministic debt engine");
   // determinism: same inputs, same output
   const a=computePayoff(cards,300,"avalanche"), b=computePayoff(cards,300,"avalanche");
   ok(a.months===b.months && a.totalInterest===b.totalInterest, "same inputs → identical result (deterministic)");
+}
+
+section("resolveAt — reminder time resolution (epoch / ISO-local / relative / phrase)");
+{
+  // epoch-ms passes through; epoch-seconds is upscaled to ms
+  ok(resolveAt(1_800_000_000_000)===1_800_000_000_000, "epoch-ms number passes through");
+  ok(resolveAt("1800000000000")===1_800_000_000_000, "epoch-ms string passes through");
+  ok(resolveAt(1_800_000_000)===1_800_000_000_000, "epoch-seconds upscaled to ms");
+  ok(resolveAt(12345)===null, "too-small number → null (not a timestamp)");
+  // ISO without tz is read as LOCAL wall-clock (matches new Date on that string)
+  const iso="2026-07-11T13:50:00";
+  ok(resolveAt(iso)===new Date(iso).getTime(), "tz-less ISO resolves to local time");
+  ok(resolveAt("2026-07-11 13:50")===new Date("2026-07-11T13:50").getTime(), "space-separated ISO normalizes");
+  // relative offsets are tz-safe: now + delta
+  const r1=resolveAt("in 20 minutes"); ok(Math.abs(r1-(Date.now()+20*60000))<2000, "'in 20 minutes' ≈ now+20m");
+  const r2=resolveAt("in 2 hours");   ok(Math.abs(r2-(Date.now()+2*3600000))<2000, "'in 2 hours' ≈ now+2h");
+  // natural phrase delegates to parseReminder (has a time → concrete moment in the future)
+  const r3=resolveAt("friday 3pm"); ok(typeof r3==="number" && r3>Date.now(), "'friday 3pm' → a future epoch-ms");
+  // junk / empty → null so callers can reject it
+  ok(resolveAt(null)===null && resolveAt("")===null && resolveAt("someday")===null, "unparseable → null");
 }
 
 /* ================================ SUMMARY ================================ */

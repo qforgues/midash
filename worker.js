@@ -51,6 +51,15 @@ real", or "what should I do next", read_notes first, then create a task per acti
 with create_task. To mark something done, list_tasks to find its listId/taskId, then
 complete_task.
 
+Reminders vs tasks: a Google Task (create_task) is a TO-DO on his list; a reminder (set_reminder)
+is a timed NOTIFICATION that DMs him on Discord once, at a moment. Use set_reminder for anything
+time-sensitive he should be pinged for — "remind me at 3pm", "ping me in 20 minutes", or nudging
+him around a scheduled thing (for "10 minutes before my 2pm", set it for 1:50pm; for wrap-up, set a
+second one 10 min before it ends). Pass 'at' as the exact time (ISO like 2026-07-11T13:50:00, a
+phrase like "friday 3pm"/"in 20 minutes", or epoch-ms) and 'text' as the nudge written TO Q. A
+thing that's both a to-do AND wants a nudge → do both (create_task + set_reminder). list_reminders
+and cancel_reminder manage pending ones. These act immediately — no confirm.
+
 Projects (the bigger picture): Q tracks projects on a board, in two types. SOFTWARE
 (website/app) runs idea → validate → plan → build → test → ship → grow. PROPERTY (physical
 builds & renovations on his two properties) runs idea → scope → design → source → build →
@@ -120,6 +129,21 @@ const PROJECT_TOOLS = [
     description: "Update one of Q's tracked projects, matched by name (case-insensitive, partial ok). Set any of: stage, next (the single next action), notes. For PROPERTY projects also: property (house|cabin), area (inside|outside|plumbing|electric|handyman|cleaning|other), people (free-text names). Use the stage vocabulary for THAT project's type — software: idea|validate|plan|build|test|ship|grow; property: idea|scope|design|source|build|finish|done. Touches last-updated so it stops looking neglected. Acts immediately — no confirmation.",
     input_schema: { type: "object", properties: { name: { type: "string" }, stage: { type: "string", enum: ["idea","validate","plan","build","test","ship","grow","scope","design","source","finish","done"] }, next: { type: "string" }, notes: { type: "string" }, property: { type: "string", enum: ["house","cabin"] }, area: { type: "string", enum: ["inside","outside","plumbing","electric","handyman","cleaning","other"] }, people: { type: "string" } }, required: ["name"] } },
 ];
+
+// Reminder tool schemas — SINGLE SOURCE shared by both TOOLS (chat) and AGENT_TOOLS (Discord),
+// like PROJECT_TOOLS. A reminder is a NOTIFICATION (a Discord DM fired once at a set time),
+// distinct from a Google Task (a to-do). The Worker's cron delivers them; see fireDueReminders.
+const REMINDER_TOOLS = [
+  { name: "set_reminder",
+    description: "Schedule a push reminder that DMs Q on Discord at a specific time — for time-sensitive nudges (a task starting, wrapping up, 'remind me at 3pm', 'in 20 minutes'). To nudge '10 minutes before his 2pm meeting', set it for 1:50pm. Give 'text' (the nudge, written TO Q, e.g. 'Heads up — your 2pm meeting starts in 10 min') and 'at' (when to fire): an ISO-8601 local datetime like 2026-07-11T13:50:00, a natural phrase ('friday 3pm', 'tomorrow 9am', 'in 20 minutes'), or epoch-ms. Resolved to Q's local time on the dashboard. Fires ONCE. This is a NOTIFICATION, not a to-do — use create_task for to-dos. Acts immediately — no confirmation.",
+    input_schema: { type: "object", properties: { text: { type: "string" }, at: { type: "string", description: "when to fire — ISO-8601 local datetime, a natural phrase, or epoch-ms" } }, required: ["text", "at"] } },
+  { name: "list_reminders",
+    description: "List Q's pending (not-yet-fired) push reminders, soonest first. Each has id, text, and at (ISO-8601). Use before cancelling.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "cancel_reminder",
+    description: "Cancel a pending reminder by its id (from list_reminders). Acts immediately.",
+    input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
+];
 const TOOLS = [
   { name: "search_emails",
     description: "Search Gmail across ALL connected accounts. Returns messages with id, account, from, subject, date, snippet. Use Gmail search syntax in 'query' (e.g. 'in:inbox is:unread', 'from:sam newer_than:7d', 'category:promotions').",
@@ -166,6 +190,9 @@ const TOOLS = [
 
   // ---- Projects board (Q's idea→shipped tracker, miDash-owned) — shared schemas ----
   ...PROJECT_TOOLS,
+
+  // ---- Reminders (miDash-owned push notifications via Discord DM) — shared schemas ----
+  ...REMINDER_TOOLS,
 
   // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
   { name: "list_tracker_notifications",
@@ -456,6 +483,129 @@ async function handleDiscordStatus(request, env) {
   return json({ status: prev });
 }
 
+// ---- Reminders: miDash-owned push notifications delivered as a Discord DM ------------------
+// Philosophy: own the brain, the state, and the orchestration; third parties are dumb pipes.
+// The reminder QUEUE and the SCHEDULER are ours (KV blob + a 1-minute Cron Trigger). Discord is
+// just the transport — the Worker sends the DM itself via Discord's REST API using a bot-token
+// secret, so nothing depends on the Pi being up. Writers (dashboard capture box, both agents)
+// POST absolute-time entries; the cron delivers due ones. Reads are cheap; we only WRITE on
+// add / delete / fire, so this stays well under the KV free-tier write budget (~1000/day).
+const REMINDER_STALE_MS = 6 * 60 * 60 * 1000;   // >6h late = useless "10-min-before" ping; skip, don't flood
+const REMINDER_MAX = 200;                       // cap the blob; prune fired ones older than 3 days
+async function getReminders(env) {
+  try { const v = await env.NOTES.get("reminders"); const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; }
+  catch { return []; }
+}
+async function putReminders(env, arr) { await env.NOTES.put("reminders", JSON.stringify(arr)); }
+function pruneReminders(arr) {
+  const now = Date.now();
+  return arr.filter(r => !r.fired || (now - Number(r.fired)) < 3 * 86400000).slice(-REMINDER_MAX);
+}
+// Resolve an 'at' value on the WORKER (UTC, no browser tz). Handles epoch-ms, ISO-8601, and
+// tz-safe relative offsets ("in N minutes/hours"). A BARE wall-clock ISO (no offset) is read as
+// UTC — the dashboard path resolves local time correctly, so agents on Discord should prefer a
+// relative phrase or an ISO with offset. Returns epoch-ms or null.
+function resolveAtServer(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return v > 1e12 ? v : (v > 1e9 ? v * 1000 : null);
+  const s = String(v).trim();
+  if (/^\d+$/.test(s)) { const n = parseInt(s, 10); return n > 1e12 ? n : (n > 1e9 ? n * 1000 : null); }
+  let m;
+  if ((m = s.match(/\bin\s+(\d+)\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/i))) {
+    return Date.now() + parseInt(m[1], 10) * (/hour|hr/i.test(m[2]) ? 3600000 : 60000);
+  }
+  const hasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s);
+  const iso = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s);
+  const d = new Date(iso ? s.replace(" ", "T") + (hasTz ? "" : "Z") : s);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+// Send Q a Discord DM via the REST API (open the DM channel, then post). Uses the same bot
+// identity as the Pi's inbound relay; the token is a Worker secret. Q has DM'd the bot, so the
+// channel opens fine. Returns { ok } / { ok:false, error }.
+async function sendDiscordDM(env, content) {
+  const token = env.DISCORD_BOT_TOKEN, uid = env.DISCORD_USER_ID;
+  if (!token || !uid) return { ok: false, error: "discord not configured (set DISCORD_BOT_TOKEN + DISCORD_USER_ID)" };
+  try {
+    const ch = await fetch("https://discord.com/api/v10/users/@me/channels", {
+      method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ recipient_id: String(uid) }),
+    });
+    if (!ch.ok) return { ok: false, error: "open DM channel failed (HTTP " + ch.status + ")" };
+    const chan = await ch.json();
+    const msg = await fetch("https://discord.com/api/v10/channels/" + chan.id + "/messages", {
+      method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ content: String(content).slice(0, 1900) }),
+    });
+    return msg.ok ? { ok: true } : { ok: false, error: "send message failed (HTTP " + msg.status + ")" };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+// Cron entrypoint (runs every minute): DM any due reminders, mark them fired. Only writes KV
+// when something actually changed, so idle minutes cost 1 read and 0 writes.
+async function fireDueReminders(env) {
+  if (!env.NOTES) return;
+  let arr; try { arr = await getReminders(env); } catch { return; }
+  if (!arr.length) return;
+  const now = Date.now();
+  let changed = false;
+  for (const r of arr) {
+    if (r.fired || Number(r.at) > now) continue;
+    if (now - Number(r.at) > REMINDER_STALE_MS) { r.fired = now; r.missed = true; changed = true; continue; }
+    const res = await sendDiscordDM(env, r.text);
+    if (res.ok) { r.fired = now; changed = true; }
+    else { r.attempts = (r.attempts || 0) + 1; changed = true; if (r.attempts >= 5) { r.fired = now; r.failed = res.error || true; } }
+  }
+  if (changed) { try { await putReminders(env, pruneReminders(arr)); } catch { /* KV write cap: retry next tick */ } }
+}
+// HTTP surface for the dashboard: GET (list pending) / POST (add {at,text,kind}) / DELETE (?id=).
+// Gated by authed() upstream (stays closed until DASH_KEY is set — no fail-open bootstrap).
+async function handleReminders(request, env) {
+  if (!env.NOTES) return json({ error: { message: "storage not configured" } }, 501);
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const arr = (await getReminders(env)).filter(r => !r.fired).sort((a, b) => a.at - b.at);
+    return json({ reminders: arr, now: Date.now() });
+  }
+  if (request.method === "POST") {
+    let b = {}; try { b = await request.json(); } catch {}
+    const at = Number(b.at);
+    if (!at || !isFinite(at) || at < Date.now() - 60000) return json({ error: { message: "bad or past 'at' — pass epoch-ms in the future" } }, 400);
+    if (!b.text) return json({ error: { message: "need text" } }, 400);
+    const arr = pruneReminders(await getReminders(env));
+    const id = "r_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+    arr.push({ id, at, text: String(b.text).slice(0, 500), kind: String(b.kind || "reminder").slice(0, 24), created: Date.now(), fired: null, attempts: 0 });
+    await putReminders(env, arr);
+    return json({ ok: true, id });
+  }
+  if (request.method === "DELETE") {
+    const id = url.searchParams.get("id"); if (!id) return json({ error: { message: "need ?id=" } }, 400);
+    let arr = await getReminders(env); const before = arr.length; arr = arr.filter(r => r.id !== id);
+    if (arr.length !== before) await putReminders(env, arr);
+    return json({ ok: true, removed: before - arr.length });
+  }
+  return new Response("method", { status: 405, headers: cors() });
+}
+// Health check for the reminder push path (the Switchboard's Discord card calls this): validates
+// the bot TOKEN (GET /users/@me) and the USER ID (open a DM channel — no message sent). With
+// ?send=1 it delivers a real test DM — the only 100% proof the pipe works end-to-end.
+async function handleDiscordCheck(request, env) {
+  const token = env.DISCORD_BOT_TOKEN, uid = env.DISCORD_USER_ID;
+  const wantSend = new URL(request.url).searchParams.get("send") === "1";
+  const out = { configured: !!(token && uid), tokenOk: false, dmOk: false, sent: false };
+  if (!token) { out.error = "DISCORD_BOT_TOKEN not set on the Worker"; return json(out); }
+  let me; try { me = await fetch("https://discord.com/api/v10/users/@me", { headers: { Authorization: "Bot " + token } }); }
+  catch (e) { out.error = "Discord unreachable: " + (e && e.message || e); return json(out); }
+  if (!me.ok) { out.error = "bot token rejected (HTTP " + me.status + ")"; return json(out); }
+  try { const b = await me.json(); out.tokenOk = true; out.bot = b.username ? (b.username + (b.discriminator && b.discriminator !== "0" ? "#" + b.discriminator : "")) : b.id; out.botId = b.id; }
+  catch { out.tokenOk = true; }
+  if (!uid) { out.error = "DISCORD_USER_ID not set on the Worker"; return json(out); }
+  let ch; try { ch = await fetch("https://discord.com/api/v10/users/@me/channels", { method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" }, body: JSON.stringify({ recipient_id: String(uid) }) }); }
+  catch (e) { out.error = "couldn't open DM channel: " + (e && e.message || e); return json(out); }
+  if (!ch.ok) { out.error = "can't open a DM to that user id (HTTP " + ch.status + ")"; return json(out); }
+  out.dmOk = true;
+  if (wantSend) { const res = await sendDiscordDM(env, "🔔 miDash test — your reminders are wired up correctly. (You can ignore this.)"); out.sent = res.ok; if (!res.ok) out.error = res.error; }
+  return json(out);
+}
+
 // Agent over external channels (Discord now, SMS/Twilio later) — CHAT-ONLY MVP, no tools.
 // Takes { messages:[{role,content}] } or { message:"..." }, returns { reply, usage }.
 // NON-streaming (a bot wants the whole reply). Gated by authed() like everything else.
@@ -469,15 +619,19 @@ function agentPipe(t) { return AGENT_PIPELINES[t] || AGENT_PIPELINES.software; }
 function agentType(p) { return (p && AGENT_PIPELINES[p.type]) ? p.type : "software"; }
 const AGENT_SYSTEM = `You are Q's personal assistant "Dash", reachable over Discord. Be concise, warm, and
 direct — keep replies short enough to read comfortably in a chat app (a few sentences, use line breaks/lists sparingly).
-You have TOOLS for Q's finances (42payments), his Portal42/Tracker42 tickets, his Projects board, and his Notes
-scratchpad — use them to actually get things done, then confirm briefly what you did.
+You have TOOLS for Q's finances (42payments), his Portal42/Tracker42 tickets, his Projects board, his Notes
+scratchpad, and reminders — use them to actually get things done, then confirm briefly what you did.
 You do NOT have his email or calendar here (those need the miDash dashboard) — if he asks for those, say so plainly.
+Reminders: set_reminder schedules a Discord DM ping at a time (you're already in that DM). For 'at', prefer a
+relative phrase you can compute safely ("in 20 minutes", "in 2 hours") or an explicit ISO-8601 time WITH a
+timezone offset — a bare wall-clock time is read as UTC here, so avoid it. list_reminders / cancel_reminder manage them.
 For anything OTHERS would see (a ticket status change, a ticket comment), briefly confirm with Q before doing it
 unless he was already explicit. Reading is always fine to do immediately.`;
 const AGENT_TOOLS = [
   { name: "read_notes", description: "Read Q's free-form Notes scratchpad.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "add_note", description: "Jot a line to the TOP of Q's Notes scratchpad.", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   ...PROJECT_TOOLS,   // shared with TOOLS — single source of truth (see PROJECT_TOOLS above)
+  ...REMINDER_TOOLS,  // shared with TOOLS — Discord DM reminders (see REMINDER_TOOLS above)
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
   { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
@@ -516,6 +670,19 @@ async function runAgentTool(name, a, env) {
       case "get_ticket": { if (a.id == null) return { error: "need id" }; const d = await agentTracker(env, "ticket", { id: a.id }); return (d && d.data) || d; }
       case "set_ticket_status": { if (a.id == null || !a.status) return { error: "need id and status" }; return await agentTracker(env, "set_status", null, { id: a.id, status: a.status, note: a.note || undefined }); }
       case "add_ticket_comment": { if (a.ticket_id == null || !a.comment) return { error: "need ticket_id and comment" }; return await agentTracker(env, "add_comment", null, { ticket_id: a.ticket_id, comment: a.comment, is_internal: a.is_internal }); }
+      case "set_reminder": {
+        if (!a.text) return { error: "need text" };
+        const at = resolveAtServer(a.at);
+        if (!at) return { error: "couldn't parse 'at' — give epoch-ms, an ISO-8601 time with offset, or a relative phrase like 'in 20 minutes'" };
+        if (at < Date.now() - 60000) return { error: "that time is in the past" };
+        const arr = pruneReminders(await getReminders(env));
+        const id = "r_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+        arr.push({ id, at, text: String(a.text).slice(0, 500), kind: "reminder", created: Date.now(), fired: null, attempts: 0 });
+        await putReminders(env, arr);
+        return { scheduled: true, id, at: new Date(at).toISOString() };
+      }
+      case "list_reminders": { const arr = (await getReminders(env)).filter(r => !r.fired).sort((x, y) => x.at - y.at); return { reminders: arr.map(r => ({ id: r.id, text: r.text, at: new Date(r.at).toISOString() })) }; }
+      case "cancel_reminder": { if (!a.id) return { error: "need id" }; let arr = await getReminders(env); const before = arr.length; arr = arr.filter(r => r.id !== a.id); if (arr.length === before) return { error: "no reminder with id " + a.id }; await putReminders(env, arr); return { cancelled: true }; }
       default: return { error: "unknown tool " + name };
     }
   } catch (e) { return { error: String(e && e.message || e) }; }
@@ -567,7 +734,7 @@ async function handleChat(request, env) {
   // "next tue", etc. Falls back to the Worker's UTC date if the client didn't send one.
   const today = (typeof body.today === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.today)) ? body.today : new Date().toISOString().slice(0, 10);
   const dow = (typeof body.dow === "string") ? body.dow.replace(/[^A-Za-z]/g, "").slice(0, 12) : "";
-  const sys = SYSTEM + `\n\nToday is ${dow ? dow + ", " : ""}${today} in Q's local timezone. Resolve every relative date ("today", "tomorrow", "next Tuesday", "Friday", "in 3 days") against THIS date. Whenever a reminder or note names a day or deadline, pass that phrase to create_task's 'due' — the dashboard turns "tomorrow"/"next tue"/"friday 3pm" into Q's exact local date.`;
+  const sys = SYSTEM + `\n\nToday is ${dow ? dow + ", " : ""}${today} in Q's local timezone. Resolve every relative date ("today", "tomorrow", "next Tuesday", "Friday", "in 3 days") against THIS date. For a to-do with a deadline, pass the phrase to create_task's 'due' (the dashboard turns "tomorrow"/"next tue"/"friday 3pm" into Q's exact local date). For a timed ping he should be notified at, pass the same kind of phrase to set_reminder's 'at' — it resolves to Q's exact local time.`;
 
   // We stream, so timeouts aren't a concern; give the smart models headroom for thinking.
   const smart = SMART_MODELS.has(model);
@@ -627,6 +794,8 @@ export default {
       if (url.pathname === "/tracker") return handleTracker(request, env);
       if (url.pathname === "/agent") return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleAgent(request, env);
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
+      if (url.pathname === "/reminders") return handleReminders(request, env);
+      if (url.pathname === "/discord-check") return handleDiscordCheck(request, env);
       // Canonical tool schemas — single source of truth for inspection/debugging (the models
       // are sent TOOLS on /chat and AGENT_TOOLS on /agent; both share PROJECT_TOOLS).
       if (url.pathname === "/tools") return json({ chatTools: TOOLS.map(t => t.name), agentTools: AGENT_TOOLS.map(t => t.name), schemas: TOOLS });
@@ -634,5 +803,9 @@ export default {
     } catch (e) {
       return json({ success: false, code: "worker_exception", error: "Worker error: " + (e && e.message ? e.message : String(e)) }, 500);
     }
+  },
+  // Cron Trigger (wrangler.jsonc → triggers.crons, every minute): deliver due reminders.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(fireDueReminders(env));
   },
 };

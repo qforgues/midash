@@ -400,10 +400,17 @@
   header #acct-bar.pills-hidden { display:none; }
   #sb-accounts #acct-bar { display:flex; flex-direction:column; align-items:stretch; gap:8px; }
   #sb-accounts:empty::after { content:"Not connected."; color:var(--muted); font-size:13.5px; }
+  /* in the Google switchboard the account bar IS the connect/manage UI — accent the connect button */
+  #sb-accounts #g-connect { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  #sb-accounts #g-connect:hover { background:var(--accent-soft); }
   .sb-detail { font-size:13.5px; color:var(--text); line-height:1.5; background:var(--bg); border:1px solid var(--border);
                border-radius:9px; padding:11px 13px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
   .sb-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
-  .sb-copied { font-size:12.5px; color:var(--accent); min-height:16px; margin-top:8px; }
+  /* round themed close ✕ in the modal corner */
+  .sb-x { position:absolute; top:12px; right:12px; width:34px; height:34px; padding:0; border-radius:50%;
+          border:2px solid var(--accent); background:transparent; color:var(--accent); font-size:15px; line-height:1;
+          cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, transform .15s; }
+  .sb-x:hover { background:var(--accent); color:var(--bg); transform:rotate(90deg); }
 
   /* refresh spin */
   .refresh .ricon { display:inline-block; }
@@ -931,7 +938,8 @@
 <!-- Switchboard connection detail -->
 <div id="sb-modal" class="modal" style="display:none">
   <div class="modal-backdrop" id="sb-modal-bg"></div>
-  <div class="panel" style="max-width:520px">
+  <div class="panel" style="max-width:520px;position:relative">
+    <button type="button" class="sb-x" id="sb-modal-x" aria-label="Close" title="Close">✕</button>
     <h2 id="sb-modal-title">Connection</h2>
     <div id="sb-modal-body"><div class="empty">—</div></div>
   </div>
@@ -1026,7 +1034,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.40.0",
+  version: "1.41.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3561,7 +3569,7 @@ const SB_CONNS = [
   { id:"google",  label:"Google",     check:sbCheckGoogle,  fix:{label:"🔓 Connect Google", run:()=>{ if(tokenClient) tokenClient.requestAccessToken({prompt:"select_account consent"}); }} },
   { id:"finance", label:"42pay",      check:sbCheckFinance, fix:{label:"↻ Retry", run:()=>{ if(typeof loadFinance==="function") loadFinance(); if(typeof loadDebt==="function") loadDebt(); }} },
   { id:"tracker", label:"Tracker42",  check:sbCheckTracker, fix:{label:"↻ Retry", run:()=>{ tkTickets=null; tkNotifs=null; if(typeof loadTracker==="function") loadTracker(); }} },
-  { id:"discord", label:"Discord",    check:sbCheckDiscord },
+  { id:"discord", label:"Discord",    check:sbCheckDiscord, fix:{label:"🔔 Send test DM", run:sbDiscordTest} },
   { id:"notes",   label:"Notes sync", check:sbCheckNotes,   fix:{label:"↻ Re-sync", run:()=>{ if(resyncNotes) resyncNotes(); }} },
 ];
 const sbState={}; let sbLastRun=0;
@@ -3584,7 +3592,6 @@ async function sbCheckOne(c){
   r._at=Date.now(); sbState[c.id]=r; renderSwitchboard(); return r;
 }
 async function runSwitchboard(){ sbLastRun=Date.now(); await Promise.all(SB_CONNS.map(sbCheckOne)); }
-function sbCopyText(c,s){ return `[miDash switchboard · v${CONFIG.version}] ${c.label} = ${(s.state||"?").toUpperCase()}${s.summary?" ("+s.summary+")":""}\n${s.detail||""}\nchecked: ${s._at?new Date(s._at).toISOString():"n/a"}`; }
 /* The account pills live in the header normally (hidden via CSS) and get moved into the
    Google switchboard detail on demand — same live element, so all its controls keep working. */
 function restoreAcctBar(){
@@ -3604,20 +3611,14 @@ function openSbDetail(id){
     ${detail}
     <div class="sb-actions">
       <button class="gbtn" id="sb-recheck">↻ Re-check</button>
-      ${c.fix?`<button class="gbtn" id="sb-fix" style="border-color:var(--accent);color:var(--accent)">${esc(c.fix.label)}</button>`:""}
-      <button class="gbtn" id="sb-copy">📋 Copy for Claude</button>
-      <button class="gbtn" id="sb-close">Close</button>
-    </div>
-    <div id="sb-copied" class="sb-copied"></div>`;
+      ${(c.fix && id!=="google")?`<button class="gbtn" id="sb-fix" style="border-color:var(--accent);color:var(--accent)">${esc(c.fix.label)}</button>`:""}
+    </div>`;
   m.style.display="flex";
-  // move the live pills in only when connected; when not connected the fix button IS the connect action
-  if(id==="google" && accounts.length){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
+  // For Google the account bar IS the connect/manage UI — host it in the box (connect button when
+  // disconnected, pills when connected) so there's a single connect affordance, no duplicate button.
+  if(id==="google"){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
   document.getElementById("sb-recheck").onclick=async()=>{ await sbCheckOne(c); openSbDetail(id); };
-  const cl=document.getElementById("sb-close"); if(cl) cl.onclick=closeSbModal;
-  if(c.fix){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ closeSbModal(); try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
-  document.getElementById("sb-copy").onclick=()=>{ const txt=sbCopyText(c,s), note=document.getElementById("sb-copied");
-    if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(()=>{ if(note) note.textContent="Copied — paste it to Claude."; }).catch(()=>{ if(note) note.textContent=txt; }); }
-    else if(note) note.textContent=txt; };
+  if(c.fix && id!=="google"){ const fb=document.getElementById("sb-fix"); if(fb) fb.onclick=()=>{ closeSbModal(); try{ c.fix.run(); }catch(e){} setTimeout(()=>sbCheckOne(c), 1800); }; }
 }
 async function sbCheckWorker(){
   if(!CONFIG.chatEndpoint) return {state:"idle",summary:"not configured",detail:"No chatEndpoint set in CONFIG."};
@@ -3664,19 +3665,51 @@ async function sbCheckTracker(){
   const who=p&&p.data&&p.data.user, scopes=p&&p.data&&p.data.scopes;
   return {state:"on",summary:who?("@"+who.username):"connected",detail:`Tracker42 reachable + token valid.${scopes?"\nScopes: "+scopes.join(", "):""}`};
 }
+/* Discord card = BOTH facets in one place (consolidated): (A) INBOUND — the Pi bot's heartbeat
+   (can Q talk to Dash) and (B) OUTBOUND — the Worker's reminder push (can Dash DM Q, via the
+   DISCORD_BOT_TOKEN + DISCORD_USER_ID secrets). The LED shows the worse of the two; the detail
+   labels each line. "🔔 Send test DM" (the card's fix) delivers a real message — the only 100% proof. */
 async function sbCheckDiscord(){
-  const url = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/discord-status" : "";
-  if(!url) return {state:"idle",summary:"not configured",detail:"No chatEndpoint."};
-  let r; try{ r=await fetch(url,{headers:{...dashAuthHeader()}}); }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker."}; }
-  if(r.status===401) return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed."};
-  let d; try{ d=await r.json(); }catch(e){ d=null; }
-  const s=d&&d.status;
-  if(!s||!s.at) return {state:"off",summary:"never seen",detail:"The Discord bot hasn’t checked in yet. Start it: double-click ~/midash-discord/setup.command."};
-  const age=Date.now()-Number(s.at);
-  // Heartbeat writes are coalesced server-side (~1 per 5 min) to stay under the KV write quota, so
-  // the stored timestamp can legitimately be several minutes old while the bot is healthy. Allow 12 min.
-  if(age<12*60000) return {state:"on",summary:"online",detail:`Discord bot is online${s.tag?" as "+s.tag:""}. Last heartbeat ${Math.max(0,Math.round(age/60000))} min ago.`};
-  return {state:"off",summary:"offline",detail:`Discord bot last checked in ${Math.round(age/60000)} min ago — it isn’t running. Start it: ~/midash-discord/setup.command (or its LaunchAgent).`};
+  const base = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"") : "";
+  if(!base) return {state:"idle",summary:"not configured",detail:"No chatEndpoint."};
+  // (A) inbound — Pi bot heartbeat
+  let inb;
+  try{
+    const r=await fetch(base+"/discord-status",{headers:{...dashAuthHeader()}});
+    if(r.status===401) return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed."};
+    let d=null; try{ d=await r.json(); }catch(e){}
+    const s=d&&d.status;
+    if(!s||!s.at) inb={state:"off",summary:"in:never",line:"Inbound (Pi bot): never checked in — start ~/midash-discord/setup.command."};
+    else{
+      const age=Date.now()-Number(s.at);
+      // Heartbeat writes are coalesced server-side (~1 per 5 min) for the KV write quota; allow 12 min.
+      inb = age<12*60000 ? {state:"on",summary:"in:online",line:`Inbound (Pi bot): online${s.tag?" as "+s.tag:""}, heartbeat ${Math.max(0,Math.round(age/60000))} min ago.`}
+                         : {state:"off",summary:"in:offline",line:`Inbound (Pi bot): last seen ${Math.round(age/60000)} min ago — not running (~/midash-discord/setup.command).`};
+    }
+  }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker."}; }
+  // (B) outbound — Worker reminder push (bot token + user id)
+  let out;
+  try{
+    const r=await fetch(base+"/discord-check",{headers:{...dashAuthHeader()}});
+    const d=await r.json();
+    if(!d.configured)   out={state:"warn",summary:"out:off",line:"Outbound (reminders): DISCORD_BOT_TOKEN / DISCORD_USER_ID not set on the Worker."};
+    else if(!d.tokenOk) out={state:"off", summary:"out:bad token",line:"Outbound (reminders): bot token rejected — "+(d.error||"")+"."};
+    else if(!d.dmOk)    out={state:"warn",summary:"out:can't DM",line:"Outbound (reminders): token OK"+(d.bot?" ("+d.bot+")":"")+" but can't open a DM to that user id — "+(d.error||"")+"."};
+    else                out={state:"on",  summary:"out:ready",line:`Outbound (reminders): ready — bot ${d.bot||"?"} can DM you.`};
+  }catch(e){ out={state:"warn",summary:"out:?",line:"Outbound (reminders): couldn't run the Discord check."}; }
+  const rank={on:3,warn:2,off:1,idle:0,check:0};
+  const worst = rank[out.state] < rank[inb.state] ? out.state : inb.state;
+  return {state:worst, summary:`${inb.summary} · ${out.summary}`,
+    detail:`${inb.line}\n${out.line}\n\n“🔔 Send test DM” below delivers a real message — the only 100% proof the push works.`};
+}
+async function sbDiscordTest(){
+  const base = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"") : ""; if(!base){ capFlash("No backend configured"); return; }
+  capFlash("🔔 Sending test DM…");
+  try{
+    const r=await fetch(base+"/discord-check?send=1",{headers:{...dashAuthHeader()}});
+    const d=await r.json();
+    capFlash(d.sent ? "🔔 Test DM sent — check Discord" : ("⚠️ Test DM failed — "+(d.error||"see the Discord light")));
+  }catch(e){ capFlash("⚠️ Test DM failed — network error"); }
 }
 async function sbCheckNotes(){
   if(!NOTES_URL) return {state:"idle",summary:"n/a",detail:"No backend."};
@@ -3706,6 +3739,7 @@ function initCollapsible(){
 function initSwitchboard(){
   const r=document.getElementById("sb-refresh"); if(r) r.onclick=runSwitchboard;
   const bg=document.getElementById("sb-modal-bg"); if(bg) bg.onclick=closeSbModal;
+  const xb=document.getElementById("sb-modal-x"); if(xb) xb.onclick=closeSbModal;
   renderSwitchboard();
   runSwitchboard();
   window.addEventListener("focus", ()=>{ if(document.getElementById("switchboard-card") && Date.now()-sbLastRun>20000) runSwitchboard(); });
@@ -3945,7 +3979,7 @@ function initWeekly(){
 }
 
 async function executeTool(name,a){
-  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name) || /tracker|ticket/.test(name));
+  const noGoogle = (name==="read_notes" || name.indexOf("finance_")===0 || /projects?$/.test(name) || /tracker|ticket/.test(name) || /reminder/.test(name));
   if(!noGoogle && !accounts.length) return {error:"Google isn't connected. Click Connect Google, then retry."};
   try{
     switch(name){
@@ -4075,6 +4109,28 @@ async function executeTool(name,a){
         const r=await completeTaskApi(acct, a.listId, a.taskId);
         loadTasks(); return r.ok?{completed:true}:{error:"complete failed "+r.status};
       }
+      case "set_reminder": {
+        if(!a.text) return {error:"need text"};
+        const at=resolveAt(a.at);
+        if(!at) return {error:"couldn't understand the time — give an ISO datetime, a phrase like 'friday 3pm' or 'in 20 minutes', or epoch-ms"};
+        if(at < Date.now()-60000) return {error:"that time is in the past"};
+        const r=await scheduleReminder(at, a.text);
+        if(!r.ok) return {error:"couldn't save reminder — "+(r.error||"try again")};
+        return {scheduled:true, id:r.id, at:new Date(at).toISOString(), when:new Date(at).toLocaleString()};
+      }
+      case "list_reminders": {
+        if(!REMINDERS_URL) return {error:"no backend configured"};
+        const r=await fetch(REMINDERS_URL,{headers:{...dashAuthHeader()}});
+        if(!r.ok) return {error:"couldn't list reminders (HTTP "+r.status+")"};
+        const j=await r.json();
+        return {reminders:(j.reminders||[]).map(x=>({id:x.id, text:x.text, at:new Date(x.at).toISOString(), when:new Date(x.at).toLocaleString()}))};
+      }
+      case "cancel_reminder": {
+        if(!a.id) return {error:"need id (from list_reminders)"};
+        if(!REMINDERS_URL) return {error:"no backend configured"};
+        const r=await fetch(REMINDERS_URL+"?id="+encodeURIComponent(a.id),{method:"DELETE",headers:{...dashAuthHeader()}});
+        return r.ok?{cancelled:true}:{error:"cancel failed (HTTP "+r.status+")"};
+      }
       case "send_email": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
         if(!a.to||!a.subject||a.body==null) return {error:"need to, subject and body"};
@@ -4173,6 +4229,36 @@ async function executeTool(name,a){
 
 /* ---------- Notes (synced to the Worker's KV; localStorage is the offline cache) ---------- */
 const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
+const REMINDERS_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/reminders" : "";
+
+/* ---- Reminders (miDash-owned Discord-DM push notifications) ----
+   The dashboard is the tz-aware writer: resolveAt() turns whatever the agent/capture bar gives
+   ("friday 3pm", an ISO datetime, "in 20 minutes", epoch-ms) into an absolute epoch-ms in Q's
+   LOCAL time, then scheduleReminder() POSTs it to the Worker queue. The Worker's 1-min cron
+   delivers due ones as a Discord DM. resolveAt is unit-tested in tests.html (KEEP IN SYNC). */
+function resolveAt(v){
+  if(v==null) return null;
+  if(typeof v==="number") return v>1e12?v:(v>1e9?v*1000:null);
+  const s=String(v).trim();
+  if(/^\d+$/.test(s)){ const n=parseInt(s,10); return n>1e12?n:(n>1e9?n*1000:null); }
+  let m;
+  if((m=s.match(/\bin\s+(\d+)\s*(min|mins|minute|minutes|hour|hours|hr|hrs)\b/i))){
+    return Date.now()+parseInt(m[1],10)*(/hour|hr/i.test(m[2])?3600000:60000);
+  }
+  // ISO datetime — new Date() reads a tz-less "YYYY-MM-DDTHH:MM" as LOCAL time (exactly what we want)
+  if(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)){ const d=new Date(s.replace(" ","T")); return isNaN(d.getTime())?null:d.getTime(); }
+  // natural phrase ("friday 3pm", "tomorrow 9am") via the same parser the capture bar uses
+  const p=parseReminder(s); if(p.due) return p.due.getTime();
+  const d=new Date(s); return isNaN(d.getTime())?null:d.getTime();
+}
+async function scheduleReminder(at, text, kind){
+  if(!REMINDERS_URL) return {ok:false, error:"no backend configured"};
+  try{
+    const r=await fetch(REMINDERS_URL,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({at, text:String(text), kind:kind||"reminder"})});
+    if(!r.ok) return {ok:false, error:"HTTP "+r.status};
+    const j=await r.json(); return {ok:true, id:j.id};
+  }catch(e){ return {ok:false, error:String(e&&e.message||e)}; }
+}
 
 /* ---- Dashboard passphrase ----
    Shared secret that must match the Worker's DASH_KEY. Stored only on this device.
@@ -4461,15 +4547,22 @@ async function captureRemind(text){
   let title=p.title||text;
   if(p.timeStr) title=title+" ("+p.timeStr+")";   // Google Tasks stores the DATE only
   const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
+  // A specific TIME was given → also schedule a Discord ping at that moment. The Google Task is
+  // the to-do on the list; this is the actual nudge that reaches Q (the Worker cron DMs it).
+  let pinged=false;
+  if(p.timeStr && p.due && REMINDERS_URL && p.due.getTime()>Date.now()){
+    try{ const r=await scheduleReminder(p.due.getTime(), p.title||text); pinged=!!r.ok; }catch(e){}
+  }
+  const pingLbl = pinged ? " · ⏰ Discord ping set" : "";
   if(acct){
     try{ const r=await createTask(acct, title, dueISO); if(r.ok){
-      capFlash(p.due ? ("✅ Task added — due "+fmtDue(p.ymd)+(p.timeStr?" "+p.timeStr:"")) : "✅ Added to your Tasks");
+      capFlash((p.due ? ("✅ Task added — due "+fmtDue(p.ymd)+(p.timeStr?" "+p.timeStr:"")) : "✅ Added to your Tasks")+pingLbl);
       loadTasks(); return;
     } }catch(e){}
   }
   const ta=document.getElementById("notes-area");
   if(ta){ ta.value=`- [ ] ${title}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
-  capFlash(acct ? "⏰ Saved to Notes — reconnect Google for Tasks write access" : "⏰ Reminder saved to Notes");
+  capFlash((acct ? "⏰ Saved to Notes — reconnect Google for Tasks write access" : "⏰ Reminder saved to Notes")+pingLbl);
 }
 /* Draft email → hand it to the chat agent (it resolves the contact, can pull
    context from Notes/mail, and drafts). We prefill + open the panel but leave the

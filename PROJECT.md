@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.37.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.41.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-02 (external-review hardening + property projects + debt calc + weekly review)
+**Last updated:** 2026-07-10 (reminders: miDash-owned Discord-DM push + cron; switchboard modal tidy)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -34,6 +34,14 @@ is a core strength — protect it.
 - **Vision:** miDash as the "operating system for Quentin" — every service as just another
   *card* (Google, Discord, Portal42, La Palma, weather, solar, cameras, recipes, Spanish,
   daily briefing…). New cards don't touch the login architecture. Keep it simple/fast/cheap.
+- **Spine — own the brain, the state, and the orchestration (decided 2026-07-10).** When we need a
+  behavior, we *build it ourselves* rather than outsource the logic to a black box we can't tune.
+  Third parties are **dumb pipes** (Discord = transport, Twilio = SMS wire) and **dumb data sources**
+  (Google = mail/calendar/tasks data, FreshBooks = finance data) — never the decision-maker or the
+  owner of our state. This is already the shape of the app (Worker = brain + KV state; Google/Discord
+  as edges) and it's the default for new features. The reminders system (v1.41.0) is the canonical
+  example: we own the queue (KV) and the scheduler (cron), and Discord is just the pipe that carries
+  the DM — chosen *over* Google Calendar's native reminders precisely because those are a black box.
 
 **Roadmap (in order):**
 1. ✅ **PWA / installable** (v1.9.0) — home-screen icon, standalone, offline shell.
@@ -72,6 +80,15 @@ moved to the Pi so both stay up when the Mac is closed.
 - **Tracker42 proxy:** `GET/POST /tracker?action=…`  (Portal42 tickets; `PORTAL42_TOKEN` server-side)
 - **Discord agent brain:** `POST /agent`  (server-side tool loop for Discord/SMS — no browser; rate-limited)
 - **Discord heartbeat:** `GET/POST /discord-status`  (bot posts liveness; switchboard reads it)
+- **Reminders:** `GET/POST/DELETE /reminders`  (KV `reminders` blob; miDash-owned push. POST adds
+  `{at,text,kind}`, GET lists pending, DELETE `?id=`. A **1-minute Cron Trigger** (`scheduled()` →
+  `fireDueReminders`) DMs due ones to Q on Discord via the REST API — needs secrets
+  `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`. The Worker sends the DM itself, so it doesn't depend on
+  the Pi. Only writes KV on add/delete/fire → safe under the ~1000/day write budget. v1.41.0)
+- **Discord push health:** `GET /discord-check`  (validates `DISCORD_BOT_TOKEN` via `/users/@me` +
+  `DISCORD_USER_ID` by opening a DM channel — no message sent; `?send=1` delivers a real test DM.
+  The Switchboard **Discord card** shows inbound heartbeat + outbound push in one, with a "🔔 Send
+  test DM" action. v1.41.0)
 - **Tool inspection:** `GET /tools`  (canonical tool names + chat schemas; v1.36.0)
 - Every route is gated by `DASH_KEY` via `authed()` (constant-time; narrow fail-open — see
   Strategic direction). The whole fetch handler is wrapped in try/catch so a crash returns a
@@ -149,7 +166,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `wrangler.jsonc`| Worker config incl. KV binding. |
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
-| `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`) with a **KEEP IN SYNC** note — 56 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+| `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`) with a **KEEP IN SYNC** note — 66 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -177,11 +194,16 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 work so it shows on the project card), `delete_event`, `send_email`,
 `list_tasks`, `create_task`, `complete_task`, `read_notes`, `add_note` (Discord path),
 `list_projects`, `update_project`, `add_project` (all **type-aware**: software|property, with
-property/area/people), `finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
+property/area/people), `set_reminder`/`list_reminders`/`cancel_reminder` (miDash-owned Discord-DM
+push — a reminder is a NOTIFICATION, distinct from a Google Task to-do; see `/reminders`),
+`finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
 
 > **Tool schemas are single-sourced (v1.36.0):** the project tools live in one `PROJECT_TOOLS`
-> const in `worker.js`, spread into both `TOOLS` (chat) and `AGENT_TOOLS` (Discord) so they can't
-> drift. `GET /tools` returns the canonical list.
+> const in `worker.js`; the reminder tools in one `REMINDER_TOOLS` const — both spread into `TOOLS`
+> (chat) and `AGENT_TOOLS` (Discord) so they can't drift. `GET /tools` returns the canonical list.
+> Reminder tools execute in the browser (`executeTool` → `POST /reminders`, tz-aware via `resolveAt`)
+> AND in the Worker (`runAgentTool`, for the Discord agent, via `resolveAtServer` — relative/ISO-offset
+> times only, since the Worker has no browser tz).
 
 > **Robustness (v1.31.0–1.33.1):** tool errors carry `is_error:true`; a tool whose input JSON was
 > truncated mid-stream is NOT executed on `{}` (returns a retry error); `repairChat()` on load
@@ -377,6 +399,15 @@ cd ~/miDash && wrangler deploy
       it into 42payments' own form; we only verify via logs. (Dart's Credit/Debit is backwards.)
 - [ ] **Notes: tombstone/merge** like projects (currently conflict-guarded, not merged).
 - [ ] **Discord weekly-digest push** — the rollup exists (`buildWeeklyDigest`); add a cron + send.
+      (The cron plumbing now exists — `scheduled()` in `worker.js` — so this is a smaller lift.)
+- [ ] **In-dashboard reminder bell** (former "Phase 2", deferred) — a bell/badge + sound +
+      Notifications-API alert that rings when a `/reminders` entry is about to fire. Now trivial on
+      top of the queue: poll `GET /reminders`, ring the soonest. The "at-desk" layer atop the
+      Discord push. Pure frontend, fully ours.
+- [x] **Reminders — miDash-owned Discord-DM push (v1.41.0):** KV queue + 1-min cron;
+      `set_reminder`/`list_reminders`/`cancel_reminder` tools (browser + Discord agent); capture bar
+      "⏰ Remind me to…" also fires a Discord ping when a time is given. Needs secrets
+      `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`.
 - [ ] Prompt caching on the system block (`cache_control` in `worker.js`) to cut per-turn input cost.
 - [ ] **Static IP for the Pi** — Q wants FREE only (noted Oracle Cloud always-free VM); staying on
       home IP for now.
@@ -410,5 +441,14 @@ cd ~/miDash && wrangler deploy
   tool_result ordering) fixed after external review.
 - v1.34–1.37: property "Scheduled this week" strip + contact typeahead; sync visibility; tool-schema
   single-source + `/tools`; **Weekly review** rollup.
-- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Next likely: Discord weekly
-  digest push, or Notes merge.
+- v1.38–1.40: panels start collapsed + Discord light KV-quota fix; boot-time silent Google re-grant;
+  agent reminders set dates from "tomorrow/next tue".
+- v1.41.0: **Reminders — miDash-owned Discord-DM push.** KV `reminders` queue + 1-min Cron Trigger
+  (`scheduled()` → `fireDueReminders` → Discord REST DM); `set_reminder`/`list_reminders`/
+  `cancel_reminder` tools (browser via `resolveAt`+`POST /reminders`; Discord agent via
+  `resolveAtServer`); capture bar "⏰ Remind" also fires a ping when a time is given; `resolveAt`
+  unit-tested (66 assertions). Established the **"own the brain; third parties are dumb pipes"**
+  spine. Also: switchboard Google modal tidy (single connect affordance, ✕ close). Needs secrets
+  `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`.
+- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders live once the two
+  Discord secrets are set. Next likely: in-dashboard reminder bell, Discord weekly digest push, or Notes merge.
