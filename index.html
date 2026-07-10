@@ -1067,7 +1067,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.4",
+  version: "1.44.5",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -4167,6 +4167,24 @@ async function executeTool(name,a){
         if(!a.listId||!a.taskId) return {error:"need listId and taskId (from list_tasks)"};
         const r=await completeTaskApi(acct, a.listId, a.taskId);
         loadTasks(); return r.ok?{completed:true}:{error:"complete failed "+r.status};
+      }
+      case "update_task": {
+        const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
+        if(!a.listId||!a.taskId) return {error:"need listId and taskId (from list_tasks)"};
+        const body={};
+        if(a.title!=null && String(a.title).trim()) body.title=String(a.title);
+        if(a.notes!=null) body.notes=String(a.notes);
+        let ymd=null;
+        if(a.due!=null && String(a.due).trim()){
+          const s=String(a.due).trim();
+          if(/^(none|clear|remove|no ?due|unset)$/i.test(s)) body.due=null;   // clear the due date
+          else { const iso=s.match(/\d{4}-\d{2}-\d{2}/); ymd = iso?iso[0]:parseReminder(s).ymd; if(ymd) body.due=new Date(ymd+"T00:00:00").toISOString(); }
+        }
+        if(!("title" in body) && !("notes" in body) && !("due" in body)) return {error:"nothing to update — pass a new due, title, or notes"};
+        const r=await fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(a.listId)}/tasks/${encodeURIComponent(a.taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+        loadTasks();
+        if(!r.ok) return {error:"update failed "+r.status+" — reconnect Google for Tasks write access"};
+        const c=await r.json(); return {updated:true, taskId:c.id, title:c.title, due:c.due?String(c.due).slice(0,10):null};
       }
       case "set_reminder": {
         if(!a.text) return {error:"need text"};

@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.44.4` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.44.5` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (reminder capture rework + Tasks show-all/in-place-complete)
+**Last updated:** 2026-07-10 (agent can now reschedule tasks — new update_task tool)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -192,7 +192,8 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 `search_emails`, `get_email`, `reply_email`, `trash_email`, `archive_email`,
 `mark_read`, `list_events`, `create_event` (takes optional **`projectId`** to tag property
 work so it shows on the project card), `delete_event`, `send_email`,
-`list_tasks`, `create_task`, `complete_task`, `read_notes`, `add_note` (Discord path),
+`list_tasks`, `create_task`, `complete_task`, `update_task` (reschedule/rename — change a task's
+due date via list_tasks → update_task), `read_notes`, `add_note` (Discord path),
 `list_projects`, `update_project`, `add_project` (all **type-aware**: software|property, with
 property/area/people), `set_reminder`/`list_reminders`/`cancel_reminder` (miDash-owned Discord-DM
 push — a reminder is a NOTIFICATION, distinct from a Google Task to-do; see `/reminders`),

@@ -49,7 +49,10 @@ Q's flow is idea → reality: ideas live in his Notes (read_notes), and Tasks ar
 actionable layer. When he says things like "turn my notes into tasks", "make these ideas
 real", or "what should I do next", read_notes first, then create a task per actionable item
 with create_task. To mark something done, list_tasks to find its listId/taskId, then
-complete_task.
+complete_task. To RESCHEDULE a task (change its due date) or rename it — e.g. "move the
+reimbursement to next Tuesday", "push Rachel's call to Monday" — list_tasks to find it, then
+update_task with the new 'due' (a phrase like "next tue"/"monday" is fine). You CAN change task
+due dates; don't tell Q to do it manually.
 
 Reminders vs tasks: a Google Task (create_task) is a TO-DO on his list; a reminder (set_reminder)
 is a timed NOTIFICATION that DMs him on Discord once, at a moment. Use set_reminder for anything
@@ -187,6 +190,9 @@ const TOOLS = [
   { name: "complete_task",
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },
+  { name: "update_task",
+    description: "Reschedule or edit an EXISTING Google Task — this is how you change a task's DUE DATE (e.g. 'move the reimbursement to next Tuesday', 'push Rachel's call to Monday'), rename it, or edit its notes. Call list_tasks first to find the task by title, then pass its account, listId and taskId. 'due' accepts an exact YYYY-MM-DD or a natural phrase ('next tue', 'monday', 'friday', 'july 16', 'in 3 days') resolved to Q's LOCAL date, or 'none' to clear the due date. Google Tasks store the DATE only (any time-of-day is ignored). Acts immediately — no confirmation needed.",
+    input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, due: { type: "string", description: "new due — YYYY-MM-DD, a natural phrase, or 'none' to clear" }, title: { type: "string" }, notes: { type: "string" } }, required: ["listId", "taskId"] } },
 
   // ---- Projects board (Q's idea→shipped tracker, miDash-owned) — shared schemas ----
   ...PROJECT_TOOLS,
