@@ -41,9 +41,9 @@ const SMART_MODELS = new Set(["claude-sonnet-4-6", "claude-opus-4-8", "claude-fa
 const SYSTEM = `You are the assistant embedded in Q's personal dashboard (miDash).
 You can read Q's Google Calendar (across ALL of his connected Google accounts and ALL
 calendars), create calendar events, delete events, read/reply/trash/archive/mark-read his
-Gmail, send new emails, read/create/complete his Google Tasks, and read his Notes scratchpad
-— via the provided tools. Tools run in Q's browser using his own Google logins. Be concise
-and friendly.
+Gmail, send new emails, read/create/complete his Google Tasks, read and clean up his Google
+Contacts, and read his Notes scratchpad — via the provided tools. Tools run in Q's browser
+using his own Google logins. Be concise and friendly.
 
 Q's flow is idea → reality: ideas live in his Notes (read_notes), and Tasks are the
 actionable layer. When he says things like "turn my notes into tasks", "make these ideas
@@ -74,6 +74,16 @@ next action. Use update_project to advance a stage or set the next action (e.g. 
 to ship", "move the kitchen reno to build") — always use that project type's stage words. Use
 add_project (with type: "property" for a build/reno) to start tracking something new. These act
 immediately (no confirm).
+
+Contacts (cleanup): you CAN read and delete Q's saved Google Contacts. For "delete my junk
+contacts", "clean up my contacts", "remove duplicates", etc.: call list_contacts, then use your
+own judgment to pick the obvious junk — entries with no real name, machine senders
+(noreply@/notifications@/no-reply/mailer/newsletter/marketing), one-off transactional addresses,
+and duplicates. Show Q the shortlist in text first ("I found N that look like junk: … — delete
+these?"), and only when he agrees call delete_contacts ONCE with the whole list. It pops a single
+confirm dialog, so don't ask again in text. Never claim you can't touch contacts — you can. Only
+saved contacts are deletable (auto-collected "other" contacts aren't); if a delete is denied with
+needsReconnect, the write scope was just added and Q needs to reconnect Google once.
 
 Portal42 / Tracker42 (Q's ticketing system): list_tracker_notifications shows his Tracker42
 notifications newest-first (ticket status changes, comments, approvals, QA pass/fail, releases),
@@ -193,6 +203,14 @@ const TOOLS = [
   { name: "update_task",
     description: "Reschedule or edit an EXISTING Google Task — this is how you change a task's DUE DATE (e.g. 'move the reimbursement to next Tuesday', 'push Rachel's call to Monday'), rename it, or edit its notes. Call list_tasks first to find the task by title, then pass its account, listId and taskId. 'due' accepts an exact YYYY-MM-DD or a natural phrase ('next tue', 'monday', 'friday', 'july 16', 'in 3 days') resolved to Q's LOCAL date, or 'none' to clear the due date. Google Tasks store the DATE only (any time-of-day is ignored). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, due: { type: "string", description: "new due — YYYY-MM-DD, a natural phrase, or 'none' to clear" }, title: { type: "string" }, notes: { type: "string" } }, required: ["listId", "taskId"] } },
+
+  // ---- Google Contacts (People API, runs in Q's browser with his token) ----
+  { name: "list_contacts",
+    description: "List Q's saved Google Contacts across ALL connected accounts. Each item has name, email, account, and resourceName. Only saved 'My Contacts' are returned (they're the ones that can be deleted). Call this before delete_contacts, then use YOUR judgment to pick out the obvious junk (no real name, noreply@/notifications@/marketing senders, one-off addresses, duplicates) and confirm the list with Q in text before deleting.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "delete_contacts",
+    description: "Permanently delete one or more saved Google Contacts. Pass a 'contacts' array of items from list_contacts (each with resourceName + account). Pops ONE on-screen confirmation listing all the names, then removes them from Google Contacts — so just call it once with the full junk list; do NOT ask for permission again in text and do NOT call it once per contact. If a tool returns cancelled:true, respect it and don't retry. If it reports needsReconnect, tell Q to reconnect Google (the write scope was just added) and try again.",
+    input_schema: { type: "object", properties: { contacts: { type: "array", description: "contacts to delete (from list_contacts)", items: { type: "object", properties: { resourceName: { type: "string", description: "the contact's resourceName, e.g. people/c123" }, account: { type: "string" }, name: { type: "string", description: "for the confirm dialog" }, email: { type: "string" } }, required: ["resourceName"] } } }, required: ["contacts"] } },
 
   // ---- Projects board (Q's idea→shipped tracker, miDash-owned) — shared schemas ----
   ...PROJECT_TOOLS,

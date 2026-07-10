@@ -1072,7 +1072,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.7",
+  version: "1.44.8",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1862,8 +1862,11 @@ function tick() {
 /* NOTE: contacts.other.readonly (auto-collected "other contacts") is a SENSITIVE scope Google
    gates behind app verification — requesting it on an unverified app makes the whole consent
    fail with Google's generic "Something went wrong". Dropped so connect works; loadContacts()
-   already tolerates otherContacts being unavailable. Re-add only after the OAuth app is verified. */
-const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/tasks";
+   already tolerates otherContacts being unavailable. Re-add only after the OAuth app is verified.
+   contacts (full read+write, replacing contacts.readonly as of v1.44.8) powers delete_contacts —
+   it's sensitive like readonly was, so it works for Q as a test user; after upgrading this scope Q
+   must RECONNECT Google once (select_account consent) to grant write, or deletes 403. */
+const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/tasks";
 let tokenClient = null;
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
@@ -2676,15 +2679,17 @@ async function loadContacts(){
   if(!accounts.length){ renderContacts(); renderReachout(); return; }
   await loadContactsMeta();
   let all=[];
-  const grab=(arr,acct)=>arr.forEach(p=>{ const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value; const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0]; if(email) all.push({name, email, account:acct.email}); });
+  // deletable=true only for saved "My Contacts" (resourceName people/c…); auto-collected
+  // otherContacts (resourceName otherContacts/…) can't be deleted via the People API.
+  const grab=(arr,acct,deletable)=>arr.forEach(p=>{ const email=(p.emailAddresses||[])[0] && (p.emailAddresses||[])[0].value; const name=((p.names||[])[0] && (p.names||[])[0].displayName) || (email||"").split("@")[0]; if(email) all.push({name, email, account:acct.email, resourceName:p.resourceName||null, deletable:!!deletable}); });
   for(const acct of accounts){
     // My Contacts (saved)
     let d; try{ d=await gfetch("https://people.googleapis.com/v1/people/me/connections?pageSize=1000&personFields=names,emailAddresses&sortOrder=FIRST_NAME_ASCENDING", acct.token); }catch(e){ continue; }
     if(d && d.error){ console.warn("[contacts]", acct.email, d.error); if(!contactsErr) contactsErr=apiErrMsg(d.error,"Contacts (People)",PEOPLE_ENABLE); contactsFailed.push(acct.email); }
-    else grab(d.connections||[], acct);
+    else grab(d.connections||[], acct, true);
     // Other contacts (auto-collected from mail — the big pool; needs contacts.other.readonly, granted on reconnect)
     let o; try{ o=await gfetch("https://people.googleapis.com/v1/otherContacts?readMask=names,emailAddresses&pageSize=1000", acct.token); }catch(e){}
-    if(o && !o.error) grab(o.otherContacts||[], acct);
+    if(o && !o.error) grab(o.otherContacts||[], acct, false);
   }
   const seen=new Set();
   contactsList=all.filter(c=>{ const k=cKey(c.email); if(seen.has(k)) return false; seen.add(k); return true; })
@@ -4237,6 +4242,34 @@ async function executeTool(name,a){
         loadTasks();
         if(!r.ok) return {error:"update failed "+r.status+" — reconnect Google for Tasks write access"};
         const c=await r.json(); return {updated:true, taskId:c.id, title:c.title, due:c.due?String(c.due).slice(0,10):null};
+      }
+      case "list_contacts": {
+        if(!accounts.length) return {error:"no Google account connected"};
+        await loadContacts();   // refresh the cache so resourceName is current
+        const list=contactsList.filter(c=>c.deletable && c.resourceName)
+          .map(c=>({name:c.name, email:c.email, account:c.account, resourceName:c.resourceName}));
+        return {count:list.length, contacts:list, note:"Only saved 'My Contacts' are listed (the deletable ones)."};
+      }
+      case "delete_contacts": {
+        if(!accounts.length) return {error:"no Google account connected"};
+        const list=(Array.isArray(a.contacts)?a.contacts:[]).filter(c=>c && c.resourceName);
+        if(!list.length) return {error:"no contacts to delete — pass a 'contacts' array from list_contacts"};
+        const label=list.map(c=>c.name||c.email||c.resourceName);
+        if(!confirm(`Permanently delete ${list.length} contact${list.length>1?"s":""} from Google Contacts?\n\n${label.slice(0,40).join("\n")}${list.length>40?`\n…and ${list.length-40} more`:""}`)) return {cancelled:true, note:"User declined — do not retry."};
+        let deleted=0; const failures=[]; let needsReconnect=false;
+        for(const c of list){
+          const acct=c.account?acctByEmail(c.account):accounts[0];
+          if(!acct){ failures.push({contact:c.name||c.resourceName, error:"unknown account "+c.account}); continue; }
+          if(!/^people\/c/.test(String(c.resourceName))){ failures.push({contact:c.name||c.resourceName, error:"auto-collected 'other' contact — not deletable via the API"}); continue; }
+          let r; try{ r=await fetch(`https://people.googleapis.com/v1/${c.resourceName}:deleteContact`,{method:"DELETE",headers:{Authorization:"Bearer "+acct.token}}); }catch(e){ failures.push({contact:c.name||c.resourceName, error:"network error"}); continue; }
+          if(r.ok || r.status===200){ deleted++; }
+          else { if(r.status===401||r.status===403) needsReconnect=true; failures.push({contact:c.name||c.resourceName, error:"delete failed "+r.status}); }
+        }
+        loadContacts();
+        const out={deleted, failed:failures.length};
+        if(failures.length) out.failures=failures.slice(0,20);
+        if(needsReconnect) out.needsReconnect=true, out.note="Some deletes were denied — Q needs to reconnect Google (the Contacts write scope was just added). Click reconnect on the Contacts card, then retry.";
+        return out;
       }
       case "set_reminder": {
         if(!a.text) return {error:"need text"};
