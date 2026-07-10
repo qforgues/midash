@@ -586,7 +586,16 @@
   .chat-input button:disabled { opacity:.5; cursor:default; }
 
   /* ---- Command bar: universal capture + focus filters (v1.8) ---- */
-  .cmd-card { padding:16px 18px; }
+  .cmd-card { padding:9px 12px; }   /* thin top strip (v1.42.0 consolidation) */
+  /* Reminders live in the Tasks card (v1.42.0). Timed Discord-DM pings; ✕ cancels one. */
+  .reminders-strip { margin-top:12px; }
+  .reminders-strip:empty { margin-top:0; }
+  .rem-head { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; display:flex; align-items:center; gap:7px; border-top:1px solid var(--border); padding-top:11px; }
+  .rem-row { display:flex; align-items:baseline; gap:9px; padding:5px 0; font-size:13.5px; }
+  .rem-when { color:var(--accent); white-space:nowrap; font-variant-numeric:tabular-nums; flex:none; }
+  .rem-text { color:var(--text); overflow-wrap:anywhere; flex:1; }
+  .rem-x { color:var(--muted); cursor:pointer; flex:none; padding:0 3px; opacity:.7; }
+  .rem-x:hover { color:var(--bad,#ff6b6b); opacity:1; }
   .cap-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
   /* capture mode = one pill with a dropdown */
   .cap-mode-pick { position:relative; flex:0 0 auto; }
@@ -648,9 +657,25 @@
       <div class="hright">
         <div id="acct-bar"></div>
         <img id="avatar" class="avatar" alt="" style="display:none">
+        <button id="sb-pill" class="gbtn" title="Connections — status" style="padding:8px 10px"><span class="led" id="sb-pill-led"></span></button>
+        <div id="sb-menu" class="gear-menu" style="display:none">
+          <div class="gear-sec">
+            <h3><span class="dot">🎛️</span>Switchboard
+              <span class="fin-state" id="sb-summary" style="margin-left:auto">checking…</span></h3>
+            <div class="switchboard" id="switchboard"></div>
+            <div style="margin-top:10px"><span class="refresh" id="sb-refresh"><span class="ricon">↻</span> re-check all</span></div>
+          </div>
+        </div>
         <button id="gear-btn" class="gbtn" title="Profile &amp; settings" style="padding:8px 11px">⚙️</button>
         <button id="menu-btn" class="gbtn" title="Links &amp; apps" style="padding:8px 12px">☰</button>
         <div id="gear-menu" class="gear-menu" style="display:none">
+          <div class="gear-sec">
+            <h3><span class="dot">🧰</span>Tools</h3>
+            <div class="links">
+              <a href="#" id="weekly-link"><span class="lhs"><span class="ldot set"></span>🗓️ Weekly review <span id="weekly-due" class="weekly-due"></span></span><span><span class="arrow">→</span></span></a>
+              <a href="#" id="cc-debt-link"><span class="lhs"><span class="ldot set"></span>💳 Credit Card Debt</span><span><span class="arrow">→</span></span></a>
+            </div>
+          </div>
           <div class="gear-foot" style="border-top:none;margin-top:0;padding-top:0">
             <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px">👤 Appearance &amp; profile</button>
             <button id="check-update" class="gbtn" style="width:100%;margin-bottom:4px">🔄 Check for update</button>
@@ -668,16 +693,10 @@
 
   <div id="layout">
     <main class="main">
-      <!-- Switchboard: one light per connection/API. Click a light for a copyable
-           diagnostic + a fix button. Goal: click the reds, watch them go green. -->
-      <div class="card" id="switchboard-card" style="margin-bottom:20px">
-        <h2><span class="dot">🎛️</span>Switchboard
-          <span class="fin-state" id="sb-summary">checking…</span>
-          <span class="refresh" id="sb-refresh"><span class="ricon">↻</span> re-check</span></h2>
-        <div class="switchboard" id="switchboard"></div>
-      </div>
+      <!-- Switchboard moved into the header (🎛️ pill → #sb-menu) so status is always visible
+           without eating a card. Command/capture bar is now the top strip. -->
 
-      <!-- Command bar: universal capture box + "Show:" focus filters -->
+      <!-- Command bar: universal capture box (⏰ remind / ✉️ draft / 💡 idea) -->
       <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
         <div class="cap-row">
           <div class="cap-mode-pick">
@@ -737,11 +756,12 @@
         <div id="tracker-body"><div class="empty">—</div></div>
       </div>
         <div class="card" id="tasks-card">
-          <h2><span class="dot">✅</span>Tasks
+          <h2><span class="dot">✅</span>Tasks &amp; Reminders
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
           <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
           <div id="tasks-pager" class="pager" style="display:none"></div>
+          <div id="reminders-strip" class="reminders-strip"></div>
         </div>
       </div>
 
@@ -1034,7 +1054,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.41.0",
+  version: "1.42.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1134,16 +1154,12 @@ function gmailComposeUrl(email,to,subject,body){
 }
 function urlFor(l){ return l.g ? G[l.g](l.path || "") : l.url; }
 
-/* ---------- Render all quick-links into the gear dropdown ---------- */
+/* ---------- Render the ☰ links dropdown (navigation only, v1.42.0) ----------
+   Consolidation: dashboard TOOLS (Weekly review, CC Debt) moved to the ⚙️ gear menu; the live
+   GitHub-repos list was dropped (it duplicated the Projects card's Import); Contacts is now a
+   button that opens the existing Contacts manager instead of a second live list. loadContacts
+   still runs elsewhere (it feeds the Stay-connected card + the manager) — just not rendered here. */
 function render() {
-  const tools = `
-    <div class="gear-sec">
-      <h3><span class="dot">🧰</span>Tools</h3>
-      <div class="links">
-        <a href="#" id="weekly-link"><span class="lhs"><span class="ldot set"></span>🗓️ Weekly review <span id="weekly-due" class="weekly-due"></span></span><span><span class="arrow">→</span></span></a>
-        <a href="#" id="cc-debt-link"><span class="lhs"><span class="ldot set"></span>💳 Credit Card Debt</span><span><span class="arrow">→</span></span></a>
-      </div>
-    </div>`;
   const sections = CONFIG.sections.map(s => `
     <div class="gear-sec">
       <h3><span class="dot">${s.icon}</span>${s.title}</h3>
@@ -1158,27 +1174,24 @@ function render() {
         }).join("")}
       </div>
     </div>`).join("");
-  const projects = `
+  const people = `
     <div class="gear-sec">
-      <h3><span class="dot">🛠️</span>Projects <span class="refresh" id="proj-refresh"><span class="ricon">↻</span></span></h3>
-      <div class="links" id="projects"><div class="empty">loading repos…</div></div>
+      <h3><span class="dot">👤</span>People</h3>
+      <div class="links">
+        <a href="#" id="contacts-open"><span class="lhs"><span class="ldot set"></span>👥 Manage contacts</span><span><span class="arrow">→</span></span></a>
+      </div>
     </div>`;
-  const contacts = `
-    <div class="gear-sec">
-      <h3><span class="dot">👤</span>Contacts <span class="refresh" id="contacts-refresh"><span class="ricon">↻</span></span></h3>
-      <div class="links" id="contacts"><div class="empty">connect Google…</div></div>
-    </div>`;
-  document.getElementById("gear-sections").innerHTML = tools + sections + projects + contacts;
+  document.getElementById("gear-sections").innerHTML = sections + people;
+  const co=document.getElementById("contacts-open");
+  if(co) co.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openContactsManager(); };
+  // Weekly review + CC Debt now live in the ⚙️ gear menu (static HTML) — wire them, close that menu.
   const ccl=document.getElementById("cc-debt-link");
-  if(ccl) ccl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openDebtModal(); };
+  if(ccl) ccl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openDebtModal(); };
   const wkl=document.getElementById("weekly-link");
-  if(wkl) wkl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const lm=document.getElementById("links-menu"); if(lm) lm.style.display="none"; openWeeklyReview(); };
+  if(wkl) wkl.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openWeeklyReview(); };
   updateWeeklyDue();
-  document.getElementById("proj-refresh").onclick = (e)=>{ e.stopPropagation(); loadProjects(); };
-  document.getElementById("contacts-refresh").onclick = (e)=>{ e.stopPropagation(); loadContacts(); };
 
   applyTheme();
-  loadProjects();
   pingLinks();
 }
 
@@ -1996,7 +2009,7 @@ function applyVersionTheme(){
 
 function initGearMenu(){
   // Two dropdowns: ⚙️ gear (profile + passphrase) and ☰ hamburger (all links). One open at a time.
-  const pairs=[["gear-btn","gear-menu"],["menu-btn","links-menu"]];
+  const pairs=[["gear-btn","gear-menu"],["menu-btn","links-menu"],["sb-pill","sb-menu"]];
   const menus=pairs.map(p=>document.getElementById(p[1])).filter(Boolean);
   pairs.forEach(([bid,mid])=>{
     const b=document.getElementById(bid), m=document.getElementById(mid);
@@ -2833,6 +2846,7 @@ async function completeTaskApi(acct, listId, taskId){
   return fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({status:"completed"})});
 }
 async function loadTasks(){
+  loadReminders();   // reminders are Worker-side (no Google needed) — refresh them alongside tasks
   const box=document.getElementById("tasks"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   let out=[], err=null, failedAccts=[];
@@ -3585,6 +3599,9 @@ function renderSwitchboard(){
     sum.textContent = checking?"checking…": reds?`${reds} down`: ambers?`${ambers} need attention`:"all systems go ✓";
     sum.className="fin-state "+(reds?"sb-red":ambers?"sb-amber":checking?"":"sb-green");
   }
+  // Header pill LED mirrors the WORST connection state so status is visible without opening the menu.
+  const led=document.getElementById("sb-pill-led");
+  if(led){ const worst = reds?"off": ambers?"warn": checking?"check":"on"; led.className="led "+sbStateClass(worst); }
 }
 async function sbCheckOne(c){
   sbState[c.id]={state:"check",summary:"checking…"}; renderSwitchboard();
@@ -3742,7 +3759,7 @@ function initSwitchboard(){
   const xb=document.getElementById("sb-modal-x"); if(xb) xb.onclick=closeSbModal;
   renderSwitchboard();
   runSwitchboard();
-  window.addEventListener("focus", ()=>{ if(document.getElementById("switchboard-card") && Date.now()-sbLastRun>20000) runSwitchboard(); });
+  window.addEventListener("focus", ()=>{ if(document.getElementById("sb-pill") && Date.now()-sbLastRun>20000) runSwitchboard(); });
 }
 
 /* ---------- Credit Card Debt (menu modal — balances from 42payments + miDash-owned payoff plan) ---------- */
@@ -4116,6 +4133,7 @@ async function executeTool(name,a){
         if(at < Date.now()-60000) return {error:"that time is in the past"};
         const r=await scheduleReminder(at, a.text);
         if(!r.ok) return {error:"couldn't save reminder — "+(r.error||"try again")};
+        loadReminders();
         return {scheduled:true, id:r.id, at:new Date(at).toISOString(), when:new Date(at).toLocaleString()};
       }
       case "list_reminders": {
@@ -4129,6 +4147,7 @@ async function executeTool(name,a){
         if(!a.id) return {error:"need id (from list_reminders)"};
         if(!REMINDERS_URL) return {error:"no backend configured"};
         const r=await fetch(REMINDERS_URL+"?id="+encodeURIComponent(a.id),{method:"DELETE",headers:{...dashAuthHeader()}});
+        loadReminders();
         return r.ok?{cancelled:true}:{error:"cancel failed (HTTP "+r.status+")"};
       }
       case "send_email": {
@@ -4258,6 +4277,32 @@ async function scheduleReminder(at, text, kind){
     if(!r.ok) return {ok:false, error:"HTTP "+r.status};
     const j=await r.json(); return {ok:true, id:j.id};
   }catch(e){ return {ok:false, error:String(e&&e.message||e)}; }
+}
+/* Pending reminders live in the Tasks card (#reminders-strip). Hidden when there are none so the
+   card stays clean. Refreshed alongside tasks, and after a reminder is set/cancelled anywhere. */
+function fmtReminderWhen(d){
+  const now=new Date(); const t=d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  if(d-now<0) return "now";
+  if(d.toDateString()===now.toDateString()) return "today "+t;
+  const tm=new Date(now); tm.setDate(tm.getDate()+1);
+  if(d.toDateString()===tm.toDateString()) return "tmrw "+t;
+  return d.toLocaleDateString([],{weekday:"short",month:"short",day:"numeric"})+" "+t;
+}
+async function loadReminders(){
+  const box=document.getElementById("reminders-strip"); if(!box) return;
+  if(!REMINDERS_URL){ box.innerHTML=""; return; }
+  let list=[];
+  try{ const r=await fetch(REMINDERS_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); list=(j&&j.reminders)||[]; } }catch(e){ return; }
+  if(!list.length){ box.innerHTML=""; return; }
+  list.sort((a,b)=>a.at-b.at);
+  const rows=list.map(r=>`<div class="rem-row"><span class="rem-when">⏰ ${esc(fmtReminderWhen(new Date(r.at)))}</span><span class="rem-text">${esc(r.text)}</span><span class="rem-x" data-id="${escAttr(r.id)}" title="Cancel this reminder">✕</span></div>`).join("");
+  box.innerHTML=`<div class="rem-head">⏰ Reminders <span class="fin-state">${list.length}</span></div>${rows}`;
+  box.querySelectorAll(".rem-x").forEach(x=>x.onclick=()=>cancelReminderId(x.dataset.id));
+}
+async function cancelReminderId(id){
+  if(!REMINDERS_URL||!id) return;
+  try{ await fetch(REMINDERS_URL+"?id="+encodeURIComponent(id),{method:"DELETE",headers:{...dashAuthHeader()}}); }catch(e){}
+  loadReminders();
 }
 
 /* ---- Dashboard passphrase ----
@@ -4551,7 +4596,7 @@ async function captureRemind(text){
   // the to-do on the list; this is the actual nudge that reaches Q (the Worker cron DMs it).
   let pinged=false;
   if(p.timeStr && p.due && REMINDERS_URL && p.due.getTime()>Date.now()){
-    try{ const r=await scheduleReminder(p.due.getTime(), p.title||text); pinged=!!r.ok; }catch(e){}
+    try{ const r=await scheduleReminder(p.due.getTime(), p.title||text); pinged=!!r.ok; if(pinged) loadReminders(); }catch(e){}
   }
   const pingLbl = pinged ? " · ⏰ Discord ping set" : "";
   if(acct){

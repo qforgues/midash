@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.41.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.42.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (reminders: miDash-owned Discord-DM push + cron; switchboard modal tidy)
+**Last updated:** 2026-07-10 (dashboard consolidation pass: switchboard→header pill, reminders in Tasks card, ☰ menu declutter)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -450,5 +450,13 @@ cd ~/miDash && wrangler deploy
   unit-tested (66 assertions). Established the **"own the brain; third parties are dumb pipes"**
   spine. Also: switchboard Google modal tidy (single connect affordance, ✕ close). Needs secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`.
-- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders live once the two
-  Discord secrets are set. Next likely: in-dashboard reminder bell, Discord weekly digest push, or Notes merge.
+- v1.42.0: **Dashboard consolidation pass.** Switchboard → a header **🎛️ pill** (LED = worst state;
+  click to expand the lights + re-check) — reclaims the top card, status always visible. **Reminders
+  now render in the Tasks card** ("Tasks & Reminders": pending list with ✕-cancel; `loadReminders`/
+  `cancelReminderId`/`fmtReminderWhen`) — the home the in-dash bell will ring from. **☰ menu
+  decluttered:** Weekly review + CC Debt moved to the ⚙️ gear menu; the live GitHub-repos list
+  dropped (dup of the Projects card); Contacts is now a "Manage contacts" button opening the existing
+  manager (not a 2nd live list). Capture bar slimmed to a top strip. (`loadProjects` is now dead code.)
+- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders live (secrets set,
+  end-to-end verified). Next: **in-dashboard reminder bell** (bell + sound + Notifications API on top of
+  the #reminders-strip), then maybe Discord weekly digest push or Notes merge.

@@ -49,6 +49,12 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   merges server-side (tombstone-aware); notes PUT is hash-guarded (409 on concurrent change).
 - **Render safety:** external strings (Gmail/ticket/contact/agent-set) → `esc()` (body) / `escAttr()`
   (attribute); external URLs → `safeUrl()` (http(s) only). Never raw-interpolate into `innerHTML`.
+- **Header layout (v1.42.0 consolidation):** the Switchboard is a header **🎛️ pill** (`#sb-pill` →
+  `#sb-menu` dropdown, wired via the `pairs` array in `initGearMenu`); its LED mirrors the worst
+  connection state (set in `renderSwitchboard`). **⚙️ gear menu** = dashboard tools (Weekly review,
+  CC Debt) + settings; **☰ links menu** = navigation only (external links + "Manage contacts" button).
+  **Reminders render in the Tasks card** (`#reminders-strip` via `loadReminders`, refreshed inside
+  `loadTasks`). `loadProjects` (the old menu repos list) is now dead code.
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).
