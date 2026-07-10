@@ -528,7 +528,7 @@ async function sendDiscordDM(env, content) {
   try {
     const ch = await fetch("https://discord.com/api/v10/users/@me/channels", {
       method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ recipient_id: String(uid) }),
+      body: JSON.stringify({ recipient_id: String(uid).trim() }),
     });
     if (!ch.ok) return { ok: false, error: "open DM channel failed (HTTP " + ch.status + ")" };
     const chan = await ch.json();
@@ -598,7 +598,10 @@ async function handleDiscordCheck(request, env) {
   try { const b = await me.json(); out.tokenOk = true; out.bot = b.username ? (b.username + (b.discriminator && b.discriminator !== "0" ? "#" + b.discriminator : "")) : b.id; out.botId = b.id; }
   catch { out.tokenOk = true; }
   if (!uid) { out.error = "DISCORD_USER_ID not set on the Worker"; return json(out); }
-  let ch; try { ch = await fetch("https://discord.com/api/v10/users/@me/channels", { method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" }, body: JSON.stringify({ recipient_id: String(uid) }) }); }
+  // Discord IDs are numeric snowflakes (~17-20 digits). A username ("qforgues42") here is the #1
+  // mistake — catch it with a clear message instead of a bare HTTP 400 from the channel-open.
+  if (!/^\d{15,25}$/.test(String(uid).trim())) { out.error = 'DISCORD_USER_ID must be your NUMERIC Discord user id (a ~18-digit snowflake), not a username. In Discord: Settings → Advanced → Developer Mode ON, then right-click your name → Copy User ID.'; return json(out); }
+  let ch; try { ch = await fetch("https://discord.com/api/v10/users/@me/channels", { method: "POST", headers: { Authorization: "Bot " + token, "Content-Type": "application/json" }, body: JSON.stringify({ recipient_id: String(uid).trim() }) }); }
   catch (e) { out.error = "couldn't open DM channel: " + (e && e.message || e); return json(out); }
   if (!ch.ok) { out.error = "can't open a DM to that user id (HTTP " + ch.status + ")"; return json(out); }
   out.dmOk = true;
