@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.44.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.44.1` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (resilient boot + curated theme palettes; fixes v?/collapse/modal cascade)
+**Last updated:** 2026-07-10 (fix switchboard ReferenceError — the root boot throw; dots were stuck gray)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -467,6 +467,13 @@ cd ~/miDash && wrangler deploy
   Theme generator rebuilt: **curated `THEME_PALETTES`** (coloured darks like navy/forest/plum + soft
   lights — no more "black + harsh accent"), pattern ink is now a **subtle tint** so patterns read as soft
   texture, plus a new `soft` mesh pattern and repeat-avoidance between rolls.
-- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM + the
-  in-dash bell) live + verified. ⚠️ **Follow-up:** find which boot step threw (check console for
-  `[boot] … failed`) — the isolated boot masks it but the underlying init may still no-op.
+- v1.44.1: **Fixed the root boot throw.** `renderSwitchboard()` declared `reds`/`ambers`/`checking`
+  as `const` inside the `if(sum){}` block but the header pill-LED line read them at function scope →
+  `ReferenceError` every render. It drew the gray chips then threw before the checks resolved, so the
+  switchboard sat on "checking…" forever — and via `initSwitchboard()` this was the exact throw that
+  cascaded into `v?`/collapse/weekly (the v1.44.0 isolated boot masked it everywhere but the
+  switchboard itself). Hoisted the three counts to function scope. Root cause: introduced by the
+  v1.42.0 pill-LED addition.
+- **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
+  in-dash bell), consolidation, curated theme, and the boot fix are all live + on `main`. Possible
+  next: "🎨 shuffle look" button (cycle `THEME_PALETTES` on demand), Discord weekly-digest push, Notes merge.
