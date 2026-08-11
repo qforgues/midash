@@ -54,6 +54,15 @@
   .gear-sec > h3 .refresh { margin-left:auto; cursor:pointer; color:var(--muted); }
   .gear-sec > h3 .refresh:hover { color:var(--accent); }
   .gear-foot { border-top:1px solid var(--border); margin-top:6px; padding-top:8px; }
+  /* Portrait fix (v1.44.9): .hright wraps onto its own row and is only as wide as its buttons, so a
+     300px dropdown hung off its right:0 edge overflowed ~100px past the LEFT edge of the screen.
+     Narrow → anchor the menus to the header card instead and let them span its full width. */
+  @media (max-width:640px){
+    .hbar { position:relative; }
+    .hright { position:static; width:100%; justify-content:flex-end; }
+    /* .hbar-scoped so this outranks the later `#bell-menu { width:280px }` rule further down. */
+    .hbar .gear-menu, .hbar #bell-menu { left:0; right:0; width:auto; max-width:none; }
+  }
   #clock { font-variant-numeric:tabular-nums; }
   .gbtn { border:1px solid var(--border); background:var(--surface); color:var(--text);
           border-radius:10px; padding:9px 14px; font-size:14px; font-weight:500; cursor:pointer; display:flex; gap:8px; align-items:center; }
@@ -634,6 +643,16 @@
   .cap-input input:focus { border-color:var(--accent); outline:none; }
   .cap-input button { border:none; background:var(--accent); color:#fff; border-radius:10px; padding:0 16px;
                       font-size:14px; font-weight:600; cursor:pointer; }
+  /* Dictation mic (v1.44.9) — sits just before Capture. Needs .cap-input scoping to outrank
+     `.cap-input button` above (which would otherwise paint it solid accent like the submit). */
+  .cap-input .cap-mic { flex:none; width:38px; padding:0; display:none; align-items:center; justify-content:center;
+                        border:1px solid var(--border); background:var(--surface); color:var(--muted); }
+  .cap-input .cap-mic:hover { border-color:var(--accent); color:var(--accent); }
+  .cap-input .cap-mic.avail { display:flex; }
+  .cap-input .cap-mic .ic { width:17px; height:17px; }
+  .cap-input .cap-mic.on { background:var(--accent); border-color:var(--accent); color:#fff; animation:micPulse 1.4s ease-in-out infinite; }
+  @keyframes micPulse { 0%,100%{ box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+                        70%{ box-shadow:0 0 0 7px transparent; } }
   .cap-flash { flex-basis:100%; font-size:13px; color:var(--accent); height:0; opacity:0; overflow:hidden; transition:opacity .2s; }
   .cap-flash.show { height:auto; opacity:1; margin-top:2px; }
   .focus-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
@@ -727,6 +746,7 @@
           </div>
           <form class="cap-input" id="cap-form">
             <input id="cap-text" autocomplete="off" placeholder="Remind me to… e.g. call the dentist Friday at 3pm (sets a due date)">
+            <button type="button" id="cap-mic" class="cap-mic" title="Dictate — speak it instead" aria-label="Dictate"><span data-ic="mic"></span></button>
             <button type="submit" id="cap-go">Capture</button>
           </form>
           <div class="cap-flash" id="cap-flash"></div>
@@ -1072,7 +1092,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.8",
+  version: "1.44.9",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2197,7 +2217,11 @@ function renderAccountBar(){
   bar.classList.toggle("pills-hidden", accounts.length>0);   // hidden in header when connected — pills live in the Google switchboard
   if(!accounts.length){
     bar.innerHTML=`<button class="gbtn" id="g-connect">🔓 Connect Google</button>`;
-    document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:"consent"});
+    // prompt:"" — NOT "consent". Forcing consent re-showed the "trust this app" screen on every
+    // single connect even when the grant was already good; with "" Google reuses the existing grant
+    // and only prompts when it genuinely must (first time, or a scope we haven't been granted yet).
+    // The explicit re-grant paths (wireReconnect, switchboard fix) still force select_account consent.
+    document.getElementById("g-connect").onclick=()=>tokenClient.requestAccessToken({prompt:""});
     setAvatar(); applyTheme();
     return;
   }
@@ -2209,7 +2233,9 @@ function renderAccountBar(){
       <span class="x rm" data-e="${esc(a.email)}" title="Remove">✕</span>
     </span>`).join("")
     + `<button class="gbtn" id="g-add">＋ account</button>`;
-  document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account consent"});
+  // select_account (no forced consent) — you still pick which account; Google shows the consent
+  // screen by itself if THAT account hasn't granted us the scopes yet.
+  document.getElementById("g-add").onclick=()=>tokenClient.requestAccessToken({prompt:"select_account"});
   bar.querySelectorAll(".chip input.cdot").forEach(inp=>inp.oninput=inp.onchange=()=>setAcctColor(inp.dataset.e, inp.value));
   bar.querySelectorAll(".chip .edit").forEach(x=>x.onclick=()=>editAlias(x.dataset.e));
   bar.querySelectorAll(".chip .rm").forEach(x=>x.onclick=()=>{
@@ -2511,6 +2537,7 @@ const ICON_PATHS = {
   wrench:    '<path d="M15 5.2a3.6 3.6 0 0 0-4.9 4.6L4 15.9 8.1 20l6.1-6.1a3.6 3.6 0 0 0 4.6-4.9l-2.4 2.4-2.2-2.2Z"/>',
   sliders:   '<path d="M4 7h11M19 7h1M4 17h1M9 17h11"/><circle cx="17" cy="7" r="2.3"/><circle cx="7" cy="17" r="2.3"/>',
   unsub:     '<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>',
+  mic:       '<rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3.4M9 21.4h6"/>',
 };
 function ic(name, cls){ const p=ICON_PATHS[name]; if(!p) return ""; return `<svg class="ic${cls?" "+cls:""}" viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`; }
 /* Fill [data-ic="name"] placeholders + convert legacy ↻ refresh glyphs to the line icon. Runs at
@@ -4726,6 +4753,40 @@ function initCapture(){
     input.value="";
   });
 }
+/* Dictation (v1.44.9) — the browser's own Web Speech API. No backend, no Anthropic spend, no audio
+   through our Worker; miDash just receives the transcript. It fills the capture box and STOPS there
+   — you still press Capture, so a misheard "Friday" never silently becomes a reminder. Works in
+   Chrome + Safari (webkitSpeechRecognition); the button stays hidden where it isn't supported.
+   Note: Chrome streams the audio to Google's speech service to transcribe it — that's the one
+   third-party pipe here, and it's a dumb one (audio in, text out, no state). */
+let capRec=null, capRecOn=false;
+function initCaptureMic(){
+  const btn=document.getElementById("cap-mic"), input=document.getElementById("cap-text");
+  if(!btn||!input) return;
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR) return;                       // unsupported (Firefox) → button stays display:none
+  btn.classList.add("avail");
+  const stop=()=>{ capRecOn=false; btn.classList.remove("on"); btn.title="Dictate — speak it instead"; };
+  let base="";
+  btn.onclick=()=>{
+    if(capRecOn){ try{ capRec.stop(); }catch(e){} return; }   // click again = done talking
+    const r=new SR();
+    r.lang=navigator.language||"en-US"; r.continuous=true; r.interimResults=true;
+    base=input.value.trim();            // dictate onto whatever is already typed, don't clobber it
+    r.onstart=()=>{ capRecOn=true; btn.classList.add("on"); btn.title="Listening — click to stop"; capFlash("🎙️ Listening… click the mic again when you're done"); };
+    r.onresult=(e)=>{
+      let said="";
+      for(let i=0;i<e.results.length;i++) said+=e.results[i][0].transcript;
+      input.value=(base?base+" ":"")+said.trim();
+    };
+    r.onerror=(e)=>{ stop(); capFlash(e.error==="not-allowed"
+      ? "🎙️ Mic blocked — allow microphone access for this site"
+      : (e.error==="no-speech" ? "🎙️ Didn't catch that" : "🎙️ Dictation error: "+e.error)); };
+    r.onend=()=>{ stop(); input.focus(); };
+    capRec=r;
+    try{ r.start(); }catch(e){ stop(); capFlash("🎙️ Couldn't start the mic"); }
+  };
+}
 function capFlash(msg){
   const f=document.getElementById("cap-flash"); if(!f) return;
   f.textContent=msg; f.classList.add("show");
@@ -4982,7 +5043,7 @@ function boot(){
     ["applyVersionTheme",applyVersionTheme],["applyBackground",applyBackground],
     ["render",render],["tick",tick],["tickTimer",()=>setInterval(tick,10000)],
     ["initModelPicker",initModelPicker],["initGearMenu",initGearMenu],["initSettings",initSettings],
-    ["initChat",initChat],["initNotes",initNotes],["initCapture",initCapture],["initFocus",initFocus],
+    ["initChat",initChat],["initNotes",initNotes],["initCapture",initCapture],["initCaptureMic",initCaptureMic],["initFocus",initFocus],
     ["initPWA",initPWA],["initKeyModal",initKeyModal],["initTasksAdd",initTasksAdd],
     ["initTaskModal",initTaskModal],["initContactsManager",initContactsManager],["initProjects",initProjects],
     ["initTracker",initTracker],["initSwitchboard",initSwitchboard],["initDebt",initDebt],
