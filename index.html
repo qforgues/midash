@@ -1121,7 +1121,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.11",
+  version: "1.44.12",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1917,6 +1917,7 @@ function tick() {
    must RECONNECT Google once (select_account consent) to grant write, or deletes 403. */
 const SCOPES = "openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/tasks";
 let tokenClient = null;
+let lastTokenErr = null;  // {type, at} of the last GIS failure — see tokenErrNote()
 let accounts = [];        // [{email, token, exp}] — supports multiple Google accounts
 let accessToken = null;   // primary account token (used by the chat agent)
 const labelCache = {};    // email -> {labelId: name}
@@ -2162,6 +2163,7 @@ function googleBoot() {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CONFIG.googleClientId, scope: SCOPES, callback: onToken,
       error_callback: (err)=>{ console.warn("[google] token error:", err && err.type);   // silent-refresh misses land here — user can reconnect manually
+        lastTokenErr={ type:(err&&err.type)||"unknown", at:Date.now() };   // surfaced in the Google switchboard (no console on a phone/iPad)
         rejectAllTokenWaiters(new Error((err&&err.type)||"token error")); },
     });
     loadAccounts();
@@ -2195,6 +2197,7 @@ async function onToken(resp){
   const found=accounts.find(a=>a.email===email);
   if(found){ found.token=resp.access_token; found.exp=exp; if(pic) found.pic=pic; } else accounts.push({email, token:resp.access_token, exp, pic});
   accessToken=accounts[0].token; saveAccounts();
+  lastTokenErr=null;                              // a grant landed — clear any stale failure note
   resolveTokenWaiter(email, resp.access_token);   // wake any gfetch/gpost awaiting a fresh token
   if(wasEmpty || !found) afterAuth();          // full UI setup only on a new/first connect
   else { renderAccountBar(); startGoogleAutoRefresh(); }   // silent refresh: keep the token fresh, don't reload the world
@@ -3806,12 +3809,26 @@ async function sbCheckPass(){
     return {state:"warn",summary:"HTTP "+r.status,detail:`Unexpected HTTP ${r.status} from /notes.`};
   }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker: "+e.message}; }
 }
+/* Why the last silent re-grant failed, in plain words. The access token only lives ~1h and there is
+   no refresh token in the GIS token flow, so every page load re-mints one with prompt:"" — if THAT
+   is what's failing, you get sent through Connect Google on every open. The reason only ever went to
+   console.warn, which is unreachable on a phone/iPad, so it surfaces in the switchboard instead. */
+function tokenErrNote(){
+  if(!lastTokenErr) return "";
+  const mins=Math.round((Date.now()-lastTokenErr.at)/60000);
+  const why = lastTokenErr.type==="popup_failed_to_open"
+      ? "The silent re-grant opens a popup, and the browser blocked it because no tap started it. Safari blocks these hardest. One tap on Connect Google goes through — it will NOT re-show the consent screen."
+    : lastTokenErr.type==="popup_closed_by_user"
+      ? "The Google window was closed before it finished."
+    : "Google turned down the silent re-grant — usually the browser's Google session is gone, or the grant lapsed (apps in Testing status expire it every 7 days).";
+  return `\n\nLast token error: ${lastTokenErr.type} (${mins}m ago).\n${why}`;
+}
 function sbCheckGoogle(){
-  if(!accounts||!accounts.length) return {state:"warn",summary:"not connected",detail:"No Google account connected. Click Connect Google."};
+  if(!accounts||!accounts.length) return {state:"warn",summary:"not connected",detail:"No Google account connected. Click Connect Google."+tokenErrNote()};
   // Only count a token as "expired" once it's actually past its expiry — tokens auto-renew silently
   // ~25 min before that, so the light stays green continuously instead of flickering amber early.
   const now=Date.now(), expired=accounts.filter(a=>!(a.exp>now));
-  if(expired.length===accounts.length) return {state:"warn",summary:"expired",detail:`All ${accounts.length} Google token(s) expired (they last ~1h and renew silently). Reconnect if this persists.`};
+  if(expired.length===accounts.length) return {state:"warn",summary:"expired",detail:`All ${accounts.length} Google token(s) expired (they last ~1h and renew silently). Reconnect if this persists.`+tokenErrNote()};
   if(expired.length) return {state:"warn",summary:`${expired.length} expired`,detail:`Expired: ${expired.map(a=>a.email).join(", ")}.\nStill valid: ${accounts.filter(a=>a.exp>now+60000).map(a=>a.email).join(", ")}.`};
   return {state:"on",summary:`${accounts.length} connected`,detail:`Connected: ${accounts.map(a=>a.email).join(", ")}.`};
 }
