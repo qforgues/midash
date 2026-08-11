@@ -111,7 +111,7 @@
   .card h2 .dot .ic { width:17px; height:17px; vertical-align:middle; color:var(--accent); }
   .icon-btn { width:34px; height:34px; padding:0; display:inline-flex; align-items:center; justify-content:center; }
   .icon-btn .ic { width:18px; height:18px; }
-  .cap-mode-btn .ic, .cap-mode-opt .ic { width:15px; height:15px; }
+  .cap-mode .ic { width:15px; height:15px; }
   .gbtn .ic { width:15px; height:15px; margin-right:1px; }
   .card h2 .refresh { margin-left:auto; font-size:12px; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
   .card h2 .refresh:hover { color:var(--accent); }
@@ -634,32 +634,57 @@
   .bell-perm { margin-top:9px; padding-top:9px; border-top:1px solid var(--border); color:var(--accent); cursor:pointer; font-size:13px; }
   .bell-perm:hover { text-decoration:underline; }
   .cap-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
-  /* capture mode = one pill with a dropdown */
-  .cap-mode-pick { position:relative; flex:0 0 auto; }
-  .cap-mode-btn { border:1px solid var(--border); background:var(--accent-soft); color:var(--accent); font-weight:600;
-                  border-radius:20px; padding:7px 14px; font-size:13px; font-family:inherit; cursor:pointer; white-space:nowrap; }
-  .cap-mode-btn:hover { border-color:var(--accent); }
-  .cap-mode-menu { position:absolute; top:calc(100% + 6px); left:0; z-index:60; background:var(--surface);
-                   border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); padding:6px; min-width:200px; }
-  .cap-mode-opt { display:block; width:100%; text-align:left; border:none; background:none; color:var(--text);
-                  border-radius:8px; padding:9px 11px; font-size:13.5px; font-family:inherit; cursor:pointer; }
-  .cap-mode-opt:hover { background:var(--accent-soft); color:var(--accent); }
-  .cap-input { display:flex; flex:1; min-width:220px; gap:8px; }
-  .cap-input input { flex:1; min-width:0; border:1px solid var(--border); border-radius:10px; padding:9px 12px;
-                     font-size:14px; background:var(--bg); color:var(--text); }
-  .cap-input input:focus { border-color:var(--accent); outline:none; }
-  .cap-input button { border:none; background:var(--accent); color:#fff; border-radius:10px; padding:0 16px;
-                      font-size:14px; font-weight:600; cursor:pointer; }
-  /* Dictation mic (v1.44.9) — sits just before Capture. Needs .cap-input scoping to outrank
-     `.cap-input button` above (which would otherwise paint it solid accent like the submit). */
-  .cap-input .cap-mic { flex:none; width:38px; padding:0; display:none; align-items:center; justify-content:center;
-                        border:1px solid var(--border); background:var(--surface); color:var(--muted); }
-  .cap-input .cap-mic:hover { border-color:var(--accent); color:var(--accent); }
-  .cap-input .cap-mic.avail { display:flex; }
-  .cap-input .cap-mic .ic { width:17px; height:17px; }
-  .cap-input .cap-mic.on { background:var(--accent); border-color:var(--accent); color:#fff; animation:micPulse 1.4s ease-in-out infinite; }
+  /* Capture mode = a RADIO ROW of icons (v1.44.11, replacing the old pill+dropdown).
+     .cap-row is the <form> itself now, so mode / field / mic / Capture are all siblings in one
+     flex container — that's what lets the mobile layout reorder them with `order` alone. */
+  .cap-modes { display:flex; gap:6px; flex:0 0 auto; }
+  .cap-mode { display:inline-flex; align-items:center; justify-content:center; gap:7px; height:38px; padding:0 13px;
+              border:1px solid var(--border); background:var(--surface); color:var(--muted); border-radius:20px;
+              font-size:13px; font-weight:600; font-family:inherit; cursor:pointer; white-space:nowrap;
+              transition:background .12s, border-color .12s, color .12s; }
+  .cap-mode:hover { border-color:var(--accent); color:var(--accent); }
+  .cap-mode[aria-checked="true"] { background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
+  .cap-mode .ic { width:15px; height:15px; }
+  /* display:contents dissolves .cap-entry on desktop so the field and Capture become direct flex
+     items of .cap-row — one clean line, ordered modes | field | mic | Capture. On mobile it turns
+     back into a real box so the pair drops to its own row together (a plain flex-basis on the field
+     let Capture wrap off to a third row — the wrapper makes the break deterministic). */
+  .cap-entry { display:contents; }
+  .cap-row > .cap-modes { order:1; }
+  #cap-text { order:2; }
+  .cap-row > .cap-mic { order:3; }
+  #cap-go { order:4; }
+  .cap-flash { order:9; }
+  #cap-text { flex:1 1 220px; min-width:0; height:38px; border:1px solid var(--border); border-radius:10px;
+              padding:0 12px; font-size:14px; font-family:inherit; background:var(--bg); color:var(--text); }
+  #cap-text:focus { border-color:var(--accent); outline:none; }
+  #cap-go { flex:0 0 auto; height:38px; padding:0 16px; border:none; background:var(--accent); color:#fff;
+            border-radius:10px; font-size:14px; font-weight:600; font-family:inherit; cursor:pointer; }
+  /* Dictation mic (v1.44.9) — sits just before Capture on desktop. */
+  .cap-mic { flex:0 0 auto; width:38px; height:38px; padding:0; display:none; align-items:center; justify-content:center;
+             border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--muted); cursor:pointer; }
+  .cap-mic:hover { border-color:var(--accent); color:var(--accent); }
+  .cap-mic.avail { display:inline-flex; }
+  .cap-mic .ic { width:17px; height:17px; }
+  .cap-mic.on { background:var(--accent); border-color:var(--accent); color:#fff; animation:micPulse 1.4s ease-in-out infinite; }
   @keyframes micPulse { 0%,100%{ box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
                         70%{ box-shadow:0 0 0 7px transparent; } }
+  /* ≤900px (phones + iPad portrait, which is where the one-line bar stopped fitting): the three
+     modes become icon-only and stretch to fill row 1 with the mic; the text field + Capture drop to
+     row 2 (as one .cap-entry unit) and stay HIDDEN until there's something to show — tap a mode or
+     the mic to open them. */
+  @media (max-width:900px){
+    .cap-modes { flex:1 1 auto; }
+    .cap-mode { flex:1 1 0; padding:0; }
+    .cap-mode-lbl { display:none; }
+    .cap-row > .cap-mic { order:2; }
+    /* min-width:0 + a small explicit basis on the field: an <input>'s intrinsic width otherwise
+       becomes the row's automatic minimum and pushes Capture out past the card on a 320px phone. */
+    .cap-entry { display:flex; gap:8px; flex:1 1 100%; order:3; min-width:0; }
+    #cap-text { flex:1 1 60px; min-width:0; }
+    #cap-go { flex:0 1 auto; min-width:0; padding:0 13px; }
+    .cap-row:not(.cap-open) > .cap-entry { display:none; }
+  }
   .cap-flash { flex-basis:100%; font-size:13px; color:var(--accent); height:0; opacity:0; overflow:hidden; transition:opacity .2s; }
   .cap-flash.show { height:auto; opacity:1; margin-top:2px; }
   .focus-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
@@ -742,22 +767,19 @@
 
       <!-- Command bar: universal capture box (⏰ remind / ✉️ draft / 💡 idea) -->
       <div class="card cmd-card" id="command-card" style="margin-bottom:20px">
-        <div class="cap-row">
-          <div class="cap-mode-pick">
-            <button type="button" class="cap-mode-btn" id="cap-mode-btn"></button>
-            <div class="cap-mode-menu" id="cap-mode-menu" style="display:none">
-              <button type="button" class="cap-mode-opt" data-mode="remind"><span data-ic="clock"></span> Remind me to…</button>
-              <button type="button" class="cap-mode-opt" data-mode="draft"><span data-ic="pencil"></span> Draft email to…</button>
-              <button type="button" class="cap-mode-opt" data-mode="idea"><span data-ic="idea"></span> Save this idea</button>
-            </div>
+        <form class="cap-row" id="cap-form">
+          <div class="cap-modes" id="cap-modes" role="radiogroup" aria-label="What to capture">
+            <button type="button" class="cap-mode" data-mode="remind" role="radio" aria-checked="true" title="Remind me to…"><span data-ic="clock"></span><span class="cap-mode-lbl">Remind me to…</span></button>
+            <button type="button" class="cap-mode" data-mode="draft" role="radio" aria-checked="false" title="Draft email to…"><span data-ic="pencil"></span><span class="cap-mode-lbl">Draft email to…</span></button>
+            <button type="button" class="cap-mode" data-mode="task" role="radio" aria-checked="false" title="Add a task"><span data-ic="checks"></span><span class="cap-mode-lbl">Add a task</span></button>
           </div>
-          <form class="cap-input" id="cap-form">
+          <button type="button" id="cap-mic" class="cap-mic" title="Dictate — speak it instead" aria-label="Dictate"><span data-ic="mic"></span></button>
+          <div class="cap-entry" id="cap-entry">
             <input id="cap-text" autocomplete="off" placeholder="Remind me to… e.g. call the dentist Friday at 3pm (sets a due date)">
-            <button type="button" id="cap-mic" class="cap-mic" title="Dictate — speak it instead" aria-label="Dictate"><span data-ic="mic"></span></button>
             <button type="submit" id="cap-go">Capture</button>
-          </form>
+          </div>
           <div class="cap-flash" id="cap-flash"></div>
-        </div>
+        </form>
       </div>
 
       <!-- Live Today panel: Unread inbox (60%) + Next 3 days (40%), separated like the rows below -->
@@ -1099,7 +1121,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.10",
+  version: "1.44.11",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -4739,25 +4761,34 @@ async function checkForUpdate(){
 const CAP_PLACEHOLDER = {
   remind: "Remind me to… e.g. call the dentist Friday at 3pm (sets a due date)",
   draft:  "Draft email to… e.g. Sam about the Q3 numbers",
-  idea:   "Save this idea… e.g. rewrite the landing-page hero",
+  task:   "Add a task… e.g. pick up groceries Friday",
 };
 let capMode = "remind";
-const CAP_ICON = { remind:"clock", draft:"pencil", idea:"idea" };
-const CAP_TEXT = { remind:"Remind me to…", draft:"Draft email to…", idea:"Save this idea" };
+/* On mobile the field + Capture are hidden until there's a reason to show them (see the ≤900px
+   block in the CSS). "cap-open" is that reason: you tapped a mode, started dictating, or typed.
+   It clears on a successful capture, so the card falls back to the clean icon row. Desktop
+   ignores the class entirely — the field is always visible there. */
+function capOpen(on){ const r=document.getElementById("cap-form"); if(r) r.classList.toggle("cap-open", !!on); }
 function initCapture(){
-  const btn=document.getElementById("cap-mode-btn"), menu=document.getElementById("cap-mode-menu");
-  const input=document.getElementById("cap-text"); if(!btn||!menu||!input) return;
-  const setMode=(m)=>{ capMode=m; btn.innerHTML=ic(CAP_ICON[m])+" "+esc(CAP_TEXT[m]||m)+' <span class="cap-caret">▾</span>'; input.placeholder=CAP_PLACEHOLDER[m]||""; menu.style.display="none"; };
-  btn.onclick=(e)=>{ e.stopPropagation(); menu.style.display=menu.style.display==="none"?"block":"none"; };
-  menu.querySelectorAll(".cap-mode-opt").forEach(b=>{ b.onclick=(e)=>{ e.stopPropagation(); setMode(b.dataset.mode); input.focus(); }; });
-  document.addEventListener("click",()=>{ if(menu) menu.style.display="none"; });
+  const modes=document.getElementById("cap-modes"), input=document.getElementById("cap-text");
+  const form=document.getElementById("cap-form");
+  if(!modes||!input||!form) return;
+  const setMode=(m)=>{
+    capMode=m;
+    modes.querySelectorAll(".cap-mode").forEach(b=>b.setAttribute("aria-checked", String(b.dataset.mode===m)));
+    input.placeholder=CAP_PLACEHOLDER[m]||"";
+  };
+  modes.querySelectorAll(".cap-mode").forEach(b=>{
+    b.onclick=()=>{ setMode(b.dataset.mode); capOpen(true); input.focus(); };
+  });
   setMode("remind");
-  document.getElementById("cap-form").addEventListener("submit",e=>{
+  input.addEventListener("input",()=>{ if(input.value) capOpen(true); });
+  form.addEventListener("submit",e=>{
     e.preventDefault(); const text=input.value.trim(); if(!text) return;
     if(capMode==="draft") captureDraft(text);
-    else if(capMode==="remind") captureRemind(text);
-    else captureToNotes("idea", text);
-    input.value="";
+    else if(capMode==="task") captureTask(text);
+    else captureRemind(text);
+    input.value=""; capOpen(false);
   });
 }
 /* Dictation (v1.44.9) — the browser's own Web Speech API. No backend, no Anthropic spend, no audio
@@ -4780,7 +4811,9 @@ function initCaptureMic(){
     const r=new SR();
     r.lang=navigator.language||"en-US"; r.continuous=true; r.interimResults=true;
     base=input.value.trim();            // dictate onto whatever is already typed, don't clobber it
-    r.onstart=()=>{ capRecOn=true; btn.classList.add("on"); btn.title="Listening — click to stop"; capFlash("🎙️ Listening… click the mic again when you're done"); };
+    r.onstart=()=>{ capRecOn=true; btn.classList.add("on"); btn.title="Listening — click to stop";
+      capOpen(true);   // reveal the field on mobile so you can watch/fix the transcript as it lands
+      capFlash("🎙️ Listening… click the mic again when you're done"); };
     r.onresult=(e)=>{
       let said="";
       for(let i=0;i<e.results.length;i++) said+=e.results[i][0].transcript;
@@ -4800,12 +4833,23 @@ function capFlash(msg){
   clearTimeout(capFlash._t); capFlash._t=setTimeout(()=>f.classList.remove("show"),3400);
 }
 function capStamp(){ return new Date().toLocaleDateString([],{month:"short",day:"numeric"}); }
-/* "Save this idea" → Notes (the incubator; agent reads it via read_notes). */
-function captureToNotes(mode, text){
-  const ta=document.getElementById("notes-area"); if(!ta) return;
-  ta.value = `💡 ${text}  · ${capStamp()}` + "\n" + ta.value;
-  ta.dispatchEvent(new Event("input"));   // fire the existing autosave → Worker KV
-  capFlash("💡 Idea saved to Notes");
+/* "Add a task" → a plain Google Task, nothing else (v1.44.11, replacing the old "Save this idea"
+   → Notes mode). The difference from Remind: Remind ALSO schedules the Discord ping, this doesn't.
+   Still runs the text through parseReminder, so "pick up groceries friday" lands with a due date.
+   Notes is only the fallback when Google Tasks won't take it — never a silent second write. */
+async function captureTask(text){
+  const acct=defaultAcct();
+  const p=parseReminder(text);
+  const title=p.title||text;
+  const taskTitle = p.timeStr ? title+" ("+p.timeStr+")" : title;   // Google Tasks store DATE only
+  const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
+  let ok=false;
+  if(acct){ try{ const r=await createTask(acct, taskTitle, dueISO); ok=!!r.ok; }catch(e){} }
+  if(ok){ loadTasks(); capFlash("✅ Task added"+(p.ymd?" — "+fmtDue(p.ymd):"")); return; }
+  const ta=document.getElementById("notes-area");
+  if(ta){ ta.value=`- [ ] ${taskTitle}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
+  capFlash(acct ? "📝 Google Tasks didn't take it — saved to Notes so it isn't lost"
+                : "📝 Connect Google to add real tasks — saved to Notes for now");
 }
 /* Natural-language "when" parser for reminders. Pulls a due date (+ optional time) out of
    phrases like "…Friday", "…tomorrow at 3pm", "…in 3 days", "…july 10", "…by the 5th".
