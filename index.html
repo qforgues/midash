@@ -39,9 +39,12 @@
   header { padding:24px 0; }
   .hcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
            box-shadow:var(--shadow); padding:16px 22px; }
-  .hbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  /* position:relative on .hbar (NOT .hright) is load-bearing — see the dropdown note at .gear-menu. */
+  .hbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; position:relative; }
   .hleft { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
-  .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; position:relative; }
+  /* margin-left:auto keeps the button cluster pinned RIGHT even when it wraps to its own row
+     (space-between drops a lone wrapped item at flex-start, which is what put it on the left). */
+  .hright { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-left:auto; }
   .greeting { font-size:28px; font-weight:600; letter-spacing:-.02em; }
   .sub { color:var(--muted); font-size:28px; }
   .clock24 { font-size:.62em; opacity:.75; }
@@ -54,13 +57,17 @@
   .gear-sec > h3 .refresh { margin-left:auto; cursor:pointer; color:var(--muted); }
   .gear-sec > h3 .refresh:hover { color:var(--accent); }
   .gear-foot { border-top:1px solid var(--border); margin-top:6px; padding-top:8px; }
-  /* Portrait fix (v1.44.9): .hright wraps onto its own row and is only as wide as its buttons, so a
-     300px dropdown hung off its right:0 edge overflowed ~100px past the LEFT edge of the screen.
-     Narrow → anchor the menus to the header card instead and let them span its full width. */
+  /* Dropdown cut-off fix (v1.44.10). The menus used to hang off .hright's right:0 edge. Once the
+     header wraps, .hright is only as wide as its buttons, so that anchor sat mid-card and a 300px
+     menu overflowed PAST THE LEFT EDGE of the screen. v1.44.9 tried a max-width:640px breakpoint,
+     but iPad portrait (~660-834px) wraps too and sailed straight past it — wrapping depends on
+     CONTENT width, not viewport width, so no breakpoint can be the trigger.
+     Now the menus anchor to the header CARD (.hbar) and right:0 is the card's own right edge, which
+     is inside the viewport at every width. Desktop is visually unchanged: .hright is already flush
+     right there, so the menus land exactly where they always did.
+     Phones additionally get full-card-width menus. .hbar-scoped so it outranks the later
+     `#bell-menu { width:280px }` rule further down the sheet. */
   @media (max-width:640px){
-    .hbar { position:relative; }
-    .hright { position:static; width:100%; justify-content:flex-end; }
-    /* .hbar-scoped so this outranks the later `#bell-menu { width:280px }` rule further down. */
     .hbar .gear-menu, .hbar #bell-menu { left:0; right:0; width:auto; max-width:none; }
   }
   #clock { font-variant-numeric:tabular-nums; }
@@ -1092,7 +1099,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.9",
+  version: "1.44.10",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
