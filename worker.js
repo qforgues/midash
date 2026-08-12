@@ -69,10 +69,12 @@ actually DO and has to tick off by hand. Ask yourself: is there a verb HE carrie
 (plus a reminder if it's time-sensitive). No, he just needs to be told something → reminder only.
 CONDITIONALS are the third shape, and Q uses them constantly: "call Bob by 10a if he hasn't emailed
 me by then", "pay the invoice unless Adam already sent it". The action is NOT committed yet — it
-depends on something being true at that moment. Set the reminder for the decision point and write
-the condition INTO the nudge ("10a — has Bob emailed? If not, call him"). Do NOT create the task up
-front; it may never need doing, and a task he can't act on is one he has to tick off by hand. When
-the condition later turns out to hold ("Bob never emailed"), THAT is when you create_task.
+depends on something being true at that moment. When the condition is about someone emailing him,
+use set_watch: it pings him at the decision point AND creates the task automatically, but only if
+they stayed silent. Do NOT also call create_task — that defeats the whole point. For a condition
+set_watch can't express, set_reminder alone with the condition written into the nudge ("10a — has
+Bob emailed? if not, call him"), and create the task later once you know. Use check_email_from to
+settle "has X got back to me?" from real data instead of guessing.
 Never echo Q's instruction wrapper into what you create. He talks to you in normal language — "set
 a reminder to call Bob", "can you add a task to ship the pre-rolls", "note to self: order boxes" —
 and the task/reminder should read as the bare action ("Call Bob Jones", "Ship the pre-rolls"), never
@@ -209,9 +211,28 @@ const FLOW_TOOLS = [
   { name: "block_task",
     description: "Record that one task can't start until another one is finished — 'pay the credit cards' AFTER 'link CCs via Plaid', 'update tracker42' AFTER 'meet with Rebecca'. The blocked task moves to a 'Next up' section that shows what it's waiting for, and surfaces on its own the moment the blocker is completed. Match both by title (partial ok). Acts immediately.",
     input_schema: { type: "object", properties: { task: { type: "string", description: "the task that has to wait" }, after: { type: "string", description: "the task it's waiting for" } }, required: ["task", "after"] } },
+  { name: "check_email_from",
+    description: "Check whether a person has emailed Q recently — the factual answer to 'did Bob get back to me?'. Give 'who' as a name or email address (a name is matched against his Google Contacts) and optionally 'since' (a time phrase like 'yesterday 6pm', an ISO datetime, or epoch-ms; defaults to the last 24h). Returns found:true/false plus the newest matching message's subject, sender and time. Searches every connected account. Use this BEFORE telling him to chase someone, and to settle any 'if <person> hasn't emailed' condition.",
+    input_schema: { type: "object", properties: { who: { type: "string" }, since: { type: "string" } }, required: ["who"] } },
   { name: "list_waiting",
     description: "List what Q is WAITING ON (parked in someone else's court, each with how many days it's been sitting) and what's BLOCKED behind another task. Use for 'what am I waiting on', \"what's stuck\", 'anything I should chase', or before planning his day. Reads miDash's own storage, so it works over Discord with no Google access.",
     input_schema: { type: "object", properties: {}, required: [] } },
+];
+/* Watch tool schemas — SINGLE SOURCE for TOOLS + AGENT_TOOLS. A WATCH is the third shape after
+   task and reminder: a decision deferred to a moment. "Call Bob by 10a if he hasn't emailed" is not
+   a to-do (the call may never need making) and not just a ping (something has to be CHECKED and
+   acted on). The watch fires at `at`, the browser evaluates the condition against Gmail, and only
+   then does the task exist. See handleWatch + runDueWatches. */
+const WATCH_TOOLS = [
+  { name: "set_watch",
+    description: "Schedule a CONDITIONAL: at a given moment, check whether someone has emailed, and create a task only if they haven't. This is the right tool for 'call Bob by 10a if he doesn't email me before then', 'pay the invoice Friday unless Adam sends it first', 'if I haven't heard from Rebecca by noon, text her'. Give 'at' (when to decide — a phrase like 'tomorrow 10am', ISO, or epoch-ms; Q's day starts at 10am so never earlier), 'who' (the person whose email settles it — name or address), 'then_task' (the task title to create IF they stayed silent, written as a bare action like 'Call Bob Jones'), and optionally 'then_notes' (context for that task — why, phone number, what was already tried). Do NOT also call create_task: the whole point is that the task only exists if the condition holds. A Discord ping fires at the same moment either way. Acts immediately.",
+    input_schema: { type: "object", properties: { at: { type: "string" }, who: { type: "string" }, then_task: { type: "string" }, then_notes: { type: "string" }, since: { type: "string", description: "only count mail arriving after this (defaults to now)" } }, required: ["at", "who", "then_task"] } },
+  { name: "list_watches",
+    description: "List Q's pending conditionals — what is going to be checked, when, and what happens if the condition holds. Use for 'what are you watching for me', or before setting a duplicate.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "cancel_watch",
+    description: "Cancel a pending conditional by its id (from list_watches). Acts immediately.",
+    input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
 ];
 const TOOLS = [
   { name: "search_emails",
@@ -276,6 +297,9 @@ const TOOLS = [
 
   // ---- Flow: waiting-on / blocked-by, the dimensions Google Tasks can't hold — shared schemas ----
   ...FLOW_TOOLS,
+
+  // ---- Watches: conditionals ("…if he hasn't emailed by then") — shared schemas ----
+  ...WATCH_TOOLS,
 
   // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
   { name: "list_tracker_notifications",
@@ -731,6 +755,68 @@ function flowUpsert(f, title) {
   if (!f.items[k]) f.items[k] = { taskId: null, title: String(title).slice(0, 200), waiting: "", after: "", updated: 0 };
   return k;
 }
+/* ---- Watches: conditionals, the third shape --------------------------------------------------
+   A task is committed work. A reminder is a ping. A WATCH is a decision deferred to a moment:
+   "call Bob by 10a IF he hasn't emailed me before then". The call may never need making, so
+   committing it as a task means Q ticks off a chore that resolved itself.
+
+   Split of duties: the WORKER owns the queue (KV `watches`) and fires the Discord ping on time via
+   the normal reminder path — but it cannot EVALUATE anything, because the condition is a Gmail
+   question and Google creds live only in the browser. So the browser resolves due watches when the
+   dashboard is open (runDueWatches) and reports the outcome back. If the dashboard stays closed,
+   the ping still lands on time with the condition written into it — Q just settles it himself. */
+const WATCH_MAX = 100, WATCH_KEEP_MS = 7 * 86400000;
+async function getWatches(env) {
+  try { const v = await env.NOTES.get("watches"); const a = v ? JSON.parse(v) : []; return Array.isArray(a) ? a : []; }
+  catch { return []; }
+}
+async function putWatches(env, arr) { await env.NOTES.put("watches", JSON.stringify(arr)); }
+function pruneWatches(arr) {
+  const cut = Date.now() - WATCH_KEEP_MS;
+  return arr.filter(w => w && (!w.resolved || Number(w.resolved) > cut)).slice(-WATCH_MAX);
+}
+async function handleWatch(request, env) {
+  if (!env.NOTES) return json({ error: { message: "storage not configured" } }, 501);
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const arr = (await getWatches(env)).filter(w => !w.resolved).sort((a, b) => a.at - b.at);
+    return json({ watches: arr, now: Date.now() });
+  }
+  if (request.method === "POST") {
+    let b = {}; try { b = await request.json(); } catch {}
+    // Resolving an existing watch: the browser reports what it found.
+    if (b.resolve) {
+      const arr = await getWatches(env);
+      const w = arr.find(x => x.id === b.resolve);
+      if (!w) return json({ error: { message: "no watch " + b.resolve } }, 404);
+      w.resolved = Date.now(); w.result = String(b.result || "").slice(0, 200);
+      await putWatches(env, pruneWatches(arr));
+      return json({ ok: true });
+    }
+    const at = Number(b.at);
+    if (!at || !isFinite(at) || at < Date.now() - 60000) return json({ error: { message: "bad or past 'at' — pass epoch-ms in the future" } }, 400);
+    if (!b.who || !b.thenTitle) return json({ error: { message: "need who and thenTitle" } }, 400);
+    const arr = pruneWatches(await getWatches(env));
+    const id = "w_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+    arr.push({
+      id, at, kind: "email_from",
+      who: String(b.who).slice(0, 120), email: String(b.email || "").slice(0, 160),
+      since: Number(b.since) || Date.now(),
+      thenTitle: String(b.thenTitle).slice(0, 200), thenNotes: String(b.thenNotes || "").slice(0, 2000),
+      reminderId: b.reminderId || null, created: Date.now(), resolved: null, result: "",
+    });
+    await putWatches(env, arr);
+    return json({ ok: true, id });
+  }
+  if (request.method === "DELETE") {
+    const id = url.searchParams.get("id"); if (!id) return json({ error: { message: "need ?id=" } }, 400);
+    let arr = await getWatches(env); const before = arr.length; arr = arr.filter(w => w.id !== id);
+    if (arr.length !== before) await putWatches(env, arr);
+    return json({ ok: true, removed: before - arr.length });
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
 async function handleFlow(request, env) {
   if (!env.NOTES) return json({ error: { message: "storage not configured" } }, 501);
   if (request.method === "GET") return json({ flow: pruneFlow(await getFlow(env)) });
@@ -794,7 +880,11 @@ list_waiting) — they're miDash's own. When he says he's done all he can on som
 court, set_waiting it so it stops nagging him; when the waiting is on a PERSON, pass chase_at too or it just rots
 (and if an email went unanswered, the chase should be to CALL them, not email again). When he describes work in
 sequence, block_task the second one behind the first. "What am I waiting on / what's stuck" → list_waiting.
-Q's day starts at 10am — never schedule a chase or a morning nudge earlier than that.
+CONDITIONALS ("call Bob by 10a if he hasn't emailed by then") are set_watch, not a task — the call may never
+need making. It pings him at the decision point and creates the task ONLY if they stayed silent; the check
+itself runs when his dashboard is next open, since Gmail isn't reachable from here. Never pair it with a task.
+Q's day starts at 10am — never schedule a chase or a morning nudge earlier than that. He writes times as
+"10a" / "3p" / "9:30a", meaning 10am, 3pm, 9:30am.
 For anything OTHERS would see (a ticket status change, a ticket comment), briefly confirm with Q before doing it
 unless he was already explicit. Reading is always fine to do immediately.`;
 const AGENT_TOOLS = [
@@ -803,6 +893,7 @@ const AGENT_TOOLS = [
   ...PROJECT_TOOLS,   // shared with TOOLS — single source of truth (see PROJECT_TOOLS above)
   ...REMINDER_TOOLS,  // shared with TOOLS — Discord DM reminders (see REMINDER_TOOLS above)
   ...FLOW_TOOLS,      // shared with TOOLS — waiting-on / blocked-by (KV-backed, so Discord can see it)
+  ...WATCH_TOOLS,     // shared with TOOLS — conditionals; the BROWSER evaluates them (needs Gmail)
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
   { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
@@ -908,6 +999,44 @@ async function runAgentTool(name, a, env) {
         await putFlow(env, pruneFlow(f));
         return { blocked: true, task: e.title, after: blockerTitle };
       }
+      // ---- Watches. The Worker can queue and list them; only the BROWSER can evaluate one
+      // (the condition is a Gmail question), so over Discord these are create/read/cancel only. ----
+      case "set_watch": {
+        if (!a.at || !a.who || !a.then_task) return { error: "need at, who and then_task" };
+        const at = resolveAtServer(a.at);
+        if (!at) return { error: "couldn't parse 'at' — give epoch-ms, an ISO-8601 time with offset, or a relative phrase like 'in 2 hours'" };
+        if (at < Date.now() - 60000) return { error: "that time is in the past" };
+        const arr = pruneWatches(await getWatches(env));
+        const id = "w_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+        // The ping is a normal reminder, so it lands on Discord on time even if the dashboard
+        // never opens — with the condition spelled out so Q can settle it himself.
+        const rem = pruneReminders(await getReminders(env));
+        const rid = "r_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+        rem.push({ id: rid, at, text: "Has " + a.who + " emailed? If not: " + a.then_task, kind: "watch", created: Date.now(), fired: null, attempts: 0 });
+        await putReminders(env, rem);
+        arr.push({ id, at, kind: "email_from", who: String(a.who).slice(0, 120), email: "",
+          since: resolveAtServer(a.since) || Date.now(),
+          thenTitle: String(a.then_task).slice(0, 200), thenNotes: String(a.then_notes || "").slice(0, 2000),
+          reminderId: rid, created: Date.now(), resolved: null, result: "" });
+        await putWatches(env, arr);
+        return { watching: true, id, at: new Date(at).toISOString(), who: a.who, ifSilent: a.then_task,
+          note: "The task is NOT created yet — it appears only if they stay silent." };
+      }
+      case "list_watches": {
+        const arr = (await getWatches(env)).filter(w => !w.resolved).sort((x, y) => x.at - y.at);
+        return { watches: arr.map(w => ({ id: w.id, at: new Date(w.at).toISOString(), who: w.who, ifSilent: w.thenTitle })) };
+      }
+      case "cancel_watch": {
+        if (!a.id) return { error: "need id" };
+        let arr = await getWatches(env); const before = arr.length;
+        const w = arr.find(x => x.id === a.id);
+        arr = arr.filter(x => x.id !== a.id);
+        if (arr.length === before) return { error: "no watch with id " + a.id };
+        if (w && w.reminderId) { const rem = (await getReminders(env)).filter(r => r.id !== w.reminderId); await putReminders(env, rem); }
+        await putWatches(env, arr);
+        return { cancelled: true };
+      }
+      case "check_email_from": return { error: "checking Gmail needs the dashboard open (Google creds live in the browser, not here). Ask again from the miDash chat, or Q can check the thread himself." };
       case "list_waiting": {
         const f = pruneFlow(await getFlow(env));
         const days = t => t ? Math.round((Date.now() - Number(t)) / 86400000) : null;
@@ -1030,6 +1159,7 @@ export default {
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
       if (url.pathname === "/reminders") return handleReminders(request, env);
       if (url.pathname === "/flow") return handleFlow(request, env);
+      if (url.pathname === "/watch") return handleWatch(request, env);
       if (url.pathname === "/discord-check") return handleDiscordCheck(request, env);
       // Canonical tool schemas — single source of truth for inspection/debugging (the models
       // are sent TOOLS on /chat and AGENT_TOOLS on /agent; both share PROJECT_TOOLS).

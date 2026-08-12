@@ -90,6 +90,19 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   when `taskFailed.length`** — a Tasks API failure must never be read as "the blocker got done".
   The Worker merges `/flow` PUTs per-entry (LWW), so the browser never merges. `DAY_START_HOUR=10`
   — Q's day starts at 10am; never schedule a nudge or chase before it.
+- **Three shapes: task · reminder · WATCH (v1.46.0).** A task is committed work; a reminder is a
+  ping; a **watch** is a decision deferred to a moment ("call Bob by 10a *if* he hasn't emailed").
+  Never create a task for a conditional — the action may never be needed. `/watch` KV queue +
+  `set_watch`; the Worker queues + fires the Discord ping on time, the **browser** settles it
+  (`runDueWatches` → `checkEmailFrom`) because the condition is a Gmail question. Committing is
+  **claimed in localStorage first** (`midash_watch_done`) — it creates a real Google Task, so a
+  failed resolve POST must not double-create.
+- **Capture has two lanes (v1.46.0).** `captureIsComplex()` sends conditions / sequencing /
+  waiting-language / multi-clause / long input to the agent (`captureViaAgent`, a HEADLESS tool loop
+  on its own message array — never touch `agentMessages`, a capture must not pollute chat history).
+  Everything else keeps the free instant regex path. **Any agent failure falls back to the regex
+  path** — a capture must never be lost. `CONFIG.captureModel` (Sonnet) is used only for that lane.
+  Don't "fix" nuance by adding more regex — that ladder has no top; widen the routing instead.
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).

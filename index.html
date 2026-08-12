@@ -838,6 +838,7 @@
           <h2><span class="dot" data-ic="checks"></span>Tasks &amp; Reminders
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
           <div id="reminders-strip" class="reminders-strip"></div>
+          <div id="watch-strip" class="reminders-strip"></div>
           <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
           <div id="tasks-pager" class="pager" style="display:none"></div>
@@ -1138,7 +1139,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.45.2",
+  version: "1.46.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1151,6 +1152,12 @@ const CONFIG = {
     { id:"claude-fable-5",    label:"Fable 5 — newest" },
   ],
   defaultModel: "claude-haiku-4-5",
+
+  // Model used ONLY for complex captures routed to the agent (see captureIsComplex). Those are the
+  // sentences where nuance is the whole point — a condition, a sequence, two things at once — so
+  // they get a smarter model than the chat default. Simple captures never call the API at all.
+  // Set to null to just use whatever the chat picker is on.
+  captureModel: "claude-sonnet-4-6",
 
   // Your PERSONAL Google address — pins every Google link to the right account.
   account: "quentin.forgues@gmail.com",
@@ -3013,7 +3020,7 @@ async function completeTaskApi(acct, listId, taskId){
   return fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({status:"completed"})});
 }
 async function loadTasks(){
-  loadReminders();   // reminders are Worker-side (no Google needed) — refresh them alongside tasks
+  loadReminders(); loadWatches();   // Worker-side (no Google needed) — refresh them alongside tasks
   const box=document.getElementById("tasks"); if(!box) return;
   if(!accounts.length){ box.innerHTML=`<div class="empty">—</div>`; return; }
   let out=[], err=null, failedAccts=[];
@@ -3332,8 +3339,8 @@ function renderChatHistory(){
 /* Stream one model turn over SSE, calling onText(delta) as the answer arrives, and
    reconstruct the full Anthropic message ({content, stop_reason, usage, model}) so the
    tool loop and the usage meter keep working. The Worker proxies Anthropic's SSE. */
-async function streamModel(onText, msgs){
-  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:msgs||agentMessages, model:selectedModel(), today:new Date().toLocaleDateString("en-CA"), dow:new Date().toLocaleDateString("en-US",{weekday:"long"})})});
+async function streamModel(onText, msgs, modelOverride){
+  const res=await fetch(CONFIG.chatEndpoint,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({messages:msgs||agentMessages, model:modelOverride||selectedModel(), today:new Date().toLocaleDateString("en-CA"), dow:new Date().toLocaleDateString("en-US",{weekday:"long"})})});
   if(res.status===401){
     let body=null; try{ body=await res.json(); }catch(e){}
     if(body && body.error && body.error.code==="auth"){     // the Worker's passphrase gate
@@ -4489,6 +4496,44 @@ async function executeTool(name,a){
         loadReminders();
         return r.ok?{cancelled:true}:{error:"cancel failed (HTTP "+r.status+")"};
       }
+      // ---- Conditionals + the email check that settles them. Both need Google, so the real
+      // implementations live here; the Worker's copies only queue (set_watch) or refuse. ----
+      case "check_email_from": {
+        if(!a.who) return {error:"need who (a name or email address)"};
+        if(!contactsList.length) { try{ await loadContacts(); }catch(e){} }
+        const since = a.since!=null && String(a.since).trim() ? resolveAt(a.since) : null;
+        return await checkEmailFrom(a.who, since || (Date.now()-86400000));
+      }
+      case "set_watch": {
+        if(!a.at || !a.who || !a.then_task) return {error:"need at, who and then_task"};
+        if(!WATCH_URL) return {error:"no backend configured"};
+        const at=resolveAt(a.at);
+        if(!at) return {error:"couldn't understand 'at' — try 'tomorrow 10am', an ISO datetime, or 'in 2 hours'"};
+        if(at<Date.now()-60000) return {error:"that time is in the past"};
+        if(!contactsList.length) { try{ await loadContacts(); }catch(e){} }
+        const person=resolvePersonEmail(a.who);
+        const since = a.since!=null && String(a.since).trim() ? (resolveAt(a.since)||Date.now()) : Date.now();
+        // The ping is a normal reminder so Discord fires on time even if the dashboard is shut.
+        const ping=await scheduleReminder(at, "Has "+(person?person.name:a.who)+" emailed? If not: "+a.then_task, "watch");
+        const r=await scheduleWatch({at, who:(person?person.name:String(a.who)), email:(person?person.email:""),
+          since, thenTitle:String(a.then_task), thenNotes:String(a.then_notes||""), reminderId:ping.ok?ping.id:null});
+        if(!r.ok) return {error:"couldn't save the conditional — "+(r.error||"try again")};
+        loadWatches(); loadReminders();
+        return {watching:true, id:r.id, at:new Date(at).toLocaleString(), who:(person?person.name:a.who),
+          resolvedEmail:person?person.email:null, ifSilent:a.then_task,
+          note: person ? "The task is NOT created yet — only if they stay silent."
+                       : "Heads up: no contact matched that name, so the check can't identify them and the task will be created to be safe."};
+      }
+      case "list_watches": {
+        if(!WATCH_URL) return {error:"no backend configured"};
+        await loadWatches();
+        return {watches: watchCache.filter(w=>!w.resolved).map(w=>({id:w.id, at:new Date(w.at).toLocaleString(), who:w.who, ifSilent:w.thenTitle}))};
+      }
+      case "cancel_watch": {
+        if(!a.id) return {error:"need id (from list_watches)"};
+        await cancelWatchId(a.id);
+        return {cancelled:true};
+      }
       // ---- Flow: waiting-on / blocked-by. Tasks are addressed by TITLE (the Discord agent has no
       // task ids, so both surfaces share that convention); we resolve against the loaded list. ----
       case "set_waiting": case "clear_waiting": case "block_task": case "list_waiting": {
@@ -4641,6 +4686,7 @@ async function executeTool(name,a){
 const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
 const REMINDERS_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/reminders" : "";
 const FLOW_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/flow" : "";
+const WATCH_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/watch" : "";
 
 /* ---- Reminders (miDash-owned Discord-DM push notifications) ----
    The dashboard is the tz-aware writer: resolveAt() turns whatever the agent/capture bar gives
@@ -4816,6 +4862,138 @@ async function releaseDependents(task){
   return freed;
 }
 
+/* ---- Email watch: settling "has X got back to me?" from real data (v1.46.0) ------------------
+   Q's comms with the people on his list are almost all email, so most of his conditions reduce to
+   one Gmail question. This runs in the BROWSER — the Google token never leaves it — which is why
+   the Worker's copy of check_email_from politely refuses instead of guessing. */
+function resolvePersonEmail(who){
+  const s=String(who||"").trim(); if(!s) return null;
+  if(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) return {name:s, email:s};
+  const q=s.toLowerCase();
+  const pool=(contactsList||[]).filter(c=>c && c.email);
+  const hit = pool.find(c=>String(c.name||"").toLowerCase()===q)
+           || pool.find(c=>String(c.name||"").toLowerCase().indexOf(q)>=0)
+           || pool.find(c=>q.split(/\s+/).every(w=>String(c.name||"").toLowerCase().indexOf(w)>=0))
+           || pool.find(c=>String(c.email||"").toLowerCase().indexOf(q.split(/\s+/)[0])>=0);
+  return hit ? {name:hit.name||s, email:hit.email} : null;
+}
+/* Did `who` email since `sinceMs`? Sweeps every connected account. Returns the newest match. */
+async function checkEmailFrom(who, sinceMs){
+  if(!accounts.length) return {error:"no Google account connected"};
+  const person=resolvePersonEmail(who);
+  if(!person) return {found:false, unresolved:true, who:String(who),
+    note:"No contact matches that name — pass an email address, or the person isn't in Google Contacts."};
+  const since=Number(sinceMs)||Date.now()-86400000;
+  const q=`from:${person.email} after:${Math.floor(since/1000)}`;
+  for(const acct of accounts){
+    let list; try{ list=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=5&q="+encodeURIComponent(q), acct.token); }catch(e){ continue; }
+    if(!list || list.error || !(list.messages||[]).length) continue;
+    let msg; try{ msg=await gfetch("https://www.googleapis.com/gmail/v1/users/me/messages/"+encodeURIComponent(list.messages[0].id)+"?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date", acct.token); }catch(e){ msg=null; }
+    const hdr=(n)=>{ const h=((msg&&msg.payload&&msg.payload.headers)||[]).find(x=>x.name.toLowerCase()===n); return h?h.value:""; };
+    const at=msg&&msg.internalDate?Number(msg.internalDate):null;
+    return {found:true, who:person.name, email:person.email, account:acct.email,
+      subject:hdr("subject")||"(no subject)", from:hdr("from"),
+      at: at?new Date(at).toISOString():null, when: at?new Date(at).toLocaleString():null,
+      threadId:(msg&&msg.threadId)||null};
+  }
+  return {found:false, who:person.name, email:person.email, since:new Date(since).toLocaleString()};
+}
+
+/* ---- Watches: conditionals, evaluated here because the condition is a Gmail question ---------
+   The Worker owns the queue and fires the Discord ping on time. The browser is the only place that
+   can ANSWER "has Bob emailed?", so when the dashboard is open we settle any watch whose moment has
+   passed: silent → the task finally gets created; they replied → nothing lands, and we say so. */
+let watchCache=[];
+async function loadWatches(){
+  if(!WATCH_URL) return;
+  try{
+    const r=await fetch(WATCH_URL,{headers:{...dashAuthHeader()}});
+    if(!r.ok) return;
+    const j=await r.json(); watchCache=(j&&j.watches)||[];
+  }catch(e){ return; }
+  renderWatches();
+  runDueWatches();
+}
+async function scheduleWatch(w){
+  if(!WATCH_URL) return {ok:false, error:"no backend configured"};
+  try{
+    const r=await fetch(WATCH_URL,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify(w)});
+    if(!r.ok) return {ok:false, error:"HTTP "+r.status};
+    const j=await r.json(); return {ok:true, id:j.id};
+  }catch(e){ return {ok:false, error:String(e&&e.message||e)}; }
+}
+async function resolveWatch(id, result){
+  if(!WATCH_URL) return;
+  try{ await fetch(WATCH_URL,{method:"POST",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({resolve:id, result})}); }catch(e){}
+}
+async function cancelWatchId(id){
+  if(!WATCH_URL||!id) return;
+  const w=watchCache.find(x=>x.id===id);
+  try{ await fetch(WATCH_URL+"?id="+encodeURIComponent(id),{method:"DELETE",headers:{...dashAuthHeader()}}); }catch(e){}
+  if(w && w.reminderId) cancelReminderId(w.reminderId);
+  loadWatches();
+}
+/* Settling a watch is NOT idempotent — it creates a Google Task. If the resolve POST back to the
+   Worker fails (offline, 500), the next poll would see it unresolved and commit the task a SECOND
+   time. Same guard the bell uses for ringing: a local record of what's already been settled. */
+function _watchDone(){ try{ return JSON.parse(localStorage.getItem("midash_watch_done")||"{}")||{}; }catch(e){ return {}; } }
+function _markWatchDone(id){ try{ const a=_watchDone(); a[id]=Date.now(); const cut=Date.now()-14*86400000;
+  for(const k in a) if(a[k]<cut) delete a[k]; localStorage.setItem("midash_watch_done", JSON.stringify(a)); }catch(e){} }
+let _watchRunning=false;
+async function runDueWatches(){
+  if(_watchRunning || !accounts.length) return;
+  const done=_watchDone();
+  const due=watchCache.filter(w=>w && !w.resolved && !done[w.id] && Number(w.at)<=Date.now());
+  if(!due.length) return;
+  _watchRunning=true;
+  try{
+    for(const w of due){
+      _markWatchDone(w.id);   // claim it BEFORE acting — a crash mid-commit must not double-create
+      const res=await checkEmailFrom(w.email||w.who, w.since);
+      if(res && res.error) continue;                       // Google hiccup — try again next tick
+      if(res && res.unresolved){
+        // Can't identify the person, so we can't honestly say they were silent. Create the task
+        // and say why — better a task he can delete than a call he never makes.
+        await watchCommit(w, "couldn't identify "+w.who+" in Contacts — created it to be safe");
+        continue;
+      }
+      if(res && res.found){
+        await resolveWatch(w.id, "emailed "+(res.when||""));
+        capFlash("✅ "+res.who+" did email — “"+String(res.subject).slice(0,44)+"”. No task created.", 7000);
+      } else {
+        await watchCommit(w, "no email from "+w.who);
+      }
+      // Mark it settled LOCALLY too. Re-fetching here instead would re-enter this function, and a
+      // failed resolve POST would then spin it forever; the 60s poll picks up the server's copy.
+      w.resolved=Date.now();
+      if(w.reminderId) cancelReminderId(w.reminderId);   // it's answered — don't also nag on Discord
+    }
+  } finally { _watchRunning=false; }
+  renderWatches();
+}
+/* The condition held — NOW the task becomes real, carrying the context from when it was set. */
+async function watchCommit(w, why){
+  const acct=defaultAcct();
+  let made=false;
+  if(acct){
+    const notes=[w.thenNotes||"", why?("— "+why+" (checked "+new Date().toLocaleString()+")"):""].filter(Boolean).join("\n");
+    try{ const r=await createTask(acct, w.thenTitle, null, notes); made=!!r.ok; }catch(e){}
+  }
+  await resolveWatch(w.id, why||"condition held");
+  if(made){ loadTasks(); capFlash("⏳→✅ "+why+" — added “"+w.thenTitle+"”", 7000); }
+  else capFlash("⏳ "+why+" — couldn’t add the task (reconnect Google)", 7000);
+}
+function renderWatches(){
+  const box=document.getElementById("watch-strip"); if(!box) return;
+  const list=watchCache.filter(w=>w && !w.resolved).sort((a,b)=>a.at-b.at);
+  if(!list.length){ box.innerHTML=""; return; }
+  const rows=list.map(w=>`<div class="rem-row"><span class="rem-when">${ic("clock")} ${esc(fmtReminderWhen(new Date(w.at)))}</span>`
+    +`<span class="rem-text">if ${esc(w.who)} hasn’t emailed → ${esc(w.thenTitle)}</span>`
+    +`<span class="rem-x" data-id="${escAttr(w.id)}" title="Cancel this conditional">✕</span></div>`).join("");
+  box.innerHTML=`<div class="rem-head">${ic("alert")} Watching for <span class="fin-state">${list.length}</span></div>${rows}`;
+  box.querySelectorAll(".rem-x").forEach(x=>x.onclick=()=>cancelWatchId(x.dataset.id));
+}
+
 /* ---- In-dashboard reminder BELL (v1.43.0) ----------------------------------------------------
    At-desk layer on top of the Discord DM: when a pending reminder comes due (detected locally from
    the loadReminders cache), ring it — badge + soft chime + tab-title flash + an OS notification if
@@ -4877,8 +5055,8 @@ function initBell(){
     document.addEventListener("click",()=>{ menu.style.display="none"; });
   }
   window.addEventListener("focus", stopTitleFlash);   // you're looking now — stop nagging the title
-  loadReminders();
-  setInterval(loadReminders, 60000);      // refresh the pending list
+  loadReminders(); loadWatches();
+  setInterval(()=>{ loadReminders(); loadWatches(); }, 60000);   // refresh pending pings + conditionals
   setInterval(checkDueReminders, 20000);  // ring due ones promptly between polls
 }
 
@@ -5134,10 +5312,10 @@ function initCaptureMic(){
     try{ r.start(); }catch(e){ stop(); capFlash("🎙️ Couldn't start the mic"); }
   };
 }
-function capFlash(msg){
+function capFlash(msg, ms){
   const f=document.getElementById("cap-flash"); if(!f) return;
   f.textContent=msg; f.classList.add("show");
-  clearTimeout(capFlash._t); capFlash._t=setTimeout(()=>f.classList.remove("show"),3400);
+  clearTimeout(capFlash._t); capFlash._t=setTimeout(()=>f.classList.remove("show"), ms||3400);
 }
 function capStamp(){ return new Date().toLocaleDateString([],{month:"short",day:"numeric"}); }
 /* "Add a task" → a plain Google Task, nothing else (v1.44.11, replacing the old "Save this idea"
@@ -5294,7 +5472,73 @@ function defaultReminderAt(){
   else if(h<DAY_START_HOUR){ d.setHours(DAY_START_HOUR,0,0,0); }             // before his day starts → 10am
   return d.getTime();
 }
+/* ---- Capture routing (v1.46.0) --------------------------------------------------------------
+   The regex path is fast, free and instant, and it handles most of what Q types. But it is a fixed
+   grammar: every nuance it can't express ("call Bob by 10a IF he doesn't email me before then",
+   "update tracker42 after I meet Rebecca") has to be taught to it one pattern at a time, and that
+   ladder has no top. So: simple stuff keeps the free path, and anything with a CONDITION, a
+   SEQUENCE, a WAIT or several clauses goes to the agent, which can compose the right combination of
+   task / reminder / watch / waiting / blocked instead of guessing at one of them.
+
+   Deliberately conservative — a false "complex" costs a fraction of a cent, but routing everything
+   would make the common case slow and metered. */
+function captureIsComplex(text){
+  const s=String(text||"").trim();
+  const words=s.split(/\s+/).length;
+  if(words<4) return false;
+  if(hasCondition(s)) return true;                                              // if / unless / in case
+  if(/\b(after|once|until|before i|when i|as soon as|depends on|then)\b/i.test(s)) return true;   // sequencing
+  if(/\b(waiting on|waiting for|hasn'?t|haven'?t|didn'?t|doesn'?t|no reply|never replied|still no|no word)\b/i.test(s)) return true;
+  if(/\band\b/i.test(s) && words>=10) return true;                              // probably two things
+  return words>=18;                                                             // long enough to carry nuance
+}
+const CAPTURE_DIRECTIVE=`CAPTURE — Q typed the line below into his dashboard's capture bar. He is NOT in a conversation: he pressed a button and walked away, so you cannot ask him anything. Read what he means, including the nuance, and build exactly the right miDash objects with your tools — a task, a reminder, a conditional watch, a waiting-on, a block behind another task, or several of those together.
+
+Rules for this mode:
+- ACT. Call the tools. Never reply with a plan or a question.
+- Do not echo his instruction wrapper ("set a reminder to…") into what you create — the title is the bare action.
+- Carry the context (the why, names, numbers) into the reminder text and the task notes.
+- If it hangs on whether someone emails him, that's set_watch, and do NOT also create the task.
+- If it's one thing that follows another of his tasks, use block_task so it surfaces on its own.
+- Then reply with ONE short line (under ~100 chars) saying plainly what you made. No preamble.
+
+His words:`;
+/* Run the agent headlessly, on its OWN message array — the chat history must not be polluted by a
+   capture, and a capture must not inherit whatever was being discussed in the panel. */
+async function captureViaAgent(text){
+  const msgs=[{role:"user", content:CAPTURE_DIRECTIVE+"\n\n"+JSON.stringify(String(text))}];
+  capFlash("🧠 Working out what you meant…", 60000);
+  let final="", acted=false;
+  for(let round=0; round<6; round++){
+    const data=await streamModel(null, msgs, CONFIG.captureModel||selectedModel());
+    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    if(data.usage) recordUsage(data.model||CONFIG.captureModel||selectedModel(), data.usage);
+    msgs.push({role:"assistant", content:data.content});
+    const txt=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join(" ").trim();
+    if(txt) final=txt;
+    if(data.stop_reason!=="tool_use") break;
+    const calls=(data.content||[]).filter(b=>b.type==="tool_use");
+    const results=[];
+    for(const c of calls){
+      if(c._truncated){ results.push({type:"tool_result",tool_use_id:c.id,content:"tool input was truncated in transit — please retry the call",is_error:true}); continue; }
+      capFlash("🧠 "+c.name.replace(/_/g," ")+"…", 60000);
+      const out=await executeTool(c.name, c.input||{});
+      const isErr = out && typeof out==="object" && ("error" in out);
+      if(!isErr) acted=true;
+      results.push({type:"tool_result",tool_use_id:c.id,content:typeof out==="string"?out:JSON.stringify(out),...(isErr?{is_error:true}:{})});
+    }
+    msgs.push({role:"user", content:results});
+  }
+  if(!acted && !final) throw new Error("the agent didn't do anything");
+  capFlash((acted?"✓ ":"")+(final||"Captured"), 8000);
+}
 async function captureRemind(text){
+  // Anything with real nuance goes to the agent; if that path fails for ANY reason we fall straight
+  // back to the regex path, so a capture is never simply lost.
+  if(CONFIG.chatEndpoint && captureIsComplex(text)){
+    try{ await captureViaAgent(text); return; }
+    catch(e){ console.warn("[capture] agent route failed, falling back:", e); capFlash("⚠️ Agent unavailable — captured the simple way", 5000); }
+  }
   const acct=defaultAcct();
   const p=parseReminder(text);
   const {action, detail}=splitDetail(p.title||text);

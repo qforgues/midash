@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.45.2` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.46.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -89,6 +89,11 @@ moved to the Pi so both stay up when the Mac is closed.
   hold. Entries keyed by Google task id, or `pending:<title>` when written from Discord, which has
   no task ids; the browser re-keys those on its next load. **PUT merges per-entry LWW** and returns
   the merged set, like `/projects`, so the browser never merges. v1.45.0)
+- **Watches (conditionals):** `GET/POST/DELETE /watch`  (KV `watches` blob. POST adds
+  `{at,who,thenTitle,thenNotes,since,reminderId}`; `POST {resolve:id,result}` settles one; GET lists
+  pending. The Worker queues them and fires the Discord ping on time via the normal reminder path,
+  but **cannot evaluate one** — the condition is a Gmail question and Google creds live only in the
+  browser, so `runDueWatches()` settles them when the dashboard is open. v1.46.0)
 - **Discord push health:** `GET /discord-check`  (validates `DISCORD_BOT_TOKEN` via `/users/@me` +
   `DISCORD_USER_ID` by opening a DM channel — no message sent; `?send=1` delivers a real test DM.
   The Switchboard **Discord card** shows inbound heartbeat + outbound push in one, with a "🔔 Send
@@ -171,7 +176,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 134 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 152 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -325,6 +330,52 @@ all the same kind of thing. A task is either **his to do**, **waiting on someone
   a normal reminder in the existing `/reminders` queue (Discord DM). Un-parking cancels it.
 - **`DAY_START_HOUR = 10`** — Q's day starts at 10am. `defaultReminderAt()` rolls to 10am rather
   than the old 8am, and both system prompts tell the agent never to nudge earlier.
+
+## Natural language → the right object (v1.46.0)
+
+The goal Q stated: "I talk in comfortable normal language and the agent takes all my nuances and
+creates exactly what I need, no matter how complicated or what's tied to what."
+
+**The regex capture parser cannot get there** — it is a fixed grammar, and every nuance it can't
+express has to be taught one pattern at a time. So capture is now a two-lane road:
+
+- **`captureIsComplex()`** decides the lane. Conditions (if/unless), sequencing (after/once/until),
+  waiting language (hasn't/never replied/waiting on), multi-clause, or ≥18 words → the agent lane.
+  Everything else keeps the instant, free, zero-token regex path. Deliberately conservative: a
+  false positive costs a fraction of a cent, routing everything would make the common case slow.
+- **`captureViaAgent()`** runs the tool loop HEADLESSLY on its own message array — a capture must
+  not pollute the chat history, and must not inherit whatever was being discussed in the panel. It
+  gets `CAPTURE_DIRECTIVE` ("he pressed a button and walked away — you cannot ask him anything"),
+  acts, and reports one line into the capture flash. **Any failure falls straight back to the regex
+  path**, so a capture is never lost.
+- **`CONFIG.captureModel`** (default `claude-sonnet-4-6`) — complex captures are exactly where
+  nuance is the point, so they get a smarter model than the chat default. Set to null to follow the
+  picker. Simple captures never call the API at all.
+
+### Watches — the third shape (task · reminder · **watch**)
+
+A task is committed work. A reminder is a ping. A **watch** is a decision deferred to a moment:
+*"call Bob by 10a if he hasn't emailed me before then."* The call may never need making, so
+committing it as a task means ticking off a chore that resolved itself.
+
+- `set_watch(at, who, then_task, then_notes)` queues it + schedules a normal reminder, so **Discord
+  still fires on time** with the condition spelled out even if the dashboard never opens.
+- `runDueWatches()` (browser, on the 60s poll) settles anything past its moment:
+  **silent → `watchCommit()` finally creates the task**, carrying the original context plus what was
+  checked and when; **they replied → nothing lands** and the flash says so.
+- **Idempotence:** committing is not repeatable (it creates a Google Task), so a watch is claimed in
+  `localStorage` (`midash_watch_done`) BEFORE acting — a failed resolve POST must not double-create.
+  Same pattern as the bell's `midash_rem_alerted`.
+- Renders in the Tasks card as **"Watching for"** (`#watch-strip`), with ✕ to cancel.
+
+### Email as the condition oracle
+
+Nearly all of Q's comms with the people on his list are email, so most conditions reduce to one
+Gmail question. `checkEmailFrom(who, since)` resolves a name against Google Contacts
+(`resolvePersonEmail`) and searches `from:<addr> after:<epoch>` across every connected account,
+returning the newest match with subject/time. Exposed as the **`check_email_from`** tool so
+"did Bob get back to me?" is answered from data. Browser-only by necessity — the Worker's copy of
+the tool refuses honestly rather than guessing.
 
 ## Credit-card debt — deterministic payoff calculator (v1.33.0)
 
@@ -558,6 +609,16 @@ cd ~/miDash && wrangler deploy
   ("call Bob by 10a **if** he doesn't email me first") was committed as a task, though the call may
   never need making — `hasCondition()` routes those to a reminder only, excluding "if" as a verb
   complement ("check **if** the package arrived" is still a task). 21 new assertions (134 total).
+- v1.46.0: **Natural language → the right object.** All three pieces of the plan, in one pass.
+  (1) **Capture routes to the agent** when the sentence carries nuance (`captureIsComplex`), running
+  a headless tool loop on its own message array, with a hard fallback to the regex path so nothing
+  is lost. (2) **Watches** — the conditional primitive: `/watch` KV queue + `set_watch`/
+  `list_watches`/`cancel_watch`, the task created ONLY if the condition holds, claimed in
+  localStorage first so a failed resolve can't double-create. (3) **Email watch** —
+  `checkEmailFrom` + the `check_email_from` tool answer "has X emailed?" from Gmail across all
+  accounts, which is what actually settles a watch. Q's canonical sentence now works end to end:
+  *"call Bob by 10a if he doesn't email me before then"* → ping at 10a, inbox checked, task only if
+  Bob stayed quiet. 18 new assertions (152 total).
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

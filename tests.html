@@ -315,6 +315,30 @@ function defaultReminderAtFrom(nowMs){
   return d.getTime();
 }
 
+// --- captureIsComplex / resolvePersonEmail (index.html, v1.46.0) — KEEP IN SYNC ---
+function captureIsComplex(text){
+  const s=String(text||"").trim();
+  const words=s.split(/\s+/).length;
+  if(words<4) return false;
+  if(hasCondition(s)) return true;
+  if(/\b(after|once|until|before i|when i|as soon as|depends on|then)\b/i.test(s)) return true;
+  if(/\b(waiting on|waiting for|hasn'?t|haven'?t|didn'?t|doesn'?t|no reply|never replied|still no|no word)\b/i.test(s)) return true;
+  if(/\band\b/i.test(s) && words>=10) return true;
+  return words>=18;
+}
+let contactsList=[];
+function resolvePersonEmail(who){
+  const s=String(who||"").trim(); if(!s) return null;
+  if(/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) return {name:s, email:s};
+  const q=s.toLowerCase();
+  const pool=(contactsList||[]).filter(c=>c && c.email);
+  const hit = pool.find(c=>String(c.name||"").toLowerCase()===q)
+           || pool.find(c=>String(c.name||"").toLowerCase().indexOf(q)>=0)
+           || pool.find(c=>q.split(/\s+/).every(w=>String(c.name||"").toLowerCase().indexOf(w)>=0))
+           || pool.find(c=>String(c.email||"").toLowerCase().indexOf(q.split(/\s+/)[0])>=0);
+  return hit ? {name:hit.name||s, email:hit.email} : null;
+}
+
 /* ================================ TEST HARNESS ================================ */
 let pass=0, fail=0;
 const out=document.getElementById("out");
@@ -668,6 +692,41 @@ section("Talking normally — lead-ins, am/pm shorthand, conditionals (v1.45.2)"
   ok(!isNotifyOnly("check if the package arrived"), "'check IF…' is a verb complement — still a task");
   ok(!isNotifyOnly("find out whether Dart approved the IP"), "'find out whether…' is still a task");
   ok(!isNotifyOnly("drop off the jacket and the tapes"), "a plain errand is still a task");
+}
+
+section("Capture routing — nuance goes to the agent, simple stays free (v1.46.0)");
+{
+  // Routed: these are exactly the shapes the regex path cannot express.
+  ok(captureIsComplex("Set a reminder to call Bob jones by 10a if he doesn't email me before then"), "conditional → agent");
+  ok(captureIsComplex("update tracker42 after I meet with Rebecca"), "sequencing ('after') → agent");
+  ok(captureIsComplex("I'm waiting on Plaid to move me to production"), "waiting-on → agent");
+  ok(captureIsComplex("Bill never replied about tomorrow so I should call him"), "'never replied' → agent");
+  ok(captureIsComplex("pay the invoice unless Adam already sent it"), "'unless' → agent");
+  ok(captureIsComplex("Set a day for Dillon Ethan and me to go to the main island for the gardens"), "long multi-clause → agent");
+
+  // NOT routed: the everyday stuff must stay instant and free.
+  ok(!captureIsComplex("drop off the tapes friday"), "simple errand stays on the free path");
+  ok(!captureIsComplex("call mom at 3p"), "simple timed reminder stays free");
+  ok(!captureIsComplex("pay the cc's"), "two words stays free");
+  ok(!captureIsComplex("drop off the jacket and the tapes"), "short 'and' errand stays free");
+  ok(!captureIsComplex("ship the pre-rolls via USPS"), "plain action stays free");
+}
+
+section("Resolving a person to an email address (v1.46.0)");
+{
+  contactsList=[
+    {name:"Bob Jones", email:"bob@jonespotatochips.com"},
+    {name:"Bill Lennox", email:"bill.lennox@example.com"},
+    {name:"Rebecca Hart", email:"rebecca@example.com"},
+  ];
+  ok(resolvePersonEmail("Bob Jones").email==="bob@jonespotatochips.com", "full name matches");
+  ok(resolvePersonEmail("bob jones").email==="bob@jonespotatochips.com", "case-insensitive");
+  ok(resolvePersonEmail("Bob").email==="bob@jonespotatochips.com", "first name alone matches");
+  ok(resolvePersonEmail("Lennox").email==="bill.lennox@example.com", "surname alone matches");
+  ok(resolvePersonEmail("someone@else.com").email==="someone@else.com", "a literal address passes straight through");
+  ok(resolvePersonEmail("Nobody Here")===null, "an unknown name resolves to null (so the watch says so)");
+  ok(resolvePersonEmail("")===null, "empty input is null, not a wild match");
+  contactsList=[];
 }
 
 /* ================================ SUMMARY ================================ */
