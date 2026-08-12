@@ -1138,7 +1138,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.45.1",
+  version: "1.45.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -5170,14 +5170,23 @@ function parseReminder(text){
   let work = " "+text+" ";
   const strip = [];
   let hh=null, mm=0, timeStr=null, m;
-  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am|pm)?\b/i))){
-    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase();
-    if(ap==="pm"&&hh<12) hh+=12; if(ap==="am"&&hh===12) hh=0;
+  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am?|pm?)?\b/i))){
+    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase().charAt(0);
+    if(ap==="p"&&hh<12) hh+=12; if(ap==="a"&&hh===12) hh=0;
     timeStr=(hh%12||12)+":"+pad2(mm)+(hh<12?"am":"pm"); strip.push(m[0]);
   } else if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2})\s*(am|pm)\b/i))){
     hh=parseInt(m[1],10)%12; if(m[2].toLowerCase()==="pm") hh+=12;
     timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
-  } else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
+  }
+  // Q writes "10a" / "3p" constantly and NOTHING matched them — "call Bob by 10a" parsed as no time
+  // at all, so it fell back to a default hour. The bare letter must either be glued to the number
+  // ("10a") or follow at/by/@ ("at 10 a"), so "buy 5 apples" / "call 3 people" can't false-match.
+  else if((m=work.match(/\b(?:at|by|@)\s*(\d{1,2})\s*([ap])\b|\b(\d{1,2})([ap])\b/i))){
+    const num=m[1]||m[3], ap=(m[2]||m[4]).toLowerCase();
+    hh=parseInt(num,10)%12; if(ap==="p") hh+=12;
+    timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
+  }
+  else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
   else if(/\bmidnight\b/i.test(work)){ hh=0; timeStr="midnight"; strip.push("midnight"); }
   else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
   let due=null;
@@ -5227,9 +5236,12 @@ function parseReminder(text){
   }
   let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
   title=title.replace(/\s{2,}/g," ").trim();
-  // Strip a leading "remind me (to/that/about)…" / "remember to…" / "reminder:" lead-in so the
-  // task/reminder reads as a proper action ("Have Rachel call…", not "remind me to have Rachel…").
-  title=title.replace(/^\s*(please\s+)?(remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|don'?t forget to)\s+/i,"");
+  // Strip the leading "how I asked for it" phrasing so the task/reminder reads as the ACTION
+  // ("Call Bob Jones", not "Set a reminder to call Bob Jones"). Q talks to it in normal language;
+  // the instruction wrapper is never part of the thing he has to do. Runs repeatedly because these
+  // stack in real speech — "can you please set a reminder to remember to…".
+  const LEADIN=/^\s*(?:(?:can|could|would|will)\s+(?:you|u)\s+)?(?:please\s+)?(?:(?:set|add|create|make|put|schedule|start)(?:\s+up)?\s+(?:a|an|another)?\s*(?:reminder|task|to-?do|note|alert|ping)(?:\s+(?:to|that|about|for|on))?|remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|note to self\s*:?|don'?t forget to|i need to|i have to|i gotta|i should|make sure (?:to|i)|be sure to)\s+/i;
+  for(let i=0;i<3 && LEADIN.test(title);i++) title=title.replace(LEADIN,"");
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
   if(title) title=title.charAt(0).toUpperCase()+title.slice(1);   // read as a sentence
@@ -5250,10 +5262,21 @@ function splitDetail(s){
    a to-do. Creating a Google Task for it leaves a chore on the list that Q can never actually DO;
    he just has to tick it off by hand later. These get the Discord ping and nothing else. */
 const NOTIFY_RE=/\b(let me know|lmk|tell me|ping me|notify me|alert me|heads?[ -]?up|remind me that)\b/i;
+/* A CONDITIONAL is not a to-do either. "Call Bob by 10a if he doesn't email me before then" is one
+   thing to check at 10a, not a chore sitting on the list — the call only becomes real if Bob stays
+   quiet. Committing it as a task means ticking off something that may never have needed doing.
+   "if" as a verb complement ("check IF the package arrived") is an action, so it's excluded. */
+const COND_RE=/\b(?:if|unless|in case|whether)\b/i;
+const COND_COMPLEMENT_RE=/\b(?:check|see|find out|ask|confirm|verify|know|figure out|look)\s+(?:\w+\s+){0,3}(?:if|whether)\b/i;
+function hasCondition(text){
+  const s=String(text||"");
+  return COND_RE.test(s) && !COND_COMPLEMENT_RE.test(s);
+}
 function isNotifyOnly(text){
   const s=String(text||"");
   if(NOTIFY_RE.test(s)) return true;
-  // A conditional with a consequent ("if X then …", "when X, …") is a watch, not an errand.
+  if(hasCondition(s)) return true;
+  // A bare conditional opener with a consequent ("when X, …") is a watch, not an errand.
   return /^\s*(if|when|whenever)\b/i.test(s) && /(\bthen\b|,)/i.test(s);
 }
 /* "Remind me to…" → a REAL Google Task with a parsed due date. Say "…by Friday 3pm" and it

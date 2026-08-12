@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.45.1` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.45.2` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -171,7 +171,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 113 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 134 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -548,6 +548,16 @@ cd ~/miDash && wrangler deploy
   text goes in the task notes, and the Discord ping carries the why. Also: a time that has already
   passed says so instead of silently producing nothing. 19 new assertions (113 total), each
   mutation-checked against the old behaviour.
+- v1.45.2: **Talk normally.** Three more from real use: (1) the instruction wrapper leaked into the
+  thing to do — "Set a reminder to call Bob jones…" became a task *titled* that. A much wider
+  `LEADIN` regex now strips "set/add/create a reminder|task|note to", "note to self:", "I need to",
+  "can you please…", stacked up to 3 deep — while leaving "reminders are useful" alone. (2) **"10a"
+  and "3p" parsed as NO TIME AT ALL** (`\b` never matches between "10" and "a"), so "call Bob by
+  10a" silently fell back to a default hour. Added a shorthand rule that requires the letter be
+  glued to the number or follow at/by/@, so "buy 5 apples" can't become 5am. (3) A CONDITIONAL
+  ("call Bob by 10a **if** he doesn't email me first") was committed as a task, though the call may
+  never need making — `hasCondition()` routes those to a reminder only, excluding "if" as a verb
+  complement ("check **if** the package arrived" is still a task). 21 new assertions (134 total).
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

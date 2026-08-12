@@ -153,14 +153,20 @@ function parseReminder(text){
   let work = " "+text+" ";
   const strip = [];
   let hh=null, mm=0, timeStr=null, m;
-  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am|pm)?\b/i))){
-    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase();
-    if(ap==="pm"&&hh<12) hh+=12; if(ap==="am"&&hh===12) hh=0;
+  if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2}):(\d{2})\s*(am?|pm?)?\b/i))){
+    hh=parseInt(m[1],10); mm=parseInt(m[2],10); const ap=(m[3]||"").toLowerCase().charAt(0);
+    if(ap==="p"&&hh<12) hh+=12; if(ap==="a"&&hh===12) hh=0;
     timeStr=(hh%12||12)+":"+pad2(mm)+(hh<12?"am":"pm"); strip.push(m[0]);
   } else if((m=work.match(/\b(?:at|by|@)?\s*(\d{1,2})\s*(am|pm)\b/i))){
     hh=parseInt(m[1],10)%12; if(m[2].toLowerCase()==="pm") hh+=12;
     timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
-  } else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
+  }
+  else if((m=work.match(/\b(?:at|by|@)\s*(\d{1,2})\s*([ap])\b|\b(\d{1,2})([ap])\b/i))){
+    const num=m[1]||m[3], ap=(m[2]||m[4]).toLowerCase();
+    hh=parseInt(num,10)%12; if(ap==="p") hh+=12;
+    timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]);
+  }
+  else if(/\bnoon\b/i.test(work)){ hh=12; timeStr="noon"; strip.push("noon"); }
   else if(/\bmidnight\b/i.test(work)){ hh=0; timeStr="midnight"; strip.push("midnight"); }
   else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
   let due=null;
@@ -207,7 +213,8 @@ function parseReminder(text){
   }
   let title=orig; strip.forEach(s=>{ title=title.replace(s.trim()," "); });
   title=title.replace(/\s{2,}/g," ").trim();
-  title=title.replace(/^\s*(please\s+)?(remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|don'?t forget to)\s+/i,"");
+  const LEADIN=/^\s*(?:(?:can|could|would|will)\s+(?:you|u)\s+)?(?:please\s+)?(?:(?:set|add|create|make|put|schedule|start)(?:\s+up)?\s+(?:a|an|another)?\s*(?:reminder|task|to-?do|note|alert|ping)(?:\s+(?:to|that|about|for|on))?|remind me(?:\s+(?:to|that|about))?|remember to|reminder\s*:?|note to self\s*:?|don'?t forget to|i need to|i have to|i gotta|i should|make sure (?:to|i)|be sure to)\s+/i;
+  for(let i=0;i<3 && LEADIN.test(title);i++) title=title.replace(LEADIN,"");
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
   if(title) title=title.charAt(0).toUpperCase()+title.slice(1);
@@ -221,9 +228,16 @@ function splitDetail(s){
   return {action:t, detail:""};
 }
 const NOTIFY_RE=/\b(let me know|lmk|tell me|ping me|notify me|alert me|heads?[ -]?up|remind me that)\b/i;
+const COND_RE=/\b(?:if|unless|in case|whether)\b/i;
+const COND_COMPLEMENT_RE=/\b(?:check|see|find out|ask|confirm|verify|know|figure out|look)\s+(?:\w+\s+){0,3}(?:if|whether)\b/i;
+function hasCondition(text){
+  const s=String(text||"");
+  return COND_RE.test(s) && !COND_COMPLEMENT_RE.test(s);
+}
 function isNotifyOnly(text){
   const s=String(text||"");
   if(NOTIFY_RE.test(s)) return true;
+  if(hasCondition(s)) return true;
   return /^\s*(if|when|whenever)\b/i.test(s) && /(\bthen\b|,)/i.test(s);
 }
 function captureNotes(orig, taskTitle){
@@ -622,6 +636,38 @@ section("Capture regressions from Q's 2026-08-11 session (v1.45.1)");
   ok(parseReminder("pick up groceries friday").ymd===parseReminder("groceries on friday").ymd, "weekday parsing unchanged");
   ok(parseReminder("call the dentist in 3 days").ymd!==null, "'in 3 days' still parses");
   ok(parseReminder("invoice due july 10").ymd.slice(5)==="07-10", "'july 10' still parses");
+}
+
+section("Talking normally — lead-ins, am/pm shorthand, conditionals (v1.45.2)");
+{
+  const T=t=>parseReminder(t), A=t=>splitDetail(parseReminder(t).title).action;
+  // The instruction wrapper is never part of the thing to do.
+  ok(A("Set a reminder to call Bob jones")==="Call Bob jones", "'set a reminder to X' → 'X'");
+  ok(A("add a task to ship the pre-rolls")==="Ship the pre-rolls", "'add a task to X' → 'X'");
+  ok(A("note to self: order the USPS boxes")==="Order the USPS boxes", "'note to self: X' → 'X'");
+  ok(A("can you please set a reminder to drop off the tapes")==="Drop off the tapes", "politeness + wrapper both stripped");
+  ok(A("I need to update tracker42")==="Update tracker42", "'I need to X' → 'X'");
+  ok(A("remind me to remember to pay the cc's")==="Pay the cc's", "stacked lead-ins strip (up to 3)");
+  ok(A("reminders are useful")==="Reminders are useful", "'reminder' inside a real word is NOT stripped");
+
+  // "10a" / "3p" — the shorthand Q actually types. None of this parsed before.
+  ok(T("call mom at 3p").timeStr==="3pm", "'at 3p' → 3pm");
+  ok(T("call Bob by 10a").timeStr==="10am", "'by 10a' → 10am");
+  ok(T("meet Rebecca at 9:30a").timeStr==="9:30am", "'9:30a' → 9:30am");
+  ok(T("standup at 12:15p").timeStr==="12:15pm", "'12:15p' → 12:15pm");
+  ok(T("call at 10am").timeStr==="10am" && T("call at 10 pm").timeStr==="10pm", "full am/pm still works");
+  ok(T("buy 5 apples").timeStr===null, "'5 apples' is not 5am");
+  ok(T("call 3 people about the gardens").timeStr===null, "'3 people' is not 3pm");
+
+  // A conditional action is one thing to CHECK, not a chore to tick off.
+  const bob="Set a reminder to call Bob jones by 10a if he doesn't email me before then";
+  ok(isNotifyOnly(bob), "'call Bob by 10a IF he doesn't email' → reminder only, no task");
+  ok(T(bob).timeStr==="10am", "…and it lands at 10am");
+  ok(/doesn't email/i.test(T(bob).title), "…with the condition kept in the text");
+  ok(isNotifyOnly("pay the invoice unless Adam already sent it"), "'unless X' is conditional");
+  ok(!isNotifyOnly("check if the package arrived"), "'check IF…' is a verb complement — still a task");
+  ok(!isNotifyOnly("find out whether Dart approved the IP"), "'find out whether…' is still a task");
+  ok(!isNotifyOnly("drop off the jacket and the tapes"), "a plain errand is still a task");
 }
 
 /* ================================ SUMMARY ================================ */
