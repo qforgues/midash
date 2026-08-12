@@ -103,6 +103,15 @@ other two (set_waiting / clear_waiting / block_task / list_waiting):
   list_waiting. Days-waiting is the signal to push on.
 All four act immediately, no confirmation.
 
+WHERE, not just when. Some of Q's tasks are organised by place: the jacket and the tapes are one
+local run, the pre-rolls are a USPS stop. Use set_place so a trip gets planned once instead of five
+errands done one at a time, and list_places when he asks what he needs to do while he's out.
+The important case is when_there:true — something with NO date that only becomes real when he's
+somewhere ("meet Evan next time I'm in Michigan"). Those leave his day list entirely and resurface
+when the calendar says he's headed there. A dateless place-bound task on a day list either nags him
+daily or gets forgotten; that flag is the third option, so reach for it whenever he says "next time
+I'm in…", "whenever I'm out that way", or "while I'm there".
+
 Closing out the day: Q runs an end-of-day rollover (⚙️ → "Close out the day") where anything that
 didn't happen gets pushed to a real date and time rather than silently re-listed. list_waiting also
 returns SLIPPING — tasks he has moved 3+ times. Those are the honest ones to raise: something moved
@@ -225,6 +234,23 @@ const FLOW_TOOLS = [
     description: "List what Q is WAITING ON (parked in someone else's court, each with how many days it's been sitting), what's BLOCKED behind another task, and what's SLIPPING (tasks he has pushed to another day 3+ times in his end-of-day rollover). Use for 'what am I waiting on', \"what's stuck\", 'what keeps slipping', 'anything I should chase', or before planning his day. Reads miDash's own storage, so it works over Discord with no Google access.",
     input_schema: { type: "object", properties: {}, required: [] } },
 ];
+/* Place tool schemas — SINGLE SOURCE for TOOLS + AGENT_TOOLS. Some of Q's tasks are organised by
+   WHERE, not when: the jacket and the tapes are one local run; the pre-rolls are a USPS stop.
+   And some have no date at all and only become real when he's somewhere — "meet Evan next time I'm
+   in Michigan". A dateless place-bound task on a day list either nags forever or gets forgotten;
+   `when_there` is the third option. See taskBuckets / renderPlaces in index.html. */
+const PLACE_TOOLS = [
+  { name: "set_place",
+    description: "Tag a task with WHERE it happens, so trips get planned as one thing instead of one-at-a-time. Match the task by title (partial ok). 'place' is a short label Q would recognise — 'errands' for a general local run, or something specific like 'USPS', 'the shop', 'Michigan'. Set when_there:true for something with NO date that only becomes real when he's actually there ('meet Evan next time I'm in Michigan') — those leave the day list entirely and surface when he's headed there, instead of nagging him daily. Leave when_there false/absent for a normal errand he'll do from home. Acts immediately.",
+    input_schema: { type: "object", properties: { task: { type: "string" }, place: { type: "string" }, when_there: { type: "boolean" } }, required: ["task", "place"] } },
+  { name: "list_places",
+    description: "List Q's location-tagged tasks: ERRANDS grouped by place (so you can suggest one trip that covers several), and WHEN-THERE tasks that are parked until he's in that place. Use for 'what errands do I have', 'what do I need to do while I'm out', 'anything for when I'm in Michigan', or when planning a trip or a day.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+  { name: "clear_place",
+    description: "Remove a task's place tag (it's no longer location-bound, or it's done being parked). Match by title. Acts immediately.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] } },
+];
+
 /* Watch tool schemas — SINGLE SOURCE for TOOLS + AGENT_TOOLS. A WATCH is the third shape after
    task and reminder: a decision deferred to a moment. "Call Bob by 10a if he hasn't emailed" is not
    a to-do (the call may never need making) and not just a ping (something has to be CHECKED and
@@ -232,8 +258,8 @@ const FLOW_TOOLS = [
    then does the task exist. See handleWatch + runDueWatches. */
 const WATCH_TOOLS = [
   { name: "set_watch",
-    description: "Schedule a CONDITIONAL: at a given moment, check whether someone has emailed, and create a task only if they haven't. This is the right tool for 'call Bob by 10a if he doesn't email me before then', 'pay the invoice Friday unless Adam sends it first', 'if I haven't heard from Rebecca by noon, text her'. Give 'at' (when to decide — a phrase like 'tomorrow 10am', ISO, or epoch-ms; Q's day starts at 10am so never earlier), 'who' (the person whose email settles it — name or address), 'then_task' (the task title to create IF they stayed silent, written as a bare action like 'Call Bob Jones'), and optionally 'then_notes' (context for that task — why, phone number, what was already tried). Do NOT also call create_task: the whole point is that the task only exists if the condition holds. A Discord ping fires at the same moment either way. Acts immediately.",
-    input_schema: { type: "object", properties: { at: { type: "string" }, who: { type: "string" }, then_task: { type: "string" }, then_notes: { type: "string" }, since: { type: "string", description: "only count mail arriving after this (defaults to now)" } }, required: ["at", "who", "then_task"] } },
+    description: "Schedule a CONDITIONAL: at a given moment, check something, and create a task only if it didn't resolve itself. Right for 'call Bob by 10a if he doesn't email me before then', 'pay invoice 1042 Friday unless it clears first', 'if TKT-88 still isn't released by Thursday, chase it'. Always give 'at' (when to decide — 'tomorrow 10am', ISO, or epoch-ms; Q's day starts at 10am so never earlier) and 'then_task' (the task to create IF it didn't resolve, as a bare action like 'Call Bob Jones'), plus optional 'then_notes' (why, phone number, what was already tried). Then pick the CHECK: kind 'email_from' (default) with 'who' = the person — settled from Gmail when his dashboard is open; kind 'invoice_paid' with 'ref' = invoice number or client — settled by the Worker on time, no browser needed; kind 'ticket_status' with 'ref' = the Portal42 ticket id and optional 'target' = the status that would count as done — also settled on time. Do NOT also call create_task: the point is that the task only exists if the condition holds. A Discord ping fires at the moment either way. Acts immediately.",
+    input_schema: { type: "object", properties: { at: { type: "string" }, kind: { type: "string", enum: ["email_from","invoice_paid","ticket_status"] }, who: { type: "string", description: "email_from: the person" }, ref: { type: "string", description: "invoice_paid: invoice number or client · ticket_status: ticket id" }, target: { type: "string", description: "ticket_status: the status that counts as resolved" }, then_task: { type: "string" }, then_notes: { type: "string" }, since: { type: "string", description: "email_from: only count mail after this (defaults to now)" } }, required: ["at", "then_task"] } },
   { name: "list_watches",
     description: "List Q's pending conditionals — what is going to be checked, when, and what happens if the condition holds. Use for 'what are you watching for me', or before setting a duplicate.",
     input_schema: { type: "object", properties: {}, required: [] } },
@@ -304,6 +330,9 @@ const TOOLS = [
 
   // ---- Flow: waiting-on / blocked-by, the dimensions Google Tasks can't hold — shared schemas ----
   ...FLOW_TOOLS,
+
+  // ---- Places: errands grouped by where, and "only when I'm there" — shared schemas ----
+  ...PLACE_TOOLS,
 
   // ---- Watches: conditionals ("…if he hasn't emailed by then") — shared schemas ----
   ...WATCH_TOOLS,
@@ -713,7 +742,9 @@ async function handleReminders(request, env) {
 
    Entry: { taskId, title, waiting, waitingSince, chase, chaseId, after, afterId, updated } */
 const FLOW_MAX = 300, FLOW_TTL_MS = 60 * 86400000;
-function flowEmpty(e) { return !e || (!e.waiting && !e.after); }
+// "Empty" = carries no state worth keeping. MUST list every field, or pruneFlow silently drops
+// entries that only hold a place tag or a push count. KEEP IN SYNC with flowEntryEmpty in index.html.
+function flowEmpty(e) { return !e || (!e.waiting && !e.after && !e.place && !Number(e.pushes)); }
 async function getFlow(env) {
   try {
     const v = await env.NOTES.get("flow");
@@ -802,12 +833,16 @@ async function handleWatch(request, env) {
     }
     const at = Number(b.at);
     if (!at || !isFinite(at) || at < Date.now() - 60000) return json({ error: { message: "bad or past 'at' — pass epoch-ms in the future" } }, 400);
-    if (!b.who || !b.thenTitle) return json({ error: { message: "need who and thenTitle" } }, 400);
+    const kind = ["email_from", "invoice_paid", "ticket_status"].includes(b.kind) ? b.kind : "email_from";
+    if (!b.thenTitle) return json({ error: { message: "need thenTitle" } }, 400);
+    if (kind === "email_from" && !b.who) return json({ error: { message: "email_from needs who" } }, 400);
+    if (kind !== "email_from" && !b.ref) return json({ error: { message: kind + " needs ref" } }, 400);
     const arr = pruneWatches(await getWatches(env));
     const id = "w_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
     arr.push({
-      id, at, kind: "email_from",
-      who: String(b.who).slice(0, 120), email: String(b.email || "").slice(0, 160),
+      id, at, kind, check: String(b.check || "").slice(0, 200),
+      who: String(b.who || "").slice(0, 120), email: String(b.email || "").slice(0, 160),
+      ref: String(b.ref || "").slice(0, 120), target: String(b.target || "").slice(0, 60),
       since: Number(b.since) || Date.now(),
       thenTitle: String(b.thenTitle).slice(0, 200), thenNotes: String(b.thenNotes || "").slice(0, 2000),
       reminderId: b.reminderId || null, created: Date.now(), resolved: null, result: "",
@@ -822,6 +857,77 @@ async function handleWatch(request, env) {
     return json({ ok: true, removed: before - arr.length });
   }
   return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
+/* Conditions the WORKER can settle by itself, unlike Gmail: FreshBooks and Tracker42 keys both live
+   here. That makes these strictly better than the email oracle — they resolve on time whether or
+   not the dashboard is open. Returns true (met) / false (not met) / null (couldn't tell).
+
+   null matters. These are external APIs whose response shape we don't control, so when the answer
+   isn't legible we must NOT guess — a wrong "met" silently drops a task Q needed. null leaves the
+   watch pending and lets the stale nudge ask him instead. */
+async function evalServerCondition(env, w) {
+  try {
+    if (w.kind === "invoice_paid") {
+      const ref = String(w.ref || "").toLowerCase().trim();
+      if (!ref) return null;
+      const d = await agentFinance(env, "/invoices?status=paid&limit=100");
+      if (!d || d.error || d.offline || d.not_ready) return null;
+      const rows = d.invoices || d.data || d.records || (Array.isArray(d) ? d : null);
+      if (!Array.isArray(rows)) return null;                 // unfamiliar shape → don't pretend
+      return rows.some(r => JSON.stringify(r || {}).toLowerCase().includes(ref));
+    }
+    if (w.kind === "ticket_status") {
+      if (w.ref == null || w.ref === "") return null;
+      const d = await agentTracker(env, "ticket", { id: w.ref });
+      if (!d || d.error || d.offline) return null;
+      const t = d.data || d;
+      const status = String(t.status || t.state || t.ticket_status || "").toLowerCase();
+      if (!status) return null;
+      const target = String(w.target || "").toLowerCase().trim();
+      return target ? status === target || status.includes(target) : status !== "current";
+    }
+  } catch { return null; }
+  return null;
+}
+/* Cron half of the watch system. Three jobs, all idempotent:
+   - settle server-evaluable conditions and say what happened
+   - hand a held condition to the browser to turn into a task (only IT has Google)
+   - nudge once about anything the browser hasn't been able to settle (tab's been shut) */
+const WATCH_STALE_MS = 3 * 3600000;
+async function settleServerWatches(env) {
+  if (!env.NOTES) return;
+  let arr; try { arr = await getWatches(env); } catch { return; }
+  if (!arr.length) return;
+  const now = Date.now();
+  let changed = false;
+  for (const w of arr) {
+    if (!w || w.resolved || Number(w.at) > now) continue;
+
+    if (w.kind && w.kind !== "email_from") {
+      if (w.commit) continue;                                   // already handed to the browser
+      const met = await evalServerCondition(env, w);
+      if (met === null) {                                       // couldn't tell — try again, then ask
+        if (now - Number(w.at) > WATCH_STALE_MS && !w.nudged) {
+          w.nudged = now; changed = true;
+          await sendDiscordDM(env, `❓ I couldn't check "${w.check || w.kind}" automatically. If it didn't happen: ${w.thenTitle}`);
+        }
+        continue;
+      }
+      changed = true;
+      if (met) { w.resolved = now; w.result = "condition met"; await sendDiscordDM(env, `✅ ${w.check || w.kind} — settled itself, nothing to do.`); }
+      else { w.commit = true; w.result = "condition held"; await sendDiscordDM(env, `⏳ ${w.check || w.kind} didn't happen — adding "${w.thenTitle}" to your list.`); }
+      continue;
+    }
+
+    // email_from: only the browser can answer. If it hasn't in hours, the tab's been shut — say so
+    // once rather than let the task quietly never appear.
+    if (now - Number(w.at) > WATCH_STALE_MS && !w.nudged) {
+      w.nudged = now; changed = true;
+      await sendDiscordDM(env, `❓ Still haven't been able to check whether ${w.who} emailed — open miDash and I'll settle it. If they didn't: ${w.thenTitle}`);
+    }
+  }
+  if (changed) { try { await putWatches(env, pruneWatches(arr)); } catch { /* KV cap: retry next tick */ } }
 }
 
 async function handleFlow(request, env) {
@@ -888,8 +994,12 @@ court, set_waiting it so it stops nagging him; when the waiting is on a PERSON, 
 (and if an email went unanswered, the chase should be to CALL them, not email again). When he describes work in
 sequence, block_task the second one behind the first. "What am I waiting on / what's stuck" → list_waiting.
 CONDITIONALS ("call Bob by 10a if he hasn't emailed by then") are set_watch, not a task — the call may never
-need making. It pings him at the decision point and creates the task ONLY if they stayed silent; the check
-itself runs when his dashboard is next open, since Gmail isn't reachable from here. Never pair it with a task.
+need making. It pings him at the decision point and creates the task ONLY if the condition held. Never pair it
+with a task. kind 'email_from' is settled from Gmail when his dashboard is next open; 'invoice_paid' and
+'ticket_status' are settled HERE, on time, because the Worker holds those keys — prefer them when they fit.
+PLACES: set_place tags where a task happens so errands get grouped into one run; when_there:true parks a
+dateless task until he's in that place ("meet Evan next time I'm in Michigan") instead of nagging him daily.
+list_places shows both.
 Q's day starts at 10am — never schedule a chase or a morning nudge earlier than that. He writes times as
 "10a" / "3p" / "9:30a", meaning 10am, 3pm, 9:30am.
 For anything OTHERS would see (a ticket status change, a ticket comment), briefly confirm with Q before doing it
@@ -900,6 +1010,7 @@ const AGENT_TOOLS = [
   ...PROJECT_TOOLS,   // shared with TOOLS — single source of truth (see PROJECT_TOOLS above)
   ...REMINDER_TOOLS,  // shared with TOOLS — Discord DM reminders (see REMINDER_TOOLS above)
   ...FLOW_TOOLS,      // shared with TOOLS — waiting-on / blocked-by (KV-backed, so Discord can see it)
+  ...PLACE_TOOLS,     // shared with TOOLS — errands / when-there (KV-backed, works over Discord)
   ...WATCH_TOOLS,     // shared with TOOLS — conditionals; the BROWSER evaluates them (needs Gmail)
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
@@ -1006,32 +1117,74 @@ async function runAgentTool(name, a, env) {
         await putFlow(env, pruneFlow(f));
         return { blocked: true, task: e.title, after: blockerTitle };
       }
+      // ---- Places. Pure KV, so these work identically from Discord and the browser. ----
+      case "set_place": {
+        if (!a.task || !a.place) return { error: "need task and place" };
+        const f = await getFlow(env);
+        const k = flowUpsert(f, a.task), e = f.items[k];
+        e.place = String(a.place).slice(0, 60);
+        e.trip = !!a.when_there;
+        e.updated = Date.now();
+        await putFlow(env, pruneFlow(f));
+        return { placed: true, task: e.title, place: e.place, whenThere: e.trip,
+          note: e.trip ? "Parked off his day list until he's there." : "Grouped with his other errands." };
+      }
+      case "clear_place": {
+        if (!a.task) return { error: "need task" };
+        const f = await getFlow(env);
+        const hit = flowFind(f.items, a.task);
+        if (!hit || !hit[1].place) return { error: "no place-tagged task matching " + a.task };
+        const [, e] = hit;
+        const was = e.place;
+        e.place = ""; e.trip = false; e.updated = Date.now();
+        await putFlow(env, pruneFlow(f));
+        return { cleared: true, task: e.title, wasAt: was };
+      }
+      case "list_places": {
+        const f = pruneFlow(await getFlow(env));
+        const items = Object.keys(f.items).map(k => f.items[k]).filter(e => e.place);
+        const errands = {};
+        for (const e of items.filter(x => !x.trip)) (errands[e.place] = errands[e.place] || []).push(e.title);
+        return {
+          errands: Object.keys(errands).map(p => ({ place: p, tasks: errands[p] })),
+          stops: Object.keys(errands).length,
+          whenThere: items.filter(x => x.trip).map(e => ({ task: e.title, place: e.place })),
+        };
+      }
       // ---- Watches. The Worker can queue and list them; only the BROWSER can evaluate one
       // (the condition is a Gmail question), so over Discord these are create/read/cancel only. ----
       case "set_watch": {
-        if (!a.at || !a.who || !a.then_task) return { error: "need at, who and then_task" };
+        if (!a.at || !a.then_task) return { error: "need at and then_task" };
+        const kind = ["email_from", "invoice_paid", "ticket_status"].includes(a.kind) ? a.kind : "email_from";
+        if (kind === "email_from" && !a.who) return { error: "email_from needs 'who'" };
+        if (kind !== "email_from" && !a.ref) return { error: kind + " needs 'ref'" };
         const at = resolveAtServer(a.at);
         if (!at) return { error: "couldn't parse 'at' — give epoch-ms, an ISO-8601 time with offset, or a relative phrase like 'in 2 hours'" };
         if (at < Date.now() - 60000) return { error: "that time is in the past" };
+        const check = kind === "email_from" ? "Has " + a.who + " emailed?"
+                    : kind === "invoice_paid" ? "Has invoice " + a.ref + " been paid?"
+                    : "Is ticket " + a.ref + (a.target ? " at " + a.target : " done") + "?";
         const arr = pruneWatches(await getWatches(env));
         const id = "w_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
         // The ping is a normal reminder, so it lands on Discord on time even if the dashboard
         // never opens — with the condition spelled out so Q can settle it himself.
         const rem = pruneReminders(await getReminders(env));
         const rid = "r_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
-        rem.push({ id: rid, at, text: "Has " + a.who + " emailed? If not: " + a.then_task, kind: "watch", created: Date.now(), fired: null, attempts: 0 });
+        rem.push({ id: rid, at, text: check + " If not: " + a.then_task, kind: "watch", created: Date.now(), fired: null, attempts: 0 });
         await putReminders(env, rem);
-        arr.push({ id, at, kind: "email_from", who: String(a.who).slice(0, 120), email: "",
+        arr.push({ id, at, kind, check, who: String(a.who || "").slice(0, 120), email: "",
+          ref: String(a.ref || "").slice(0, 120), target: String(a.target || "").slice(0, 60),
           since: resolveAtServer(a.since) || Date.now(),
           thenTitle: String(a.then_task).slice(0, 200), thenNotes: String(a.then_notes || "").slice(0, 2000),
           reminderId: rid, created: Date.now(), resolved: null, result: "" });
         await putWatches(env, arr);
-        return { watching: true, id, at: new Date(at).toISOString(), who: a.who, ifSilent: a.then_task,
-          note: "The task is NOT created yet — it appears only if they stay silent." };
+        return { watching: true, id, at: new Date(at).toISOString(), kind, check, ifNot: a.then_task,
+          settledBy: kind === "email_from" ? "the dashboard (needs Gmail, so next time it's open)" : "the Worker, on time",
+          note: "The task is NOT created yet — it appears only if the condition holds." };
       }
       case "list_watches": {
         const arr = (await getWatches(env)).filter(w => !w.resolved).sort((x, y) => x.at - y.at);
-        return { watches: arr.map(w => ({ id: w.id, at: new Date(w.at).toISOString(), who: w.who, ifSilent: w.thenTitle })) };
+        return { watches: arr.map(w => ({ id: w.id, at: new Date(w.at).toISOString(), kind: w.kind || "email_from", check: w.check || ("Has " + w.who + " emailed?"), ifNot: w.thenTitle, awaitingDashboard: !!w.commit })) };
       }
       case "cancel_watch": {
         if (!a.id) return { error: "need id" };
@@ -1181,5 +1334,6 @@ export default {
   // Cron Trigger (wrangler.jsonc → triggers.crons, every minute): deliver due reminders.
   async scheduled(event, env, ctx) {
     ctx.waitUntil(fireDueReminders(env));
+    ctx.waitUntil(settleServerWatches(env));
   },
 };

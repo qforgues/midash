@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.47.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.48.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -182,7 +182,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 169 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 182 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -391,6 +391,44 @@ returning the newest match with subject/time. Exposed as the **`check_email_from
 "did Bob get back to me?" is answered from data. Browser-only by necessity — the Worker's copy of
 the tool refuses honestly rather than guessing.
 
+## Places — errands, and "only when I'm there" (v1.48.0)
+
+The last of the five primitives from the 2026-08-11 design. Some of Q's tasks are organised by
+WHERE, not when: the jacket and the tapes are one local run, the pre-rolls are a USPS stop. And
+some have no date at all and only become real when he's somewhere — "meet Evan next time I'm in
+Michigan". **A dateless place-bound task on a day list either nags daily or is forgotten**;
+`trip:true` is the third option.
+
+- Flow entry gains `place` (free text) and `trip` (bool). `taskBuckets` returns two more buckets:
+  **errands** (still today's work, still counted by the rollover — they have dates) and **there**
+  (off the day list entirely, and `rolloverSplit` skips them so they never read as "didn't happen").
+- Errands render **grouped by stop**, biggest cluster first, headed "N errands · N stops" — the
+  stop count is what decides whether it's worth leaving the house. **"plan the run ›"** hands the
+  whole cluster to the agent as one problem (order, timing, what's open).
+- `nextTripFor()` matches a trip place against `agendaEvents` titles/locations, so Michigan shows
+  **"you're there Thu, Aug 20"** the week it matters. Crude string matching, deliberately — the
+  alternative is Evan sitting in a list Q never opens.
+- Tools: `set_place` / `clear_place` / `list_places`, KV-backed so they work over Discord too.
+- ⚠️ `flowEmpty`/`flowEntryEmpty` MUST list every field. They drive pruning, so a field missing
+  there means entries holding only that field get silently deleted after the TTL. `place` and
+  `pushes` were both added to them in this version.
+
+## Conditions beyond email (v1.48.0)
+
+`set_watch` gained a `kind`. `email_from` still needs the browser (Gmail creds live there), but
+**`invoice_paid` (FreshBooks) and `ticket_status` (Tracker42) are settled by the Worker cron** —
+those keys are server-side, so those conditions resolve **on time whether or not the dashboard is
+open**, which is strictly better than the email path.
+
+`settleServerWatches()` runs on the same 1-min cron. `evalServerCondition()` returns true / false /
+**null**, and null is the important one: these are external APIs whose response shape we don't
+control, so when the answer isn't legible we must NOT guess — a wrong "met" silently drops a task Q
+needed. Null leaves the watch pending and the stale nudge asks him instead.
+
+Held conditions set `commit:true`; the browser turns that into the actual Google Task next time it's
+open (only it has Google). And any watch still unsettled **3h** past its moment gets ONE Discord
+nudge — so a shut tab degrades to "ask Q" rather than a task that silently never appears.
+
 ## The rollover ritual (v1.47.0)
 
 Q already did this by hand: late in the evening he'd write a "Tomorrow:" block and copy into it
@@ -514,27 +552,29 @@ cd ~/miDash && wrangler deploy
 
 ## Backlog / next up
 
-- [ ] **PLACES — the one workflow primitive still unbuilt** (designed 2026-08-11, everything else
+- [x] **PLACES (v1.48.0)** — errands grouped by stop, `trip:true` for "next time I'm in Michigan",
+      calendar-triggered surfacing, `plan the run` handoff. Was: (designed 2026-08-11, everything else
       from that design shipped in v1.45–1.47). Q's list has errands that cluster by *where*, not
       *when*: jacket + tapes are one local run; the pre-rolls are a USPS stop; "meet Evan" has no
       date at all and only becomes real **next time he's in Michigan**. Shape: a `place` field on
       the flow entry, a grouped "Errands" section that plans a run as one thing, and a
       place-triggered someday bucket that surfaces when a calendar event (or Q) says he's going
       there. Without it, a dateless place-bound task either nags on the day list or is forgotten.
-- [ ] **Conditions beyond email.** `set_watch` only knows "has this person emailed" — the one
-      oracle that's wired. "If the invoice cleared", "if Dart replies on the ticket" fall back to a
-      plain reminder with the condition in the text. FreshBooks (`finance_*`) and Tracker42 are both
-      already tool-accessible, so adding them as condition types is a small extension of
-      `runDueWatches`, not new architecture.
-- [ ] **Watches need the dashboard open to settle.** The Discord ping always fires on time (Worker
+- [x] **Conditions beyond email (v1.48.0)** — `invoice_paid` + `ticket_status`, settled by the
+      Worker cron on time (those keys are server-side). ⚠️ **Written against an UNVERIFIED response
+      shape** for both FreshBooks invoices and Tracker42 tickets — `evalServerCondition` returns
+      null and asks Q rather than guessing when the payload isn't legible, but the happy path has
+      never been exercised against the real APIs. First real use will confirm or correct the field
+      names (`invoices|data|records` array; `status|state|ticket_status`).
+- [~] **Watches need the dashboard open to settle** — mitigated in v1.48.0, not eliminated: a watch
+      unsettled 3h past its moment now gets one Discord nudge, and the two new condition kinds don't
+      need the browser at all. Still true for `email_from`: The Discord ping always fires on time (Worker
       cron), but the *check* is a Gmail question and Google creds live only in the browser. If the
       tab stays shut past the moment, the watch settles whenever it's next opened. Accepted
       trade-off — the alternative is a backend Google refresh-token flow, which Strategic direction
       explicitly rules out.
-- [ ] **End-to-end verification never run** for the v1.46–1.47 paths: the capture→agent round trip,
-      the Gmail condition check, a watch actually firing, and the rollover modal wired to real
-      tasks. All are unit-tested and rendered headless, but they need Q's passphrase + Google
-      session to exercise for real. Verify these before building on top of them.
+- [x] **End-to-end verification** of the v1.46–1.47 paths — Q confirmed working 2026-08-11.
+      Still unexercised: the two new server-side condition kinds (see above) and places.
 - [ ] **Bank Sync (BLOCKED on Dart):** the Dart Bank SFTP importer (42payments `/bank`) is built
       but blocked on **Adam Baker adding the Pi's egress IP `66.9.164.11` to Dart's allowlist**
       (the questionnaire listed the wrong IP). Waiting to hear back (as of 2026-07-02). Once
@@ -699,6 +739,14 @@ cd ~/miDash && wrangler deploy
   into `transparent`, so their lightness came from whatever was behind them while sibling rows used
   solid `--bg`; they now mix into `--bg`/`--surface` explicitly. Verified in headless Chrome, both
   themes, 520/680/900px. 11 new assertions (169 total).
+- v1.48.0: **Places + conditions beyond email.** The last of the five workflow primitives:
+  `place`/`trip` on the flow entry, errands grouped by stop with a "plan the run" agent handoff, and
+  "when I'm next there" tasks that leave the day list and resurface off the calendar. Plus
+  `invoice_paid`/`ticket_status` watch kinds settled by the Worker cron (server-side keys, so no
+  browser needed), and a one-shot Discord nudge for any watch still unsettled 3h past its moment.
+  Fixed a latent pruning bug found while adding `place`: `flowEmpty` didn't list `place` or
+  `pushes`, so entries holding only those would have been silently deleted after 60 days.
+  13 new assertions (182 total); one of them was vacuous until a mutation check caught it.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

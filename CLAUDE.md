@@ -125,6 +125,19 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   Everything else keeps the free instant regex path. **Any agent failure falls back to the regex
   path** — a capture must never be lost. `CONFIG.captureModel` (Sonnet) is used only for that lane.
   Don't "fix" nuance by adding more regex — that ladder has no top; widen the routing instead.
+- **Places (v1.48.0):** flow entry gains `place` + `trip`. **Errands** stay part of today (grouped by
+  stop, "plan the run" hands the cluster to the agent); **`trip:true`** = no date, off the day list
+  entirely, resurfaced when `nextTripFor()` finds the place in `agendaEvents`. `rolloverSplit` skips
+  trip tasks — being in Michigan isn't something Q failed at today.
+- ⚠️ **`flowEmpty` / `flowEntryEmpty` MUST list every flow field.** They drive pruning, so a field
+  missing there means entries holding only that field are silently deleted after the TTL. `place`
+  and `pushes` were both missing until v1.48.0. Add new fields to BOTH copies.
+- **Watch kinds (v1.48.0):** `email_from` needs the browser (Gmail); **`invoice_paid` and
+  `ticket_status` are settled by the Worker cron** — those keys are server-side, so they resolve on
+  time with no dashboard. `evalServerCondition` returns true/false/**null**; null means "couldn't
+  read the answer" and must NEVER be treated as met — a wrong "met" silently drops a task. Held
+  conditions set `commit:true` for the browser to turn into a Google Task. Anything unsettled 3h
+  past its moment gets one Discord nudge.
 - **Rollover ritual (v1.47.0):** ⚙️ → "Close out the day". Every leftover gets a date AND optionally
   a time (a real reminder — "tomorrow" with no hour is how it lands here again tomorrow). Pushes are
   counted on the flow entry; `rolloverSplit()` deliberately EXCLUDES waiting/blocked/undated tasks.

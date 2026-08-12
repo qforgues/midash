@@ -665,6 +665,14 @@
   .flowrow:hover .flow-unpark, .flow-unpark:focus { opacity:1; }
   .flow-unpark:hover { color:var(--accent); }
   @media (hover:none){ .flow-unpark { opacity:.6; } }
+  /* Places (v1.48.0): errands grouped by stop, and "when I'm next there" */
+  .place-grp { margin:6px 0 9px; padding-left:9px; border-left:2px solid var(--border); }
+  .place-grp.soon { border-left-color:var(--accent); }
+  .place-name { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; margin-bottom:2px; }
+  .place-soon { color:var(--accent); font-weight:600; }
+  .place-stops { font-size:11.5px; color:var(--muted); font-weight:400; text-transform:none; letter-spacing:0; }
+  .place-plan { margin-left:auto; font-size:11.5px; color:var(--muted); cursor:pointer; text-transform:none; letter-spacing:0; }
+  .place-plan:hover { color:var(--accent); text-decoration:underline; }
   .rem-when { color:var(--accent); white-space:nowrap; font-variant-numeric:tabular-nums; flex:none; }
   .rem-text { color:var(--text); overflow-wrap:anywhere; flex:1; }
   .rem-x { color:var(--muted); cursor:pointer; flex:none; padding:0 3px; opacity:.7; }
@@ -982,6 +990,11 @@
       <label class="col" style="flex:1"><span>Chase me</span><input id="task-chase" type="text" placeholder="e.g. tomorrow 10am" autocomplete="off"></label>
     </div>
     <label class="col"><span>Can’t start until</span><select id="task-after"></select></label>
+    <div class="tkn-row">
+      <label class="col" style="flex:1.4"><span>Place — groups it with your other errands</span><input id="task-place" type="text" placeholder="e.g. errands, USPS, Michigan" autocomplete="off"></label>
+      <label class="col" style="flex:1"><span>Only when I’m there</span>
+        <select id="task-trip"><option value="">No — a normal errand</option><option value="1">Yes — park it until I’m there</option></select></label>
+    </div>
     <div id="task-msg" class="key-result"></div>
     <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
       <button id="task-complete" class="gbtn" style="border-color:var(--accent);color:var(--accent)">✓ Complete</button>
@@ -1189,7 +1202,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.47.0",
+  version: "1.48.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3162,6 +3175,37 @@ function flowRowHTML(t, e, mode){
       <span class="s">${esc(t.title)}</span><span class="flow-meta">${meta}</span>
       <span class="flow-unpark" data-task="${escAttr(t.taskId||"")}" data-mode="${mode}" title="${escAttr(act)}">${ic("unlock")}</span></div>`;
 }
+/* Errands, grouped by place. The header counts STOPS, not tasks — "5 errands · 2 stops" is the
+   number that decides whether it's worth leaving the house. */
+function errandsHTML(errands, multi){
+  if(!errands.length) return "";
+  const groups=errandGroups(errands);
+  const body=groups.map(g=>
+    `<div class="place-grp"><div class="place-name">${ic("note")} ${esc(g.place)} <span class="fin-state">${g.rows.length}</span></div>`
+    + g.rows.map(r=>taskRowHTML(r.t, multi)).join("") + `</div>`).join("");
+  return `<div class="flow-sec"><div class="rem-head">${ic("users")} Errands <span class="fin-state">${errands.length}</span>`
+    + `<span class="place-stops">${groups.length} stop${groups.length>1?"s":""}</span>`
+    + `<span class="place-plan" id="place-plan" title="Ask the agent to plan the run">plan the run ›</span></div>${body}</div>`;
+}
+/* "When I'm next in X" — no dates, off the day list. If the calendar says he's going there, say so:
+   that's the moment the task is worth seeing. */
+function thereHTML(there){
+  if(!there.length) return "";
+  const by={};
+  for(const r of there){ const p=r.e.place||"there"; (by[p]=by[p]||[]).push(r); }
+  const body=Object.keys(by).map(p=>{
+    const when=nextTripFor(p);
+    const head=`<div class="place-name">${ic("calendar")} ${esc(p)}`
+      + (when?` <span class="place-soon">you're there ${esc(fmtReminderWhen(when))}</span>`:"")
+      + ` <span class="fin-state">${by[p].length}</span></div>`;
+    const rows=by[p].map(({t,e})=>
+      `<div class="item flowrow" data-task="${escAttr(t.taskId||"")}" data-mode="there" title="Tap to edit">
+        <span class="s">${esc(t.title)}</span>
+        <span class="flow-unpark" data-task="${escAttr(t.taskId||"")}" data-mode="there" title="Put it back on my list">${ic("unlock")}</span></div>`).join("");
+    return `<div class="place-grp${when?" soon":""}">${head}${rows}</div>`;
+  }).join("");
+  return `<div class="flow-sec"><div class="rem-head">${ic("calendar")} When I'm next there <span class="fin-state">${there.length}</span></div>${body}</div>`;
+}
 function flowSectionHTML(label, iconName, rows, mode){
   if(!rows.length) return "";
   return `<div class="flow-sec"><div class="rem-head">${ic(iconName)} ${esc(label)} <span class="fin-state">${rows.length}</span></div>`
@@ -3173,7 +3217,7 @@ function renderTasksList(){
     ? `<div class="needsauth" style="margin-top:12px;line-height:1.4">${taskFailed.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>` : "";
   if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
   const multi=accounts.length>1;
-  const {active, waiting, blocked}=taskBuckets(taskItems);
+  const {active, errands, waiting, blocked, there}=taskBuckets(taskItems);
   const total=active.length;
   const showAll = tasksExpanded || total<=TASKS_SHOW;
   const shown = showAll ? active : active.slice(0, TASKS_SHOW);
@@ -3182,12 +3226,16 @@ function renderTasksList(){
     ? `<div class="tasks-list">${shown.map(t=>taskRowHTML(t,multi)).join("")}</div>${toggle}`
     : `<div class="empty">Nothing to act on right now — everything below is parked 🎉</div>`;
   box.innerHTML = activeHTML
+    + errandsHTML(errands, multi)
     + flowSectionHTML("Next up", "lock", blocked, "blocked")
     + flowSectionHTML("Waiting on", "clock", waiting, "waiting")
+    + thereHTML(there)
     + failNote;
   box.querySelectorAll(".taskrow").forEach(wireTaskRow);
   box.querySelectorAll(".flowrow").forEach(row=>{ row.style.cursor="pointer"; row.onclick=()=>openTaskModal(row.dataset.task); });
   box.querySelectorAll(".flow-unpark").forEach(el=>{ el.onclick=(ev)=>{ ev.stopPropagation(); unparkTask(el.dataset.task, el.dataset.mode); }; });
+  const plan=document.getElementById("place-plan");
+  if(plan) plan.onclick=()=>planTheRun(errandGroups(errands));
   const tg=document.getElementById("tasks-toggle"); if(tg) tg.onclick=()=>{ tasksExpanded=!tasksExpanded; renderTasksList(); };
   if(taskFailed.length) wireReconnect("reconnect-tasks");
   renderRolloverNudge();   // "N still open today — close out the day?" once the evening's here
@@ -3199,7 +3247,9 @@ async function unparkTask(taskId, mode){
   if(mode==="waiting"){
     if(e.chaseId) cancelReminderId(e.chaseId);
     e.waiting=""; e.waitingSince=null; e.chase=null; e.chaseId=null;
-  } else { e.after=""; e.afterId=null; }
+  }
+  else if(mode==="there"){ e.trip=false; }   // he's going now — bring it back as a normal errand
+  else { e.after=""; e.afterId=null; }
   await saveFlowEntry(taskId);
   renderTasksList();
 }
@@ -3225,6 +3275,8 @@ function openTaskModal(taskId){
   const e=flowFor(t)||{};
   document.getElementById("task-waiting").value=e.waiting||"";
   document.getElementById("task-chase").value="";
+  document.getElementById("task-place").value=e.place||"";
+  document.getElementById("task-trip").value=e.trip?"1":"";
   const sel=document.getElementById("task-after");
   const opts=[`<option value="">— nothing, it’s ready to go —</option>`].concat(
     taskItems.filter(x=>x.taskId!==t.taskId).map(x=>`<option value="${escAttr(x.taskId)}">${esc(x.title)}</option>`));
@@ -3250,6 +3302,12 @@ async function saveTaskFlow(t, title){
   const notes=[];
   if(wait){ if(!wasWaiting) e.waitingSince=Date.now(); e.waiting=wait.slice(0,200); notes.push("parked as waiting"); }
   else if(wasWaiting){ e.waiting=""; e.waitingSince=null; if(e.chaseId){ cancelReminderId(e.chaseId); e.chaseId=null; e.chase=null; } notes.push("back on your list"); }
+  const place=document.getElementById("task-place").value.trim();
+  const trip=document.getElementById("task-trip").value==="1";
+  if(place!==(e.place||"") || trip!==!!e.trip){
+    e.place=place.slice(0,60); e.trip=place?trip:false;
+    notes.push(place ? (trip?`parked until you're in ${place}`:`filed under ${place}`) : "place cleared");
+  }
   if(afterVal.indexOf("txt:")===0){ e.after=afterVal.slice(4); e.afterId=null; }
   else if(afterVal){ const b=taskItems.find(x=>x.taskId===afterVal); if(b){ e.after=b.title; e.afterId=b.taskId; notes.push("queued behind “"+b.title+"”"); } }
   else if(e.after){ e.after=""; e.afterId=null; notes.push("unblocked"); }
@@ -4599,29 +4657,40 @@ async function executeTool(name,a){
         return await checkEmailFrom(a.who, since || (Date.now()-86400000));
       }
       case "set_watch": {
-        if(!a.at || !a.who || !a.then_task) return {error:"need at, who and then_task"};
+        if(!a.at || !a.then_task) return {error:"need at and then_task"};
         if(!WATCH_URL) return {error:"no backend configured"};
+        const kind=["email_from","invoice_paid","ticket_status"].includes(a.kind)?a.kind:"email_from";
+        if(kind==="email_from" && !a.who) return {error:"email_from needs 'who'"};
+        if(kind!=="email_from" && !a.ref) return {error:kind+" needs 'ref'"};
         const at=resolveAt(a.at);
         if(!at) return {error:"couldn't understand 'at' — try 'tomorrow 10am', an ISO datetime, or 'in 2 hours'"};
         if(at<Date.now()-60000) return {error:"that time is in the past"};
-        if(!contactsList.length) { try{ await loadContacts(); }catch(e){} }
-        const person=resolvePersonEmail(a.who);
+        let person=null;
+        if(kind==="email_from"){ if(!contactsList.length){ try{ await loadContacts(); }catch(e){} } person=resolvePersonEmail(a.who); }
+        const check = kind==="email_from" ? "Has "+(person?person.name:a.who)+" emailed?"
+                    : kind==="invoice_paid" ? "Has invoice "+a.ref+" been paid?"
+                    : "Is ticket "+a.ref+(a.target?" at "+a.target:" done")+"?";
         const since = a.since!=null && String(a.since).trim() ? (resolveAt(a.since)||Date.now()) : Date.now();
         // The ping is a normal reminder so Discord fires on time even if the dashboard is shut.
-        const ping=await scheduleReminder(at, "Has "+(person?person.name:a.who)+" emailed? If not: "+a.then_task, "watch");
-        const r=await scheduleWatch({at, who:(person?person.name:String(a.who)), email:(person?person.email:""),
+        const ping=await scheduleReminder(at, check+" If not: "+a.then_task, "watch");
+        const r=await scheduleWatch({at, kind, check,
+          who:(person?person.name:String(a.who||"")), email:(person?person.email:""),
+          ref:String(a.ref||""), target:String(a.target||""),
           since, thenTitle:String(a.then_task), thenNotes:String(a.then_notes||""), reminderId:ping.ok?ping.id:null});
         if(!r.ok) return {error:"couldn't save the conditional — "+(r.error||"try again")};
         loadWatches(); loadReminders();
-        return {watching:true, id:r.id, at:new Date(at).toLocaleString(), who:(person?person.name:a.who),
-          resolvedEmail:person?person.email:null, ifSilent:a.then_task,
-          note: person ? "The task is NOT created yet — only if they stay silent."
-                       : "Heads up: no contact matched that name, so the check can't identify them and the task will be created to be safe."};
+        const out={watching:true, id:r.id, at:new Date(at).toLocaleString(), kind, check, ifNot:a.then_task,
+          settledBy: kind==="email_from" ? "this dashboard (needs Gmail)" : "the Worker, on time — no browser needed"};
+        out.note = kind!=="email_from" ? "The task is NOT created yet — only if the condition holds."
+          : person ? "The task is NOT created yet — only if they stay silent."
+                   : "Heads up: no contact matched that name, so the check can't identify them and the task will be created to be safe.";
+        if(person) out.resolvedEmail=person.email;
+        return out;
       }
       case "list_watches": {
         if(!WATCH_URL) return {error:"no backend configured"};
         await loadWatches();
-        return {watches: watchCache.filter(w=>!w.resolved).map(w=>({id:w.id, at:new Date(w.at).toLocaleString(), who:w.who, ifSilent:w.thenTitle}))};
+        return {watches: watchCache.filter(w=>!w.resolved).map(w=>({id:w.id, at:new Date(w.at).toLocaleString(), kind:w.kind||"email_from", check:w.check||("Has "+w.who+" emailed?"), ifNot:w.thenTitle}))};
       }
       case "cancel_watch": {
         if(!a.id) return {error:"need id (from list_watches)"};
@@ -4630,6 +4699,36 @@ async function executeTool(name,a){
       }
       // ---- Flow: waiting-on / blocked-by. Tasks are addressed by TITLE (the Discord agent has no
       // task ids, so both surfaces share that convention); we resolve against the loaded list. ----
+      case "set_place": case "clear_place": case "list_places": {
+        if(!FLOW_URL) return {error:"no backend configured"};
+        if(!taskItems.length) await loadTasks(); else await loadFlow();
+        if(name==="list_places"){
+          const {errands, there}=taskBuckets(taskItems);
+          const groups=errandGroups(errands);
+          return {
+            errands: groups.map(g=>({place:g.place, tasks:g.rows.map(r=>r.t.title)})),
+            stops: groups.length,
+            whenThere: there.map(({t,e})=>{ const w=nextTripFor(e.place); return {task:t.title, place:e.place, youreThere:w?w.toLocaleDateString():null}; }),
+          };
+        }
+        const s=flowNorm(a.task);
+        const t=taskItems.find(x=>flowNorm(x.title)===s) || taskItems.find(x=>flowNorm(x.title).indexOf(s)>=0);
+        if(!t) return {error:"no open task matching \""+(a.task||"")+"\" — call list_tasks to see the exact titles"};
+        const e=flowEntry(t);
+        if(name==="clear_place"){
+          if(!e.place) return {error:"\""+t.title+"\" isn't tagged with a place"};
+          const was=e.place; e.place=""; e.trip=false;
+          await saveFlowEntry(t.taskId); renderTasksList();
+          return {cleared:true, task:t.title, wasAt:was};
+        }
+        if(!a.place) return {error:"need a place"};
+        e.place=String(a.place).slice(0,60); e.trip=!!a.when_there;
+        await saveFlowEntry(t.taskId); renderTasksList();
+        const when=e.trip?nextTripFor(e.place):null;
+        return {placed:true, task:t.title, place:e.place, whenThere:e.trip,
+          youreThere: when?when.toLocaleDateString():null,
+          note: e.trip ? "Off his day list until he's there." : "Grouped with his other errands."};
+      }
       case "set_waiting": case "clear_waiting": case "block_task": case "list_waiting": {
         if(!FLOW_URL) return {error:"no backend configured"};
         if(!taskItems.length) await loadTasks(); else await loadFlow();
@@ -4908,7 +5007,9 @@ async function reconcileFlow(items){
   }catch(e){}
   return true;
 }
-function flowEntryEmpty(e){ return !e || (!e.waiting && !e.after); }
+// KEEP IN SYNC with flowEmpty in worker.js — it drives pruning, so a field missing here means
+// entries holding only that field get silently deleted after the TTL.
+function flowEntryEmpty(e){ return !e || (!e.waiting && !e.after && !e.place && !Number(e.pushes)); }
 /* Is the task this one is blocked behind still open? If it's gone from the list, it got completed
    and this task is free. Only trust "gone" when EVERY account loaded — a Tasks API failure would
    otherwise silently unblock everything. */
@@ -4925,14 +5026,38 @@ function blockerOpen(e, items){
 /* Split the open tasks into the three states. Blocked tasks whose blocker is done fall back into
    the active list on their own — that's the whole point of wiring the dependency up. */
 function taskBuckets(items){
-  const active=[], waiting=[], blocked=[];
+  const active=[], waiting=[], blocked=[], errands=[], there=[];
   for(const t of items){
     const e=flowFor(t);
     if(e && e.waiting) waiting.push({t,e});
     else if(e && e.after && blockerOpen(e, items)) blocked.push({t,e});
+    // "Only when I'm there" leaves the day list completely — that's the whole point of tagging it.
+    // An undated place-bound task on the day list either nags forever or gets forgotten.
+    else if(e && e.place && e.trip) there.push({t,e});
+    // Errands still belong to today (they have dates and count for the rollover), but they're
+    // rendered grouped by place so one trip can cover several instead of one at a time.
+    else if(e && e.place) errands.push({t,e});
     else active.push(t);
   }
-  return {active, waiting, blocked};
+  return {active, errands, waiting, blocked, there};
+}
+/* Group errands by place, biggest cluster first — that's the trip worth making. */
+function errandGroups(errands){
+  const by={};
+  for(const r of errands){ const p=r.e.place||"errands"; (by[p]=by[p]||[]).push(r); }
+  return Object.keys(by).sort((a,b)=>by[b].length-by[a].length).map(p=>({place:p, rows:by[p]}));
+}
+/* Is a "when I'm there" place coming up on the calendar? Matching the place name against event
+   titles and locations is crude, but it's the difference between Evan surfacing the week Q is
+   actually in Michigan and Evan sitting in a list he never opens. */
+function nextTripFor(place){
+  const q=flowNorm(place); if(!q || q.length<3) return null;
+  for(const o of (agendaEvents||[])){
+    const x=o&&o.x; if(!x) continue;
+    const hay=(String(x.summary||"")+" "+String(x.location||"")).toLowerCase();
+    if(hay.indexOf(q)>=0) return o.dt;
+  }
+  return null;
 }
 function daysSince(ms){ return ms?Math.max(0,Math.round((Date.now()-Number(ms))/86400000)):null; }
 function waitedLabel(e){
@@ -4958,6 +5083,16 @@ async function releaseDependents(task){
   return freed;
 }
 
+/* Hand the errand cluster to the agent as one problem: order, timing, what's open when. This is
+   the payoff of tagging places — a run planned once beats five tasks done one at a time. */
+function planTheRun(groups){
+  if(!groups.length) return;
+  const lines=groups.map(g=>`- ${g.place}: ${g.rows.map(r=>r.t.title).join("; ")}`).join("\n");
+  agentAsk(`Plan one errand run that covers these stops. Consider a sensible order, roughly how long `
+    +`it'll take, anything I should bring or check is open first, and whether any of it is better `
+    +`split across two days. My day starts at 10am.\n\n${lines}`);
+}
+
 /* ---- The rollover ritual (v1.47.0) -----------------------------------------------------------
    Q already does this by hand: late in the evening he writes a "Tomorrow:" block and copies what he
    knows he can't finish into it. The list stays honest because he re-decides every item every day.
@@ -4977,6 +5112,7 @@ function rolloverSplit(items, flowItems, today){
   for(const t of (items||[])){
     const e=(flowItems||{})[t.taskId];
     if(e && (e.waiting || e.after)) continue;
+    if(e && e.place && e.trip) continue;         // parked until he's there — it didn't "fail" today
     if(!t.dueDate) continue;                    // undated isn't "didn't happen today", it's someday
     if(t.dueDate < today) overdue.push(t);
     else if(t.dueDate === today) todays.push(t);
@@ -5224,6 +5360,17 @@ async function runDueWatches(){
   _watchRunning=true;
   try{
     for(const w of due){
+      // The Worker settles invoice/ticket conditions itself (it holds those keys) and flags
+      // commit:true when the condition held — all that's left is making the task, which needs
+      // Google, which only exists here. Anything else non-email isn't ours to judge.
+      if(w.kind && w.kind!=="email_from"){
+        if(!w.commit) continue;
+        _markWatchDone(w.id);
+        await watchCommit(w, w.result||"condition held");
+        w.resolved=Date.now();
+        if(w.reminderId) cancelReminderId(w.reminderId);
+        continue;
+      }
       _markWatchDone(w.id);   // claim it BEFORE acting — a crash mid-commit must not double-create
       const res=await checkEmailFrom(w.email||w.who, w.since);
       if(res && res.error) continue;                       // Google hiccup — try again next tick
@@ -5263,9 +5410,12 @@ function renderWatches(){
   const box=document.getElementById("watch-strip"); if(!box) return;
   const list=watchCache.filter(w=>w && !w.resolved).sort((a,b)=>a.at-b.at);
   if(!list.length){ box.innerHTML=""; return; }
-  const rows=list.map(w=>`<div class="rem-row"><span class="rem-when">${ic("clock")} ${esc(fmtReminderWhen(new Date(w.at)))}</span>`
-    +`<span class="rem-text">if ${esc(w.who)} hasn’t emailed → ${esc(w.thenTitle)}</span>`
-    +`<span class="rem-x" data-id="${escAttr(w.id)}" title="Cancel this conditional">✕</span></div>`).join("");
+  const rows=list.map(w=>{
+    const cond = w.check ? String(w.check).replace(/\?$/,"") : `if ${w.who} hasn’t emailed`;
+    return `<div class="rem-row"><span class="rem-when">${ic("clock")} ${esc(fmtReminderWhen(new Date(w.at)))}</span>`
+      +`<span class="rem-text">${esc(cond)} → ${esc(w.thenTitle)}</span>`
+      +`<span class="rem-x" data-id="${escAttr(w.id)}" title="Cancel this conditional">✕</span></div>`;
+  }).join("");
   box.innerHTML=`<div class="rem-head">${ic("alert")} Watching for <span class="fin-state">${list.length}</span></div>${rows}`;
   box.querySelectorAll(".rem-x").forEach(x=>x.onclick=()=>cancelWatchId(x.dataset.id));
 }

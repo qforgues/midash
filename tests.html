@@ -276,17 +276,24 @@ function blockerOpen(e, items){
   });
 }
 function taskBuckets(items){
-  const active=[], waiting=[], blocked=[];
+  const active=[], waiting=[], blocked=[], errands=[], there=[];
   for(const t of items){
     const e=flowFor(t);
     if(e && e.waiting) waiting.push({t,e});
     else if(e && e.after && blockerOpen(e, items)) blocked.push({t,e});
+    else if(e && e.place && e.trip) there.push({t,e});
+    else if(e && e.place) errands.push({t,e});
     else active.push(t);
   }
-  return {active, waiting, blocked};
+  return {active, errands, waiting, blocked, there};
+}
+function errandGroups(errands){
+  const by={};
+  for(const r of errands){ const p=r.e.place||"errands"; (by[p]=by[p]||[]).push(r); }
+  return Object.keys(by).sort((a,b)=>by[b].length-by[a].length).map(p=>({place:p, rows:by[p]}));
 }
 const FLOW_MAX=300, FLOW_TTL_MS=60*86400000;
-function flowEmpty(e){ return !e || (!e.waiting && !e.after); }
+function flowEmpty(e){ return !e || (!e.waiting && !e.after && !e.place && !Number(e.pushes)); }
 function pruneFlow(f, now){
   const cut=(now||Date.now())-FLOW_TTL_MS, out={};
   const keys=Object.keys(f.items||{}).filter(k=>{
@@ -353,6 +360,7 @@ function rolloverSplit(items, flowItems, today){
   for(const t of (items||[])){
     const e=(flowItems||{})[t.taskId];
     if(e && (e.waiting || e.after)) continue;
+    if(e && e.place && e.trip) continue;
     if(!t.dueDate) continue;
     if(t.dueDate < today) overdue.push(t);
     else if(t.dueDate === today) todays.push(t);
@@ -795,6 +803,48 @@ section("Rollover ritual — what the day actually left hanging (v1.47.0)");
   ok(rolloverNag(0)==="" && rolloverNag(2)==="", "1–2 pushes stay silent (life happens)");
   ok(rolloverNag(3).indexOf("Moved 3 days running")===0, "3 pushes starts the callout");
   ok(/10-minute step/.test(rolloverNag(4)), "the callout suggests a way out, not just a scolding");
+}
+
+section("Places — errands group, 'when I'm there' leaves the day list (v1.48.0)");
+{
+  const items=[
+    {taskId:"j", title:"Drop off jacket",   dueDate:"2026-08-12"},
+    {taskId:"t", title:"Drop off tapes",    dueDate:"2026-08-12"},
+    {taskId:"u", title:"Ship the pre-rolls",dueDate:"2026-08-12"},
+    {taskId:"e", title:"Meet up with Evan", dueDate:null},
+    // Dated AND when-there. This is the case that actually exercises the trip exclusion — an
+    // undated one is already filtered by the no-due-date rule, so it proves nothing.
+    {taskId:"m", title:"Check the MI storage unit", dueDate:"2026-08-10"},
+    {taskId:"r", title:"Update tracker42",  dueDate:"2026-08-12"},
+  ];
+  taskFailedCount=0;
+  flowCache={items:{
+    j:{taskId:"j", place:"errands"}, t:{taskId:"t", place:"errands"},
+    u:{taskId:"u", place:"USPS"},    e:{taskId:"e", place:"Michigan", trip:true},
+    m:{taskId:"m", place:"Michigan", trip:true},
+  }};
+  const b=taskBuckets(items);
+  ok(b.errands.length===3, "the three located errands are pulled out of the flat list");
+  ok(b.there.length===2, "'when I'm there' is its own bucket, dated or not");
+  ok(b.active.length===1 && b.active[0].taskId==="r", "unplaced work stays the plain day list");
+
+  const g=errandGroups(b.errands);
+  ok(g.length===2, "two stops");
+  ok(g[0].place==="errands" && g[0].rows.length===2, "biggest cluster first — that's the trip worth making");
+  ok(g[1].place==="USPS", "USPS is its own stop, not merged into the local run");
+
+  // The whole point of when_there: Evan must never appear as something that failed today.
+  const r=rolloverSplit(items, flowCache.items, "2026-08-12");
+  ok(!r.overdue.concat(r.today).some(t=>t.taskId==="e"), "an undated 'when I'm there' task is never a rollover item");
+  ok(!r.overdue.some(t=>t.taskId==="m"), "nor is an OVERDUE one — being in Michigan isn't something he failed at");
+  ok(r.today.some(t=>t.taskId==="j"), "errands DO still count for the rollover — they have dates");
+
+  // Pruning must not eat an entry whose only content is a place or a push count.
+  ok(!flowEmpty({place:"USPS"}), "a place-only entry is not empty");
+  ok(!flowEmpty({pushes:2}), "a push-count-only entry is not empty");
+  ok(flowEmpty({}) && flowEmpty({waiting:"",after:"",place:"",pushes:0}), "a truly blank entry still is");
+  ok(!!pruneFlow({items:{x:{place:"USPS", updated:NOW-90*day}}}, NOW).items.x, "an old place tag survives the TTL");
+  flowCache={items:{}};
 }
 
 /* ================================ SUMMARY ================================ */
