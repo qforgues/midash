@@ -38,7 +38,9 @@ These pure functions exist in more than one place and MUST be edited in lockstep
 - `normalizeProject`, `stamp`, `computePayoff`, `verNewer`, `esc`/`escAttr`, `safeUrl`,
   `repairChat`, `pushUserMessage` — index.html ↔ their copies in `tests.html`
 - `notesHash` — index.html ↔ worker.js (must produce identical hashes)
-- `parseReminder`, `resolveAt` — index.html ↔ their copies in `tests.html`
+- `parseReminder`, `resolveAt`, `defaultReminderAt` — index.html ↔ their copies in `tests.html`
+- `blockerOpen`, `taskBuckets` (index.html) ↔ copies in `tests.html`; `mergeFlow`, `pruneFlow`
+  (worker.js) ↔ copies in `tests.html`
 - Project tool schemas — one `PROJECT_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
 - Reminder tool schemas — one `REMINDER_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
 
@@ -78,6 +80,16 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   fail — never task+note together. `parseReminder` strips leading "remind me to…"/"remember to…" and
   capitalizes the name. Tasks render ALL at once (no pager) and complete in place (`wireTaskRow`
   removes just the row — no reload/scroll-jump).
+- **Flow layer (v1.45.0) — the day list has THREE states,** not one: a task is Q's to do, **waiting
+  on** someone else, or **blocked behind** another task. Google Tasks only models the first, so the
+  other two live in the `/flow` KV blob (keyed by Google task id; `pending:<title>` when written
+  from Discord, re-keyed by the browser). It is **not** stored in the Google task's `notes` field on
+  purpose — the Worker has no Google token and the Discord agent/cron must be able to read it.
+  Tasks card renders active / **Next up** / **Waiting on** (`taskBuckets`); completing a blocker
+  clears its dependents' blocks (`releaseDependents`). **`blockerOpen` deliberately returns true
+  when `taskFailed.length`** — a Tasks API failure must never be read as "the blocker got done".
+  The Worker merges `/flow` PUTs per-entry (LWW), so the browser never merges. `DAY_START_HOUR=10`
+  — Q's day starts at 10am; never schedule a nudge or chase before it.
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).

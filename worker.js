@@ -63,6 +63,25 @@ phrase like "friday 3pm"/"in 20 minutes", or epoch-ms) and 'text' as the nudge w
 thing that's both a to-do AND wants a nudge → do both (create_task + set_reminder). list_reminders
 and cancel_reminder manage pending ones. These act immediately — no confirm.
 
+How Q's day list actually works — three states, not one. A task is either HIS to do, WAITING on
+someone else, or BLOCKED behind another task. Google Tasks only knows the first, so miDash owns the
+other two (set_waiting / clear_waiting / block_task / list_waiting):
+- He's done all he can and it's in someone else's court ("waiting on Plaid to approve production",
+  "sent the email, no reply yet") → set_waiting. It leaves his active list so it stops nagging him,
+  and he stops re-reading a line he can't act on. This is the single most useful thing you can do
+  with his list — when he says he "did everything I could" on something, that's the cue.
+- One thing can't start until another finishes ("pay the credit cards" after "link CCs via Plaid",
+  "update tracker42" after "meet with Rebecca") → block_task. The blocked one hides under "Next up"
+  and surfaces on its own when the blocker is completed. When he describes work in sequence, wire it
+  up rather than leaving him two loose tasks.
+- Waiting on a PERSON needs a chase, or it just rots. Pass chase_at to set_waiting whenever the
+  waiting is on a human — and when an email has gone unanswered, the chase should escalate to a
+  different channel (call them, don't send a second email). Q's day starts at 10am: never schedule a
+  chase or a morning nudge before that.
+- For "what am I waiting on", "what's stuck", "what should I do today", "anything to chase" → call
+  list_waiting. Days-waiting is the signal to push on.
+All four act immediately, no confirmation.
+
 Projects (the bigger picture): Q tracks projects on a board, in two types. SOFTWARE
 (website/app) runs idea → validate → plan → build → test → ship → grow. PROPERTY (physical
 builds & renovations on his two properties) runs idea → scope → design → source → build →
@@ -157,6 +176,24 @@ const REMINDER_TOOLS = [
     description: "Cancel a pending reminder by its id (from list_reminders). Acts immediately.",
     input_schema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } },
 ];
+
+// Flow tool schemas — SINGLE SOURCE shared by TOOLS (chat) and AGENT_TOOLS (Discord), like
+// PROJECT_TOOLS/REMINDER_TOOLS. The "flow" layer is what Google Tasks can't hold: whether a task
+// is parked on SOMEONE ELSE (waiting) or parked behind ANOTHER TASK (blocked). See handleFlow.
+const FLOW_TOOLS = [
+  { name: "set_waiting",
+    description: "Park one of Q's tasks as WAITING ON someone or something else — he's done all he can and the ball is in their court (e.g. 'waiting on Plaid to approve production', 'waiting on Bill to reply to my email'). It leaves his active day list for a 'Waiting on' strip, so it stops nagging him without being forgotten. Match the task by title (case-insensitive, partial ok). 'on' = who/what he's waiting for. Optionally pass 'chase_at' to also schedule a Discord ping to chase it, and 'chase' as that nudge's text — Q's day starts at 10am, so never schedule a chase earlier than that. Acts immediately, no confirmation.",
+    input_schema: { type: "object", properties: { task: { type: "string" }, on: { type: "string" }, chase_at: { type: "string", description: "optional — when to ping Q to chase it ('tomorrow 10am', ISO datetime, 'in 2 days')" }, chase: { type: "string", description: "optional — the chase nudge written TO Q" } }, required: ["task", "on"] } },
+  { name: "clear_waiting",
+    description: "The thing Q was waiting on came through — put the task back on his active list. Match by title (partial ok). Also reports any tasks that were BLOCKED behind it and are now free to start, so you can tell him what just opened up. Acts immediately.",
+    input_schema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] } },
+  { name: "block_task",
+    description: "Record that one task can't start until another one is finished — 'pay the credit cards' AFTER 'link CCs via Plaid', 'update tracker42' AFTER 'meet with Rebecca'. The blocked task moves to a 'Next up' section that shows what it's waiting for, and surfaces on its own the moment the blocker is completed. Match both by title (partial ok). Acts immediately.",
+    input_schema: { type: "object", properties: { task: { type: "string", description: "the task that has to wait" }, after: { type: "string", description: "the task it's waiting for" } }, required: ["task", "after"] } },
+  { name: "list_waiting",
+    description: "List what Q is WAITING ON (parked in someone else's court, each with how many days it's been sitting) and what's BLOCKED behind another task. Use for 'what am I waiting on', \"what's stuck\", 'anything I should chase', or before planning his day. Reads miDash's own storage, so it works over Discord with no Google access.",
+    input_schema: { type: "object", properties: {}, required: [] } },
+];
 const TOOLS = [
   { name: "search_emails",
     description: "Search Gmail across ALL connected accounts. Returns messages with id, account, from, subject, date, snippet. Use Gmail search syntax in 'query' (e.g. 'in:inbox is:unread', 'from:sam newer_than:7d', 'category:promotions').",
@@ -217,6 +254,9 @@ const TOOLS = [
 
   // ---- Reminders (miDash-owned push notifications via Discord DM) — shared schemas ----
   ...REMINDER_TOOLS,
+
+  // ---- Flow: waiting-on / blocked-by, the dimensions Google Tasks can't hold — shared schemas ----
+  ...FLOW_TOOLS,
 
   // ---- Portal42 / Tracker42 (Q's ticketing system, read-only) ----
   { name: "list_tracker_notifications",
@@ -608,6 +648,83 @@ async function handleReminders(request, env) {
   }
   return new Response("method", { status: 405, headers: cors() });
 }
+/* ---- Flow layer: waiting-on / blocked-by ----------------------------------------------------
+   Google Tasks holds title + due + done. It cannot express "this is parked in someone else's
+   court" or "this can't start until that other thing is finished" — the two states that decide
+   what's actually actionable today. miDash owns those.
+
+   One KV blob ("flow") of entries keyed by Google task id. Entries written from Discord are keyed
+   "pending:<lowercased title>" instead, because the Worker has no Google token and can't know the
+   id; the browser re-keys those onto the real task on its next load (see reconcileFlow).
+
+   Why KV and not the Google task's own notes field: the WORKER has to be able to read this (the
+   Discord agent and the cron have no Google access), and a KV blob keeps that possible. Written
+   only on a real state change — a handful of writes a day, nowhere near the KV budget.
+
+   Entry: { taskId, title, waiting, waitingSince, chase, chaseId, after, afterId, updated } */
+const FLOW_MAX = 300, FLOW_TTL_MS = 60 * 86400000;
+function flowEmpty(e) { return !e || (!e.waiting && !e.after); }
+async function getFlow(env) {
+  try {
+    const v = await env.NOTES.get("flow");
+    const o = v ? JSON.parse(v) : null;
+    return (o && typeof o === "object" && o.items && typeof o.items === "object") ? { items: o.items } : { items: {} };
+  } catch { return { items: {} }; }
+}
+async function putFlow(env, f) { await env.NOTES.put("flow", JSON.stringify(f)); }
+// Drop entries that no longer say anything (waiting cleared, block cleared) once they've gone
+// cold, then cap the blob. Keeps it from growing forever as tasks come and go in Google.
+function pruneFlow(f) {
+  const cut = Date.now() - FLOW_TTL_MS, out = {};
+  const keys = Object.keys(f.items || {}).filter(k => {
+    const e = f.items[k];
+    return e && !(flowEmpty(e) && Number(e.updated || 0) < cut);
+  }).sort((a, b) => Number(f.items[b].updated || 0) - Number(f.items[a].updated || 0)).slice(0, FLOW_MAX);
+  for (const k of keys) out[k] = f.items[k];
+  return { items: out };
+}
+// Per-entry last-write-wins. The browser used to be the only writer, but the Discord agent writes
+// here too — a blind whole-blob PUT would race it exactly the way projects did before v1.31.0.
+function mergeFlow(base, incoming) {
+  const out = { items: Object.assign({}, base.items || {}) };
+  for (const k of Object.keys(incoming.items || {})) {
+    const inc = incoming.items[k], cur = out.items[k];
+    if (!inc || typeof inc !== "object") continue;
+    if (!cur || Number(inc.updated || 0) >= Number(cur.updated || 0)) out.items[k] = inc;
+  }
+  return out;
+}
+// Find an entry by task title — exact match first, then substring. Both agent surfaces address
+// tasks by title (Discord has no task ids), so this is the shared matcher.
+function flowFind(items, q) {
+  const s = String(q || "").toLowerCase().trim();
+  if (!s) return null;
+  const list = Object.keys(items || {}).map(k => [k, items[k]]).filter(([, v]) => v && v.title);
+  return list.find(([, v]) => String(v.title).toLowerCase() === s)
+    || list.find(([, v]) => String(v.title).toLowerCase().includes(s))
+    || list.find(([, v]) => s.includes(String(v.title).toLowerCase())) || null;
+}
+// Get the entry for a title, creating a browser-reconcilable "pending:" one if it's new.
+function flowUpsert(f, title) {
+  const hit = flowFind(f.items, title);
+  if (hit) return hit[0];
+  const k = "pending:" + String(title).toLowerCase().trim().slice(0, 80);
+  if (!f.items[k]) f.items[k] = { taskId: null, title: String(title).slice(0, 200), waiting: "", after: "", updated: 0 };
+  return k;
+}
+async function handleFlow(request, env) {
+  if (!env.NOTES) return json({ error: { message: "storage not configured" } }, 501);
+  if (request.method === "GET") return json({ flow: pruneFlow(await getFlow(env)) });
+  if (request.method === "PUT") {
+    let b = {}; try { b = await request.json(); } catch { return json({ error: { message: "bad json" } }, 400); }
+    const incoming = (b && b.flow && typeof b.flow === "object" && b.flow.items) ? { items: b.flow.items } : { items: {} };
+    const merged = pruneFlow(mergeFlow(await getFlow(env), incoming));
+    await putFlow(env, merged);
+    return json({ ok: true, flow: merged });   // browser adopts the merged set, like /projects
+  }
+  return new Response("method not allowed", { status: 405, headers: cors() });
+}
+
 // Health check for the reminder push path (the Switchboard's Discord card calls this): validates
 // the bot TOKEN (GET /users/@me) and the USER ID (open a DM channel — no message sent). With
 // ?send=1 it delivers a real test DM — the only 100% proof the pipe works end-to-end.
@@ -652,6 +769,13 @@ You do NOT have his email or calendar here (those need the miDash dashboard) —
 Reminders: set_reminder schedules a Discord DM ping at a time (you're already in that DM). For 'at', prefer a
 relative phrase you can compute safely ("in 20 minutes", "in 2 hours") or an explicit ISO-8601 time WITH a
 timezone offset — a bare wall-clock time is read as UTC here, so avoid it. list_reminders / cancel_reminder manage them.
+His day list has three states: his to do, WAITING on someone else, or BLOCKED behind another task. You can't see
+Google Tasks from here, but you CAN see and change the last two (set_waiting / clear_waiting / block_task /
+list_waiting) — they're miDash's own. When he says he's done all he can on something and it's in someone else's
+court, set_waiting it so it stops nagging him; when the waiting is on a PERSON, pass chase_at too or it just rots
+(and if an email went unanswered, the chase should be to CALL them, not email again). When he describes work in
+sequence, block_task the second one behind the first. "What am I waiting on / what's stuck" → list_waiting.
+Q's day starts at 10am — never schedule a chase or a morning nudge earlier than that.
 For anything OTHERS would see (a ticket status change, a ticket comment), briefly confirm with Q before doing it
 unless he was already explicit. Reading is always fine to do immediately.`;
 const AGENT_TOOLS = [
@@ -659,6 +783,7 @@ const AGENT_TOOLS = [
   { name: "add_note", description: "Jot a line to the TOP of Q's Notes scratchpad.", input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] } },
   ...PROJECT_TOOLS,   // shared with TOOLS — single source of truth (see PROJECT_TOOLS above)
   ...REMINDER_TOOLS,  // shared with TOOLS — Discord DM reminders (see REMINDER_TOOLS above)
+  ...FLOW_TOOLS,      // shared with TOOLS — waiting-on / blocked-by (KV-backed, so Discord can see it)
   { name: "finance_summary", description: "Q's business finance rollup (revenue, outstanding, expenses, net) from 42payments.", input_schema: { type: "object", properties: {}, required: [] } },
   { name: "list_tracker_notifications", description: "List Q's Portal42 (Tracker42) notifications, newest first.", input_schema: { type: "object", properties: { limit: { type: "integer" } }, required: [] } },
   { name: "get_ticket", description: "Get a Portal42 ticket's details by numeric id.", input_schema: { type: "object", properties: { id: { type: "integer" } }, required: ["id"] } },
@@ -710,6 +835,69 @@ async function runAgentTool(name, a, env) {
       }
       case "list_reminders": { const arr = (await getReminders(env)).filter(r => !r.fired).sort((x, y) => x.at - y.at); return { reminders: arr.map(r => ({ id: r.id, text: r.text, at: new Date(r.at).toISOString() })) }; }
       case "cancel_reminder": { if (!a.id) return { error: "need id" }; let arr = await getReminders(env); const before = arr.length; arr = arr.filter(r => r.id !== a.id); if (arr.length === before) return { error: "no reminder with id " + a.id }; await putReminders(env, arr); return { cancelled: true }; }
+      // ---- Flow (waiting-on / blocked-by). KV-backed, so these work with no Google token. ----
+      case "set_waiting": {
+        if (!a.task || !a.on) return { error: "need task and on" };
+        const f = await getFlow(env);
+        const k = flowUpsert(f, a.task), e = f.items[k];
+        e.waiting = String(a.on).slice(0, 200);
+        e.waitingSince = e.waitingSince || Date.now();
+        e.updated = Date.now();
+        let chase = null;
+        if (a.chase_at) {
+          const at = resolveAtServer(a.chase_at);
+          if (!at) return { error: "couldn't parse 'chase_at' — give epoch-ms, an ISO-8601 time with offset, or a relative phrase like 'in 2 days'" };
+          if (at < Date.now() - 60000) return { error: "that chase time is in the past" };
+          const arr = pruneReminders(await getReminders(env));
+          const id = "r_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
+          arr.push({ id, at, text: String(a.chase || ("Chase " + e.waiting + " — " + e.title)).slice(0, 500), kind: "chase", created: Date.now(), fired: null, attempts: 0 });
+          await putReminders(env, arr);
+          e.chase = at; e.chaseId = id;
+          chase = new Date(at).toISOString();
+        }
+        await putFlow(env, pruneFlow(f));
+        return { waiting: true, task: e.title, on: e.waiting, chaseAt: chase };
+      }
+      case "clear_waiting": {
+        if (!a.task) return { error: "need task" };
+        const f = await getFlow(env);
+        const hit = flowFind(f.items, a.task);
+        if (!hit) return { error: "nothing on the waiting list matching " + a.task };
+        const [k, e] = hit;
+        if (!e.waiting) return { error: "\"" + e.title + "\" wasn't marked as waiting on anything" };
+        const was = e.waiting;
+        e.waiting = ""; e.waitingSince = null; e.chase = null; e.chaseId = null; e.updated = Date.now();
+        // NOT "unblocked" — this task is merely actionable again. Anything parked behind it only
+        // frees up when it's actually COMPLETED. Report the queue so Dash can say what's next.
+        const title = String(e.title || "").toLowerCase();
+        const queued = Object.keys(f.items).filter(x => x !== k).map(x => f.items[x])
+          .filter(o => o.after && (String(o.after).toLowerCase() === title || String(o.after).toLowerCase().includes(title) || title.includes(String(o.after).toLowerCase())))
+          .map(o => o.title);
+        await putFlow(env, pruneFlow(f));
+        return { cleared: true, task: e.title, wasWaitingOn: was, backOnHisList: true, queuedBehindIt: queued };
+      }
+      case "block_task": {
+        if (!a.task || !a.after) return { error: "need task and after" };
+        const f = await getFlow(env);
+        // The blocker needs no entry of its own — the blocked task stores its title. (Creating one
+        // would be pruned on the way out anyway: a fresh entry with nothing set is "empty".)
+        const known = flowFind(f.items, a.after);
+        const blockerTitle = known ? known[1].title : String(a.after).slice(0, 200);
+        const k = flowUpsert(f, a.task), e = f.items[k];
+        if (String(e.title).toLowerCase() === String(blockerTitle).toLowerCase()) return { error: "a task can't be blocked on itself" };
+        e.after = blockerTitle; e.afterId = known ? (known[1].taskId || null) : null; e.updated = Date.now();
+        await putFlow(env, pruneFlow(f));
+        return { blocked: true, task: e.title, after: blockerTitle };
+      }
+      case "list_waiting": {
+        const f = pruneFlow(await getFlow(env));
+        const days = t => t ? Math.round((Date.now() - Number(t)) / 86400000) : null;
+        const items = Object.keys(f.items).map(k => f.items[k]);
+        return {
+          waiting: items.filter(e => e.waiting).map(e => ({ task: e.title, on: e.waiting, days: days(e.waitingSince), chaseAt: e.chase ? new Date(e.chase).toISOString() : null })),
+          blocked: items.filter(e => e.after).map(e => ({ task: e.title, after: e.after })),
+        };
+      }
       default: return { error: "unknown tool " + name };
     }
   } catch (e) { return { error: String(e && e.message || e) }; }
@@ -822,6 +1010,7 @@ export default {
       if (url.pathname === "/agent") return rateLimited(request, "ai", 30, 5 * 60 * 1000) ? tooMany() : handleAgent(request, env);
       if (url.pathname === "/discord-status") return handleDiscordStatus(request, env);
       if (url.pathname === "/reminders") return handleReminders(request, env);
+      if (url.pathname === "/flow") return handleFlow(request, env);
       if (url.pathname === "/discord-check") return handleDiscordCheck(request, env);
       // Canonical tool schemas — single source of truth for inspection/debugging (the models
       // are sent TOOLS on /chat and AGENT_TOOLS on /agent; both share PROJECT_TOOLS).

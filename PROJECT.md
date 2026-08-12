@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.44.6` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.45.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-07-10 (minimalist icon system — de-emoji the chrome; menu reorg; Google-light fix)
+**Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; the day list gets three states)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -85,6 +85,10 @@ moved to the Pi so both stay up when the Mac is closed.
   `fireDueReminders`) DMs due ones to Q on Discord via the REST API — needs secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`. The Worker sends the DM itself, so it doesn't depend on
   the Pi. Only writes KV on add/delete/fire → safe under the ~1000/day write budget. v1.41.0)
+- **Flow (waiting/blocked):** `GET/PUT /flow`  (KV `flow` blob — the two states Google Tasks can't
+  hold. Entries keyed by Google task id, or `pending:<title>` when written from Discord, which has
+  no task ids; the browser re-keys those on its next load. **PUT merges per-entry LWW** and returns
+  the merged set, like `/projects`, so the browser never merges. v1.45.0)
 - **Discord push health:** `GET /discord-check`  (validates `DISCORD_BOT_TOKEN` via `/users/@me` +
   `DISCORD_USER_ID` by opening a DM channel — no message sent; `?send=1` delivers a real test DM.
   The Switchboard **Discord card** shows inbound heartbeat + outbound push in one, with a "🔔 Send
@@ -166,7 +170,8 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `wrangler.jsonc`| Worker config incl. KV binding. |
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
-| `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`) with a **KEEP IN SYNC** note — 66 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+| `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
+`defaultReminderAt`) with a **KEEP IN SYNC** note — 94 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -197,6 +202,8 @@ due date via list_tasks → update_task), `read_notes`, `add_note` (Discord path
 `list_projects`, `update_project`, `add_project` (all **type-aware**: software|property, with
 property/area/people), `set_reminder`/`list_reminders`/`cancel_reminder` (miDash-owned Discord-DM
 push — a reminder is a NOTIFICATION, distinct from a Google Task to-do; see `/reminders`),
+`set_waiting`/`clear_waiting`/`block_task`/`list_waiting` (the flow layer — KV-backed, so these
+are the FIRST task-shaped tools that also work over Discord),
 `finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
 
 > **Tool schemas are single-sourced (v1.36.0):** the project tools live in one `PROJECT_TOOLS`
@@ -293,6 +300,31 @@ label/emoji and `ship` index (software 5, property 6 = only "done" is complete).
   read-modify-write on the same key). Now `/projects` PUT **merges** incoming into KV (tombstone-aware)
   and returns the merged set; the browser adopts it (`saveProjects` coalesces concurrent saves). Same
   `mergeProjects` logic is duplicated in `index.html` and `worker.js` — **KEEP IN SYNC**.
+
+## Flow layer — the day list has three states (v1.45.0)
+
+Built from how Q actually works a day (2026-08-11): he keeps one list, and the items on it are not
+all the same kind of thing. A task is either **his to do**, **waiting on someone else**, or
+**blocked behind another task**. Google Tasks only models the first, so the other two are miDash's.
+
+- **Storage:** `GET/PUT /flow`, KV blob keyed by Google task id. **Deliberately not** the Google
+  task's `notes` field: the Worker has no Google token, and the Discord agent (and any future cron
+  nudge) has to be able to read this. Written only on a real state change — a few writes a day.
+- **Entry:** `{taskId, title, waiting, waitingSince, chase, chaseId, after, afterId, updated}`.
+  `title` is denormalized so Discord can render it without Google.
+- **Buckets** (`taskBuckets` → `renderTasksList`): active list on top, then **Next up** (blocked,
+  shows what it's behind), then **Waiting on** (who + how many days it's sat). Parked rows are muted
+  with a one-click un-park (`unparkTask`). Only the active count drives the show-all toggle.
+- **Auto-surfacing:** completing a task calls `releaseDependents()` — anything queued behind it has
+  its block cleared and flashes "🔓 Unblocked: …". That's the payoff: he wires "pay CCs" behind
+  "link CCs via Plaid" once, and never has to remember the link again.
+- **The failed-account guard:** a blocked task un-blocks when its blocker leaves the open list. If a
+  Tasks API call failed, `blockerOpen()` returns true regardless — otherwise one 429 would silently
+  unblock everything. Unit-tested.
+- **Chase:** waiting on a *person* rots unless chased, so a wait can carry a chase time that becomes
+  a normal reminder in the existing `/reminders` queue (Discord DM). Un-parking cancels it.
+- **`DAY_START_HOUR = 10`** — Q's day starts at 10am. `defaultReminderAt()` rolls to 10am rather
+  than the old 8am, and both system prompts tell the agent never to nudge earlier.
 
 ## Credit-card debt — deterministic payoff calculator (v1.33.0)
 
@@ -493,6 +525,23 @@ cd ~/miDash && wrangler deploy
   after an update (it ran before Google finished connecting — now re-checks in `afterAuth`).
   ⚠️ Long tail of emoji remains in transient flashes / deep features (property-area glyphs, model
   picker, agent chat, flash ticks ✓🎉) — de-emoji opportunistically next.
+- v1.44.7–1.44.12: tasks show-all toggle; agent can clean up Google Contacts (`list_contacts` +
+  `delete_contacts`); portrait dropdown fix + dictation into the capture bar (Web Speech API, no
+  backend) + no forced Google re-consent; capture bar became a radio row of icons; the Switchboard
+  now surfaces WHY a Google silent re-grant failed.
+- v1.45.0: **Flow layer — waiting-on / blocked-by.** The day list stopped pretending every item is
+  the same kind of thing. New `/flow` KV blob + `set_waiting`/`clear_waiting`/`block_task`/
+  `list_waiting` tools (browser AND Discord — the first task-shaped tools that work without Google).
+  Tasks card splits into active / **Next up** / **Waiting on**; completing a blocker auto-surfaces
+  what it freed (`releaseDependents`). A wait can carry a **chase** time that rides the existing
+  reminder queue. `DAY_START_HOUR = 10`. 22 new assertions (94 total), including a mutation-checked
+  guard that a Tasks API failure can't silently unblock the board.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
-  in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, and the
-  icon pass are all live + on `main`. Possible next: finish de-emoji sweep, "shuffle look" button, Discord weekly-digest.
+  in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
+  icon pass, and the flow layer are all live + on `main`.
+  **Next on the workflow track** (designed 2026-08-11, in order): (1) **rollover ritual** — an
+  end-of-day "what didn't happen" nudge that pushes leftovers and asks *when*, plus a
+  pushed-N-times callout; (2) **places** — errand/USPS/MI grouping so a trip is planned once, and
+  "when I'm next in MI" tasks that carry no date at all; (3) **email watch** — for tasks tied to a
+  person whose channel is email, scan just those senders and propose the task update. Also open:
+  finish de-emoji sweep, "shuffle look" button, Discord weekly-digest.

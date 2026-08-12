@@ -217,6 +217,63 @@ function resolveAt(v){
   const d=new Date(s); return isNaN(d.getTime())?null:d.getTime();
 }
 
+/* --- Flow layer: waiting-on / blocked-by (v1.45.0) — KEEP IN SYNC with index.html + worker.js ---
+   Browser: flowNorm/blockerOpen/taskBuckets (index.html) · Worker: mergeFlow/pruneFlow (worker.js).
+   `taskFailedCount` stands in for index.html's taskFailed.length so the guard is testable. */
+let taskFailedCount=0;
+let flowCache={items:{}};
+const flowNorm=s=>String(s||"").toLowerCase().trim();
+function flowFor(t){ return (t && t.taskId && flowCache.items[t.taskId]) || null; }
+function blockerOpen(e, items){
+  if(!e || !e.after) return false;
+  if(taskFailedCount) return true;
+  const q=flowNorm(e.after);
+  return items.some(t=>{
+    if(e.afterId && t.taskId===e.afterId) return true;
+    const n=flowNorm(t.title);
+    return n===q || n.indexOf(q)>=0 || q.indexOf(n)>=0;
+  });
+}
+function taskBuckets(items){
+  const active=[], waiting=[], blocked=[];
+  for(const t of items){
+    const e=flowFor(t);
+    if(e && e.waiting) waiting.push({t,e});
+    else if(e && e.after && blockerOpen(e, items)) blocked.push({t,e});
+    else active.push(t);
+  }
+  return {active, waiting, blocked};
+}
+const FLOW_MAX=300, FLOW_TTL_MS=60*86400000;
+function flowEmpty(e){ return !e || (!e.waiting && !e.after); }
+function pruneFlow(f, now){
+  const cut=(now||Date.now())-FLOW_TTL_MS, out={};
+  const keys=Object.keys(f.items||{}).filter(k=>{
+    const e=f.items[k];
+    return e && !(flowEmpty(e) && Number(e.updated||0) < cut);
+  }).sort((a,b)=>Number(f.items[b].updated||0)-Number(f.items[a].updated||0)).slice(0,FLOW_MAX);
+  for(const k of keys) out[k]=f.items[k];
+  return {items:out};
+}
+function mergeFlow(base, incoming){
+  const out={items:Object.assign({}, base.items||{})};
+  for(const k of Object.keys(incoming.items||{})){
+    const inc=incoming.items[k], cur=out.items[k];
+    if(!inc || typeof inc!=="object") continue;
+    if(!cur || Number(inc.updated||0) >= Number(cur.updated||0)) out.items[k]=inc;
+  }
+  return out;
+}
+// --- defaultReminderAt (index.html) — Q's day starts at 10am ---
+const DAY_START_HOUR=10;
+function defaultReminderAtFrom(nowMs){
+  const d=new Date(Math.ceil((nowMs+3*3600000)/(15*60000))*(15*60000));
+  const h=d.getHours();
+  if(h>=21){ d.setDate(d.getDate()+1); d.setHours(DAY_START_HOUR,0,0,0); }
+  else if(h<DAY_START_HOUR){ d.setHours(DAY_START_HOUR,0,0,0); }
+  return d.getTime();
+}
+
 /* ================================ TEST HARNESS ================================ */
 let pass=0, fail=0;
 const out=document.getElementById("out");
@@ -432,6 +489,76 @@ section("parseReminder — title reads as a clean action (strip 'remind me to…
   ok(parseReminder("call the dentist friday at 3pm").title==="Call the dentist", "no lead-in: still cleaned + capitalized, date/time stripped");
   ok(parseReminder("remind me that groceries are low tomorrow").title==="Groceries are low", "'remind me that X …tomorrow' → 'X' (date stripped)");
   ok(parseReminder("Buy groceries").title==="Buy groceries", "plain text unchanged");
+}
+
+section("Flow buckets — waiting / blocked / active (Q's real 2026-08-11 list)");
+{
+  const plaid={taskId:"t1", title:"42payments — link CCs via Plaid"};
+  const paycc={taskId:"t2", title:"Pay personal and business CCs"};
+  const rebecca={taskId:"t3", title:"Meet with Rebecca"};
+  const tracker={taskId:"t4", title:"Update tracker42"};
+  const jacket={taskId:"t5", title:"Drop off jacket"};
+  const all=[plaid,paycc,rebecca,tracker,jacket];
+  taskFailedCount=0;
+  flowCache={items:{
+    t1:{taskId:"t1", title:plaid.title, waiting:"Plaid — production approval", waitingSince:NOW-2*day, after:"", updated:NOW},
+    t2:{taskId:"t2", title:paycc.title, waiting:"", after:plaid.title, afterId:"t1", updated:NOW},
+    t4:{taskId:"t4", title:tracker.title, waiting:"", after:rebecca.title, afterId:"t3", updated:NOW},
+  }};
+  let b=taskBuckets(all);
+  ok(b.waiting.length===1 && b.waiting[0].t.taskId==="t1", "waiting-on task leaves the active list");
+  ok(b.blocked.length===2, "both dependent tasks are blocked");
+  ok(b.active.length===2 && b.active.map(t=>t.taskId).sort().join(",")==="t3,t5", "only Rebecca + jacket are actually actionable");
+  ok(!b.active.some(t=>t.taskId==="t2"), "'Pay CCs' is NOT in the day list while Plaid is pending");
+
+  // Rebecca's meeting happens → her task is completed → tracker42 surfaces on its own.
+  b=taskBuckets(all.filter(t=>t.taskId!=="t3"));
+  ok(b.active.some(t=>t.taskId==="t4"), "completing the blocker moves 'Update tracker42' back to active");
+  ok(b.blocked.length===1 && b.blocked[0].t.taskId==="t2", "the Plaid-blocked task stays blocked");
+
+  // A Tasks API failure must NOT be read as "the blocker is done".
+  taskFailedCount=1;
+  b=taskBuckets(all.filter(t=>t.taskId!=="t3"));
+  ok(b.blocked.length===2, "an account that failed to load can't silently unblock everything");
+  taskFailedCount=0;
+
+  // afterId survives a rename of the blocker; waiting outranks blocked.
+  const renamed=[{taskId:"t3", title:"Rebecca 1:1 (moved)"}, tracker];
+  ok(taskBuckets(renamed).blocked.length===1, "block still holds after the blocker is renamed (matched by afterId)");
+  flowCache.items.t2.waiting="Plaid";
+  ok(taskBuckets(all).waiting.some(x=>x.t.taskId==="t2"), "a task both waiting AND blocked counts as waiting");
+}
+
+section("Flow merge — per-entry LWW, and a cleared wait can't be resurrected");
+{
+  const base={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"Plaid", updated:NOW-2*day} }};
+  const newer={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"Plaid — prod approval", updated:NOW} }};
+  ok(mergeFlow(base,newer).items.t1.waiting==="Plaid — prod approval", "newer entry wins");
+  ok(mergeFlow(newer,base).items.t1.waiting==="Plaid — prod approval", "older incoming entry loses");
+  ok(Object.keys(mergeFlow(base,{items:{t9:{taskId:"t9",title:"New",waiting:"Bill",updated:NOW}}}).items).length===2, "merge adds entries it hasn't seen");
+
+  // The tombstone case: device A clears the wait; stale device B still holds the old state.
+  const cleared={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"", after:"", updated:NOW} }};
+  const stale  ={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"Plaid", updated:NOW-3*day} }};
+  ok(mergeFlow(cleared,stale).items.t1.waiting==="", "a stale device cannot resurrect a cleared wait");
+  ok(pruneFlow(cleared,NOW).items.t1, "a freshly-cleared entry is KEPT as the tombstone");
+  const cold={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"", after:"", updated:NOW-90*day} }};
+  ok(!pruneFlow(cold,NOW).items.t1, "an empty entry is dropped once it goes cold (60d)");
+  const held={items:{ t1:{taskId:"t1", title:"Link CCs", waiting:"Plaid", updated:NOW-90*day} }};
+  ok(pruneFlow(held,NOW).items.t1, "a still-waiting entry is never pruned, however old");
+}
+
+section("defaultReminderAt — Q's day starts at 10am");
+{
+  const at=(h,m)=>new Date(2026,7,11,h,m,0,0).getTime();   // 11 Aug 2026, local
+  const hourOf=ms=>new Date(ms).getHours();
+  const dayOf=ms=>new Date(ms).getDate();
+  ok(hourOf(defaultReminderAtFrom(at(23,0)))===10 && dayOf(defaultReminderAtFrom(at(23,0)))===12, "11pm → tomorrow 10am (not 8am)");
+  ok(hourOf(defaultReminderAtFrom(at(20,30)))===10 && dayOf(defaultReminderAtFrom(at(20,30)))===12, "8:30pm → tomorrow 10am");
+  ok(hourOf(defaultReminderAtFrom(at(5,0)))===10 && dayOf(defaultReminderAtFrom(at(5,0)))===11, "5am → 10am the same day");
+  ok(hourOf(defaultReminderAtFrom(at(7,0)))===10, "7am → 10am (the old rule gave 10am only by accident)");
+  ok(hourOf(defaultReminderAtFrom(at(13,0)))===16, "1pm → the normal ~3h nudge (4pm)");
+  ok(defaultReminderAtFrom(at(13,7))%(15*60000)===0, "always lands on a 15-minute boundary");
 }
 
 /* ================================ SUMMARY ================================ */

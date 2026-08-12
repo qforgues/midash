@@ -618,6 +618,18 @@
   .tasks-toggle { margin-top:10px; font-size:12.5px; color:var(--muted); cursor:pointer; display:inline-block; }
   .tasks-toggle:hover { color:var(--accent); text-decoration:underline; }
   .rem-row { display:flex; align-items:baseline; gap:9px; padding:5px 0; font-size:13.5px; }
+  /* Parked tasks (v1.45.0): "Next up" = blocked behind another task, "Waiting on" = someone else's
+     court. Muted and below the active list — present, but not competing with what he can act on. */
+  .flow-sec { margin-top:13px; padding-top:11px; border-top:1px solid var(--border); }
+  .flow-sec .rem-head { margin-bottom:4px; }
+  .flowrow { opacity:.72; display:flex; align-items:baseline; gap:9px; }
+  .flowrow:hover { opacity:1; }
+  .flowrow .s { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .flow-meta { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:48%; }
+  .flow-unpark { flex:none; cursor:pointer; color:var(--muted); opacity:0; transition:opacity .15s, color .15s; display:inline-flex; }
+  .flowrow:hover .flow-unpark, .flow-unpark:focus { opacity:1; }
+  .flow-unpark:hover { color:var(--accent); }
+  @media (hover:none){ .flow-unpark { opacity:.6; } }
   .rem-when { color:var(--accent); white-space:nowrap; font-variant-numeric:tabular-nums; flex:none; }
   .rem-text { color:var(--text); overflow-wrap:anywhere; flex:1; }
   .rem-x { color:var(--muted); cursor:pointer; flex:none; padding:0 3px; opacity:.7; }
@@ -928,6 +940,11 @@
     <label class="col"><span>Title</span><input id="task-title" type="text"></label>
     <label class="col"><span>Due date</span><input id="task-due" type="date"></label>
     <label class="col"><span>Notes</span><textarea id="task-notes" rows="3" placeholder="Details, links, context…"></textarea></label>
+    <div class="tkn-row">
+      <label class="col" style="flex:1.4"><span>Waiting on — parks it off your day list</span><input id="task-waiting" type="text" placeholder="e.g. Plaid — production approval" autocomplete="off"></label>
+      <label class="col" style="flex:1"><span>Chase me</span><input id="task-chase" type="text" placeholder="e.g. tomorrow 10am" autocomplete="off"></label>
+    </div>
+    <label class="col"><span>Can’t start until</span><select id="task-after"></select></label>
     <div id="task-msg" class="key-result"></div>
     <div class="pat-actions" style="flex-wrap:wrap;gap:8px">
       <button id="task-complete" class="gbtn" style="border-color:var(--accent);color:var(--accent)">✓ Complete</button>
@@ -1121,7 +1138,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.44.12",
+  version: "1.45.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3005,7 +3022,10 @@ async function loadTasks(){
       });
     }
   }
+  await loadFlow();                  // waiting/blocked state — must land before the buckets render
   renderTasks(out, err, failedAccts);
+  // Adopt anything the Discord agent parked while we weren't looking, then redraw if it changed.
+  reconcileFlow(out).then(ch=>{ if(ch) renderTasksList(); });
 }
 // Tasks toggle between the first 5 and ALL (v1.44.7). Completing a task removes just that row in
 // place — no reload, no page reset, no scroll jump (clearing #14 used to snap back to 1–3).
@@ -3014,8 +3034,9 @@ let taskItems=[], taskFailed=[], tasksExpanded=false;
 function hideTaskPager(){ const pg=document.getElementById("tasks-pager"); if(pg) pg.style.display="none"; }
 function syncTasksToggle(){
   const tg=document.getElementById("tasks-toggle"); if(!tg) return;
-  if(taskItems.length<=TASKS_SHOW){ tg.remove(); return; }   // no longer worth a toggle
-  tg.textContent = tasksExpanded ? "show fewer" : "show all "+taskItems.length;
+  const n=taskBuckets(taskItems).active.length;               // the toggle counts ACTIVE tasks only
+  if(n<=TASKS_SHOW){ tg.remove(); return; }                   // no longer worth a toggle
+  tg.textContent = tasksExpanded ? "show fewer" : "show all "+n;
 }
 function renderTasks(items, err, failedAccts){
   const box=document.getElementById("tasks");
@@ -3046,25 +3067,71 @@ function wireTaskRow(row){
     const r=await completeTaskApi(acct, row.dataset.list, row.dataset.task);
     if(!r.ok){ el.textContent=""; row.style.opacity="1"; alert("Couldn't complete the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google)."); return; }
     // Remove JUST this row, in place — collapse it out smoothly, leave the rest untouched.
+    const done=findTask(row.dataset.task);
     taskItems=taskItems.filter(t=>t.taskId!==row.dataset.task);
     row.style.maxHeight=row.offsetHeight+"px"; row.style.overflow="hidden";
     requestAnimationFrame(()=>{ row.style.transition="opacity .18s, max-height .25s .04s, padding .25s .04s"; row.style.opacity="0"; row.style.maxHeight="0"; row.style.paddingTop="0"; row.style.paddingBottom="0"; });
-    setTimeout(()=>{ row.remove(); if(!taskItems.length){ const box=document.getElementById("tasks"); if(box) box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; } else syncTasksToggle(); }, 300);
+    setTimeout(async()=>{
+      row.remove();
+      if(!taskItems.length){ const box=document.getElementById("tasks"); if(box) box.innerHTML=`<div class="empty">No open tasks 🎉</div>`; }
+      else syncTasksToggle();
+      // Anything queued behind this is now free — clear the blocks and redraw so it appears.
+      if(done && (await releaseDependents(done)).length) renderTasksList();
+      else if(taskItems.length && !taskBuckets(taskItems).active.length) renderTasksList();
+    }, 300);
   };
+}
+/* A parked row: muted, still tappable to open the editor, with a one-click un-park. Waiting rows
+   show WHO and how long it's sat (the days are the signal to chase); blocked rows show what
+   they're behind. Both stay OUT of the active count so the day list only holds what he can act on. */
+function flowRowHTML(t, e, mode){
+  const meta = mode==="waiting"
+    ? `${esc(e.waiting)}${waitedLabel(e)?` · ${esc(waitedLabel(e))}`:""}`
+    : `after: ${esc(e.after)}`;
+  const act = mode==="waiting" ? "Back on my list" : "Start it anyway";
+  return `<div class="item flowrow" data-task="${escAttr(t.taskId||"")}" data-mode="${mode}" title="Tap to edit">
+      <span class="s">${esc(t.title)}</span><span class="flow-meta">${meta}</span>
+      <span class="flow-unpark" data-task="${escAttr(t.taskId||"")}" data-mode="${mode}" title="${escAttr(act)}">${ic("unlock")}</span></div>`;
+}
+function flowSectionHTML(label, iconName, rows, mode){
+  if(!rows.length) return "";
+  return `<div class="flow-sec"><div class="rem-head">${ic(iconName)} ${esc(label)} <span class="fin-state">${rows.length}</span></div>`
+    + rows.map(r=>flowRowHTML(r.t, r.e, mode)).join("") + `</div>`;
 }
 function renderTasksList(){
   const box=document.getElementById("tasks"); hideTaskPager();
   const failNote = taskFailed.length
     ? `<div class="needsauth" style="margin-top:12px;line-height:1.4">${taskFailed.map(esc).join(", ")} need Tasks access. ${reconnectBtn("reconnect-tasks")}</div>` : "";
   if(!taskItems.length){ box.innerHTML=`<div class="empty">No open tasks 🎉</div>`+failNote; if(taskFailed.length)wireReconnect("reconnect-tasks"); return; }
-  const multi=accounts.length>1, total=taskItems.length;
+  const multi=accounts.length>1;
+  const {active, waiting, blocked}=taskBuckets(taskItems);
+  const total=active.length;
   const showAll = tasksExpanded || total<=TASKS_SHOW;
-  const shown = showAll ? taskItems : taskItems.slice(0, TASKS_SHOW);
+  const shown = showAll ? active : active.slice(0, TASKS_SHOW);
   const toggle = total>TASKS_SHOW ? `<div class="tasks-toggle" id="tasks-toggle">${showAll?"show fewer":"show all "+total}</div>` : "";
-  box.innerHTML=`<div class="tasks-list">${shown.map(t=>taskRowHTML(t,multi)).join("")}</div>${toggle}`+failNote;
+  const activeHTML = active.length
+    ? `<div class="tasks-list">${shown.map(t=>taskRowHTML(t,multi)).join("")}</div>${toggle}`
+    : `<div class="empty">Nothing to act on right now — everything below is parked 🎉</div>`;
+  box.innerHTML = activeHTML
+    + flowSectionHTML("Next up", "lock", blocked, "blocked")
+    + flowSectionHTML("Waiting on", "clock", waiting, "waiting")
+    + failNote;
   box.querySelectorAll(".taskrow").forEach(wireTaskRow);
+  box.querySelectorAll(".flowrow").forEach(row=>{ row.style.cursor="pointer"; row.onclick=()=>openTaskModal(row.dataset.task); });
+  box.querySelectorAll(".flow-unpark").forEach(el=>{ el.onclick=(ev)=>{ ev.stopPropagation(); unparkTask(el.dataset.task, el.dataset.mode); }; });
   const tg=document.getElementById("tasks-toggle"); if(tg) tg.onclick=()=>{ tasksExpanded=!tasksExpanded; renderTasksList(); };
   if(taskFailed.length) wireReconnect("reconnect-tasks");
+}
+/* Un-park: the thing came back, or he's starting it regardless. Also cancels a pending chase ping
+   so a cleared wait doesn't DM him about chasing something that already landed. */
+async function unparkTask(taskId, mode){
+  const e=flowCache.items[taskId]; if(!e) return;
+  if(mode==="waiting"){
+    if(e.chaseId) cancelReminderId(e.chaseId);
+    e.waiting=""; e.waitingSince=null; e.chase=null; e.chaseId=null;
+  } else { e.after=""; e.afterId=null; }
+  await saveFlowEntry(taskId);
+  renderTasksList();
 }
 function initTasksAdd(){
   const f=document.getElementById("task-add"); if(!f) return;
@@ -3094,8 +3161,52 @@ function openTaskModal(taskId){
   document.getElementById("task-title").value=t.title||"";
   document.getElementById("task-due").value=t.dueDate||"";
   document.getElementById("task-notes").value=t.notes||"";
+  // Flow fields: waiting-on + what this is blocked behind (every OTHER open task is a candidate).
+  const e=flowFor(t)||{};
+  document.getElementById("task-waiting").value=e.waiting||"";
+  document.getElementById("task-chase").value="";
+  const sel=document.getElementById("task-after");
+  const opts=[`<option value="">— nothing, it’s ready to go —</option>`].concat(
+    taskItems.filter(x=>x.taskId!==t.taskId).map(x=>`<option value="${escAttr(x.taskId)}">${esc(x.title)}</option>`));
+  sel.innerHTML=opts.join("");
+  sel.value = (e.afterId && taskItems.some(x=>x.taskId===e.afterId)) ? e.afterId : "";
+  // A block set over Discord has no task id — keep it visible rather than silently dropping it.
+  if(!sel.value && e.after){
+    const m=taskItems.find(x=>x.taskId!==t.taskId && flowNorm(x.title).indexOf(flowNorm(e.after))>=0);
+    if(m) sel.value=m.taskId;
+    else { sel.insertAdjacentHTML("beforeend",`<option value="txt:${escAttr(e.after)}">${esc(e.after)}</option>`); sel.value="txt:"+e.after; }
+  }
   const msg=document.getElementById("task-msg"); msg.textContent=""; msg.className="key-result";
   document.getElementById("task-modal").style.display="flex";
+}
+/* Persist the modal's flow fields. Returns a short human note for the save message (or "") — the
+   chase is a REAL reminder in the existing queue, so it DMs him on Discord like any other. */
+async function saveTaskFlow(t, title){
+  const wait=document.getElementById("task-waiting").value.trim();
+  const chase=document.getElementById("task-chase").value.trim();
+  const afterVal=document.getElementById("task-after").value;
+  const e=flowEntry(t); e.title=title||e.title;
+  const wasWaiting=!!e.waiting;
+  const notes=[];
+  if(wait){ if(!wasWaiting) e.waitingSince=Date.now(); e.waiting=wait.slice(0,200); notes.push("parked as waiting"); }
+  else if(wasWaiting){ e.waiting=""; e.waitingSince=null; if(e.chaseId){ cancelReminderId(e.chaseId); e.chaseId=null; e.chase=null; } notes.push("back on your list"); }
+  if(afterVal.indexOf("txt:")===0){ e.after=afterVal.slice(4); e.afterId=null; }
+  else if(afterVal){ const b=taskItems.find(x=>x.taskId===afterVal); if(b){ e.after=b.title; e.afterId=b.taskId; notes.push("queued behind “"+b.title+"”"); } }
+  else if(e.after){ e.after=""; e.afterId=null; notes.push("unblocked"); }
+  if(chase){
+    const at=resolveAt(chase);
+    if(!at) notes.push("couldn’t read the chase time");
+    else if(at<Date.now()-60000) notes.push("chase time is in the past");
+    else{
+      if(e.chaseId) cancelReminderId(e.chaseId);   // one chase per task, not a pile
+      const text = wait ? `Chase ${wait} — ${e.title}` : `Follow up: ${e.title}`;
+      const r=await scheduleReminder(at, text, "chase");
+      if(r.ok){ e.chase=at; e.chaseId=r.id; notes.push("chase set for "+fmtReminderWhen(new Date(at))); loadReminders(); }
+      else notes.push("couldn’t schedule the chase");
+    }
+  }
+  await saveFlowEntry(t.taskId);
+  return notes.join(" · ");
 }
 function initTaskModal(){
   const m=document.getElementById("task-modal"); if(!m) return;
@@ -3112,13 +3223,17 @@ function initTaskModal(){
     else if(t.dueDate) body.due=null;                                  // best-effort clear (API may keep it)
     msg("Saving…");
     const r=await patchTask(t, body);
-    if(r.ok){ msg("Saved ✓"); setTimeout(()=>{ close(); loadTasks(); },300); }
-    else msg("Save failed ("+r.status+"). Reconnect Google for Tasks write access.",true);
+    if(!r.ok){ msg("Save failed ("+r.status+"). Reconnect Google for Tasks write access.",true); return; }
+    const flowMsg=await saveTaskFlow(t, title);   // waiting / blocked / chase live in miDash, not Google
+    msg("Saved ✓"+(flowMsg?" — "+flowMsg:""));
+    setTimeout(()=>{ close(); loadTasks(); }, flowMsg?900:300);
   };
   document.getElementById("task-complete").onclick=async()=>{
     const t=editingTask; if(!t) return; msg("Completing…");
     const r=await patchTask(t,{status:"completed"});
-    if(r.ok){ close(); loadTasks(); } else msg("Couldn’t complete ("+r.status+").",true);
+    if(!r.ok){ msg("Couldn’t complete ("+r.status+").",true); return; }
+    await releaseDependents(t);   // free whatever was queued behind it
+    close(); loadTasks();
   };
   document.getElementById("task-delete").onclick=async()=>{
     const t=editingTask; if(!t) return; if(!confirm("Delete this task permanently?")) return;
@@ -4368,6 +4483,58 @@ async function executeTool(name,a){
         loadReminders();
         return r.ok?{cancelled:true}:{error:"cancel failed (HTTP "+r.status+")"};
       }
+      // ---- Flow: waiting-on / blocked-by. Tasks are addressed by TITLE (the Discord agent has no
+      // task ids, so both surfaces share that convention); we resolve against the loaded list. ----
+      case "set_waiting": case "clear_waiting": case "block_task": case "list_waiting": {
+        if(!FLOW_URL) return {error:"no backend configured"};
+        if(!taskItems.length) await loadTasks(); else await loadFlow();
+        const find=q=>{ const s=flowNorm(q); if(!s) return null;
+          return taskItems.find(t=>flowNorm(t.title)===s) || taskItems.find(t=>flowNorm(t.title).indexOf(s)>=0) || null; };
+        if(name==="list_waiting"){
+          const {waiting, blocked}=taskBuckets(taskItems);
+          return {
+            waiting: waiting.map(({t,e})=>({task:t.title, on:e.waiting, days:daysSince(e.waitingSince), chaseAt:e.chase?new Date(e.chase).toLocaleString():null})),
+            blocked: blocked.map(({t,e})=>({task:t.title, after:e.after})),
+          };
+        }
+        const t=find(a.task);
+        if(!t) return {error:"no open task matching \""+(a.task||"")+"\" — call list_tasks to see the exact titles"};
+        const e=flowEntry(t);
+        if(name==="set_waiting"){
+          if(!a.on) return {error:"need 'on' — who or what he's waiting for"};
+          if(!e.waiting) e.waitingSince=Date.now();
+          e.waiting=String(a.on).slice(0,200);
+          let chaseAt=null;
+          if(a.chase_at){
+            const at=resolveAt(a.chase_at);
+            if(!at) return {error:"couldn't understand 'chase_at' — try 'tomorrow 10am', an ISO datetime, or 'in 2 days'"};
+            if(at<Date.now()-60000) return {error:"that chase time is in the past"};
+            if(e.chaseId) cancelReminderId(e.chaseId);
+            const r=await scheduleReminder(at, String(a.chase||("Chase "+e.waiting+" — "+t.title)), "chase");
+            if(r.ok){ e.chase=at; e.chaseId=r.id; chaseAt=new Date(at).toLocaleString(); loadReminders(); }
+          }
+          await saveFlowEntry(t.taskId); renderTasksList();
+          return {waiting:true, task:t.title, on:e.waiting, chaseAt};
+        }
+        if(name==="clear_waiting"){
+          if(!e.waiting) return {error:"\""+t.title+"\" wasn't marked as waiting on anything"};
+          const was=e.waiting;
+          if(e.chaseId) cancelReminderId(e.chaseId);
+          e.waiting=""; e.waitingSince=null; e.chase=null; e.chaseId=null;
+          await saveFlowEntry(t.taskId); renderTasksList();
+          // Not "unblocked" — it's actionable again. Things behind it free up when it's COMPLETED.
+          const queued=taskBuckets(taskItems).blocked.filter(({e:o})=>flowNorm(o.after)&&flowNorm(t.title).indexOf(flowNorm(o.after))>=0).map(({t:o})=>o.title);
+          return {cleared:true, task:t.title, wasWaitingOn:was, backOnHisList:true, queuedBehindIt:queued};
+        }
+        // block_task
+        if(!a.after) return {error:"need 'after' — the task this one is waiting for"};
+        const b=find(a.after);
+        if(!b) return {error:"no open task matching \""+a.after+"\" to block it behind"};
+        if(b.taskId===t.taskId) return {error:"a task can't be blocked on itself"};
+        e.after=b.title; e.afterId=b.taskId;
+        await saveFlowEntry(t.taskId); renderTasksList();
+        return {blocked:true, task:t.title, after:b.title};
+      }
       case "send_email": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
         if(!a.to||!a.subject||a.body==null) return {error:"need to, subject and body"};
@@ -4467,6 +4634,7 @@ async function executeTool(name,a){
 /* ---------- Notes (synced to the Worker's KV; localStorage is the offline cache) ---------- */
 const NOTES_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/notes" : "";
 const REMINDERS_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/reminders" : "";
+const FLOW_URL = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"")+"/flow" : "";
 
 /* ---- Reminders (miDash-owned Discord-DM push notifications) ----
    The dashboard is the tz-aware writer: resolveAt() turns whatever the agent/capture bar gives
@@ -4524,6 +4692,122 @@ async function cancelReminderId(id){
   if(!REMINDERS_URL||!id) return;
   try{ await fetch(REMINDERS_URL+"?id="+encodeURIComponent(id),{method:"DELETE",headers:{...dashAuthHeader()}}); }catch(e){}
   loadReminders();
+}
+
+/* ---- Flow: waiting-on / blocked-by (v1.45.0) -------------------------------------------------
+   A task is one of three things: HIS to do, WAITING on someone else, or BLOCKED behind another
+   task. Google Tasks only knows the first — so the other two are miDash's own state, in the
+   Worker's `flow` KV blob (NOT the task's notes field: the Worker has no Google token, and the
+   Discord agent + cron have to be able to read this).
+
+   The WORKER owns the merge — PUT /flow merges per-entry last-write-wins and returns the merged
+   set, the same shape as /projects — so the browser never merges anything. It patches one entry
+   and adopts whatever comes back. Nothing to KEEP IN SYNC.
+
+   Entry: { taskId, title, waiting, waitingSince, chase, chaseId, after, afterId, updated } */
+let flowCache={items:{}};
+const flowNorm=s=>String(s||"").toLowerCase().trim();
+function flowFor(t){ return (t && t.taskId && flowCache.items[t.taskId]) || null; }
+function flowEntry(t){
+  const k=t.taskId;
+  if(!flowCache.items[k]) flowCache.items[k]={taskId:k, title:t.title||"", waiting:"", after:"", updated:0};
+  flowCache.items[k].title=t.title||flowCache.items[k].title;   // keep the Worker's copy readable over Discord
+  return flowCache.items[k];
+}
+async function loadFlow(){
+  if(!FLOW_URL) return;
+  try{
+    const r=await fetch(FLOW_URL,{headers:{...dashAuthHeader()}});
+    if(!r.ok) return;
+    const j=await r.json();
+    if(j && j.flow && j.flow.items) flowCache={items:j.flow.items};
+  }catch(e){ /* offline — keep whatever we had; the day list still renders */ }
+}
+/* Push one entry. The Worker merges it in, so a concurrent write from Discord can't be clobbered. */
+async function saveFlowEntry(key){
+  if(!FLOW_URL||!key||!flowCache.items[key]) return false;
+  flowCache.items[key].updated=Date.now();
+  try{
+    const r=await fetch(FLOW_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},
+      body:JSON.stringify({flow:{items:{[key]:flowCache.items[key]}}})});
+    if(!r.ok) return false;
+    const j=await r.json();
+    if(j && j.flow && j.flow.items) flowCache={items:j.flow.items};
+    return true;
+  }catch(e){ return false; }
+}
+/* The Discord agent can't see Google task ids, so it writes entries keyed "pending:<title>".
+   Whenever we have the real task list, adopt those onto the real id and tombstone the placeholder
+   (an EMPTY entry is the tombstone — the Worker keeps it around so a stale device can't resurrect
+   the old state, and prunes it after 60 days). */
+async function reconcileFlow(items){
+  const pend=Object.keys(flowCache.items).filter(k=>k.indexOf("pending:")===0 && !flowEntryEmpty(flowCache.items[k]));
+  if(!pend.length || !items.length) return false;
+  const patch={};
+  for(const k of pend){
+    const e=flowCache.items[k], q=flowNorm(e.title);
+    const t=items.find(x=>flowNorm(x.title)===q) || items.find(x=>flowNorm(x.title).indexOf(q)>=0);
+    if(!t) continue;
+    patch[t.taskId]=Object.assign({}, e, {taskId:t.taskId, title:t.title, updated:Date.now()});
+    patch[k]={taskId:null, title:e.title, waiting:"", after:"", updated:Date.now()};
+    flowCache.items[t.taskId]=patch[t.taskId]; flowCache.items[k]=patch[k];
+  }
+  if(!Object.keys(patch).length) return false;
+  if(!FLOW_URL) return true;   // adopted locally at least — still worth a redraw
+  try{
+    const r=await fetch(FLOW_URL,{method:"PUT",headers:{"Content-Type":"application/json",...dashAuthHeader()},body:JSON.stringify({flow:{items:patch}})});
+    if(r.ok){ const j=await r.json(); if(j && j.flow && j.flow.items) flowCache={items:j.flow.items}; }
+  }catch(e){}
+  return true;
+}
+function flowEntryEmpty(e){ return !e || (!e.waiting && !e.after); }
+/* Is the task this one is blocked behind still open? If it's gone from the list, it got completed
+   and this task is free. Only trust "gone" when EVERY account loaded — a Tasks API failure would
+   otherwise silently unblock everything. */
+function blockerOpen(e, items){
+  if(!e || !e.after) return false;
+  if(taskFailed.length) return true;
+  const q=flowNorm(e.after);
+  return items.some(t=>{
+    if(e.afterId && t.taskId===e.afterId) return true;
+    const n=flowNorm(t.title);
+    return n===q || n.indexOf(q)>=0 || q.indexOf(n)>=0;
+  });
+}
+/* Split the open tasks into the three states. Blocked tasks whose blocker is done fall back into
+   the active list on their own — that's the whole point of wiring the dependency up. */
+function taskBuckets(items){
+  const active=[], waiting=[], blocked=[];
+  for(const t of items){
+    const e=flowFor(t);
+    if(e && e.waiting) waiting.push({t,e});
+    else if(e && e.after && blockerOpen(e, items)) blocked.push({t,e});
+    else active.push(t);
+  }
+  return {active, waiting, blocked};
+}
+function daysSince(ms){ return ms?Math.max(0,Math.round((Date.now()-Number(ms))/86400000)):null; }
+function waitedLabel(e){
+  const d=daysSince(e.waitingSince);
+  if(d==null) return "";
+  return d===0?"today":d===1?"1 day":d+" days";
+}
+/* Completing a task frees whatever was queued behind it — clear those blocks and say so, so Q
+   doesn't have to remember that "pay the CCs" was the reason he linked Plaid in the first place. */
+async function releaseDependents(task){
+  const q=flowNorm(task.title), freed=[];
+  for(const k of Object.keys(flowCache.items)){
+    const e=flowCache.items[k];
+    if(!e || !e.after || k===task.taskId) continue;
+    const a=flowNorm(e.after);
+    const hit=(e.afterId && e.afterId===task.taskId) || a===q || a.indexOf(q)>=0 || q.indexOf(a)>=0;
+    if(!hit) continue;
+    e.after=""; e.afterId=null;
+    freed.push(e.title||"a task");
+    await saveFlowEntry(k);
+  }
+  if(freed.length) capFlash("🔓 Unblocked: "+freed.slice(0,3).join(", ")+(freed.length>3?` +${freed.length-3} more`:""));
+  return freed;
 }
 
 /* ---- In-dashboard reminder BELL (v1.43.0) ----------------------------------------------------
@@ -4937,11 +5221,14 @@ function parseReminder(text){
    Falls back to a Notes checkbox line if Google/Tasks-write isn't available yet. */
 /* Timeless reminders default to a same-day nudge ~3h out (Q's choice), rounded to :15, but never
    in the middle of the night — a late/pre-dawn default snaps to the next 8am instead. */
+/* Q's day actually starts at 10am — a nudge before that is a nudge he sleeps through, so every
+   defaulted/rolled-forward time lands here rather than at some generic early-morning hour. */
+const DAY_START_HOUR=10;
 function defaultReminderAt(){
   const d=new Date(Math.ceil((Date.now()+3*3600000)/(15*60000))*(15*60000));
   const h=d.getHours();
-  if(h>=21){ d.setDate(d.getDate()+1); d.setHours(8,0,0,0); }   // late night → tomorrow 8am
-  else if(h<7){ d.setHours(8,0,0,0); }                          // pre-dawn → 8am same day
+  if(h>=21){ d.setDate(d.getDate()+1); d.setHours(DAY_START_HOUR,0,0,0); }   // late night → tomorrow, when his day starts
+  else if(h<DAY_START_HOUR){ d.setHours(DAY_START_HOUR,0,0,0); }             // before his day starts → 10am
   return d.getTime();
 }
 async function captureRemind(text){
