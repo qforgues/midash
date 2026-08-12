@@ -103,6 +103,15 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   Everything else keeps the free instant regex path. **Any agent failure falls back to the regex
   path** — a capture must never be lost. `CONFIG.captureModel` (Sonnet) is used only for that lane.
   Don't "fix" nuance by adding more regex — that ladder has no top; widen the routing instead.
+- **Rollover ritual (v1.47.0):** ⚙️ → "Close out the day". Every leftover gets a date AND optionally
+  a time (a real reminder — "tomorrow" with no hour is how it lands here again tomorrow). Pushes are
+  counted on the flow entry; `rolloverSplit()` deliberately EXCLUDES waiting/blocked/undated tasks.
+  The nightly DM is a **normal reminder** (`ensureRolloverReminder`, `kind:"rollover"`), not new cron
+  logic — the browser resolves local time, so the Worker needs no tz. Its dedupe runs on every
+  `loadReminders`; **don't loosen it** or it burns the KV write budget.
+- **CSS tints:** `color-mix(… , transparent)` takes its lightness from whatever is BEHIND it. When a
+  tinted variant sits beside plain rows using solid `var(--bg)`, mix into `--bg`/`--surface`
+  explicitly instead — otherwise contrast against `--text` silently differs per theme (v1.47.0).
 - **Switchboard remedies (v1.46.2):** a `check()` can return `remedy {title, cmd, note}` for a
   failure the browser CANNOT fix (a systemd service on the Pi) — `openSbDetail` renders it as a
   command block with a Copy button instead of offering a button that can't reach the broken thing.

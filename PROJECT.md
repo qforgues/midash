@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.46.2` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.47.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -176,7 +176,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 158 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 169 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -376,6 +376,30 @@ Gmail question. `checkEmailFrom(who, since)` resolves a name against Google Cont
 returning the newest match with subject/time. Exposed as the **`check_email_from`** tool so
 "did Bob get back to me?" is answered from data. Browser-only by necessity — the Worker's copy of
 the tool refuses honestly rather than guessing.
+
+## The rollover ritual (v1.47.0)
+
+Q already did this by hand: late in the evening he'd write a "Tomorrow:" block and copy into it
+whatever he knew he couldn't finish. The list stayed honest because he re-decided every item daily.
+Two things make it worth building rather than leaving as retyping:
+
+- **It asks WHEN, not just "tomorrow."** A task silently re-dated is the same task that didn't
+  happen today. Each row has a date AND an optional time; give it a time and you get a real Discord
+  reminder at that hour (`rolloverPush` → the existing reminder queue).
+- **It counts the pushes** (`flow.pushes`, so it syncs across devices). At **3+** the row turns amber
+  and says so — something moved four days running is too big or not actually wanted, so the callout
+  suggests the first 10-minute step, a real time, or dropping it. `list_waiting` also returns
+  **`slipping`**, so the agent can raise it unprompted.
+
+Surfaces: ⚙️ → **"Close out the day"** any time · an auto-nudge strip in the Tasks card after
+`CONFIG.rolloverHour` (20:30) · a nightly Discord DM. **`rolloverSplit()` excludes anything already
+parked** — a waiting-on or blocked task didn't "not happen", it isn't his move yet — and excludes
+undated tasks (someday, not today's failure).
+
+The nightly DM is a **normal reminder**, not new cron logic: the reminder queue already resolves
+local time in the browser and the Worker already delivers on schedule, so there's no timezone
+handling server-side. `ensureRolloverReminder()` dedupes by `kind:"rollover"` + day → ~1 KV write a
+day. **Don't loosen that dedupe** — it runs on every `loadReminders`.
 
 ## Credit-card debt — deterministic payoff calculator (v1.33.0)
 
@@ -632,6 +656,14 @@ cd ~/miDash && wrangler deploy
   select-range fallback). The footer text also stops pointing at the test DM as proof when it's the
   inbound half that's down. `fmtAgo` so a dead bot reads "3 hr", not "184 min". Verified in headless
   Chrome at 320/500/900px: no page overflow, the command block scrolls inside its own box.
+- v1.47.0: **The rollover ritual.** ⚙️ → "Close out the day" + an evening nudge strip + a nightly
+  Discord DM. Every leftover gets a date and optionally a TIME (which becomes a real ping), or Done,
+  or Drop. Pushes are counted on the flow entry; at 3+ the row turns amber and says what to do about
+  it, and `list_waiting` exposes `slipping` to the agent. Excludes waiting/blocked/undated tasks —
+  those didn't "not happen". Also fixed a latent contrast bug found by rendering: tinted rows mixed
+  into `transparent`, so their lightness came from whatever was behind them while sibling rows used
+  solid `--bg`; they now mix into `--bg`/`--surface` explicitly. Verified in headless Chrome, both
+  themes, 520/680/900px. 11 new assertions (169 total).
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

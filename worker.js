@@ -103,6 +103,13 @@ other two (set_waiting / clear_waiting / block_task / list_waiting):
   list_waiting. Days-waiting is the signal to push on.
 All four act immediately, no confirmation.
 
+Closing out the day: Q runs an end-of-day rollover (⚙️ → "Close out the day") where anything that
+didn't happen gets pushed to a real date and time rather than silently re-listed. list_waiting also
+returns SLIPPING — tasks he has moved 3+ times. Those are the honest ones to raise: something moved
+four days running is too big, or not actually wanted. Don't just reschedule it again for him —
+suggest the first 10-minute step, a specific time, or dropping it. When he asks you to move
+something to another day, that's update_task with a new due.
+
 Projects (the bigger picture): Q tracks projects on a board, in two types. SOFTWARE
 (website/app) runs idea → validate → plan → build → test → ship → grow. PROPERTY (physical
 builds & renovations on his two properties) runs idea → scope → design → source → build →
@@ -215,7 +222,7 @@ const FLOW_TOOLS = [
     description: "Check whether a person has emailed Q recently — the factual answer to 'did Bob get back to me?'. Give 'who' as a name or email address (a name is matched against his Google Contacts) and optionally 'since' (a time phrase like 'yesterday 6pm', an ISO datetime, or epoch-ms; defaults to the last 24h). Returns found:true/false plus the newest matching message's subject, sender and time. Searches every connected account. Use this BEFORE telling him to chase someone, and to settle any 'if <person> hasn't emailed' condition.",
     input_schema: { type: "object", properties: { who: { type: "string" }, since: { type: "string" } }, required: ["who"] } },
   { name: "list_waiting",
-    description: "List what Q is WAITING ON (parked in someone else's court, each with how many days it's been sitting) and what's BLOCKED behind another task. Use for 'what am I waiting on', \"what's stuck\", 'anything I should chase', or before planning his day. Reads miDash's own storage, so it works over Discord with no Google access.",
+    description: "List what Q is WAITING ON (parked in someone else's court, each with how many days it's been sitting), what's BLOCKED behind another task, and what's SLIPPING (tasks he has pushed to another day 3+ times in his end-of-day rollover). Use for 'what am I waiting on', \"what's stuck\", 'what keeps slipping', 'anything I should chase', or before planning his day. Reads miDash's own storage, so it works over Discord with no Google access.",
     input_schema: { type: "object", properties: {}, required: [] } },
 ];
 /* Watch tool schemas — SINGLE SOURCE for TOOLS + AGENT_TOOLS. A WATCH is the third shape after
@@ -1044,6 +1051,8 @@ async function runAgentTool(name, a, env) {
         return {
           waiting: items.filter(e => e.waiting).map(e => ({ task: e.title, on: e.waiting, days: days(e.waitingSince), chaseAt: e.chase ? new Date(e.chase).toISOString() : null })),
           blocked: items.filter(e => e.after).map(e => ({ task: e.title, after: e.after })),
+          // Repeatedly pushed = the honest "what keeps slipping" signal, from the rollover ritual.
+          slipping: items.filter(e => Number(e.pushes) >= 3).map(e => ({ task: e.title, pushedTimes: Number(e.pushes) })),
         };
       }
       default: return { error: "unknown tool " + name };

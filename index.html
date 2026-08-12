@@ -428,12 +428,43 @@
   .sb-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
   /* Remedy block (v1.46.2): shown when the fix is a command on another machine, not a button here. */
   .sb-remedy { margin-top:13px; border:1px solid var(--warn); border-radius:10px; padding:12px 13px;
-               background:color-mix(in srgb, var(--warn) 8%, transparent); }
+               background:color-mix(in srgb, var(--warn) 10%, var(--surface)); }
   .sb-remedy-head { font-size:13px; line-height:1.5; margin-bottom:9px; }
   .sb-cmd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.65;
             background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px;
             margin:0; white-space:pre; overflow-x:auto; user-select:all; }
   .sb-remedy-note { font-size:12px; color:var(--muted); line-height:1.5; margin-top:9px; }
+  /* ---- Rollover ritual (v1.47.0) ---- */
+  .ro-sec { margin-bottom:15px; }
+  .ro-sec > h3 { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+                 color:var(--muted); margin:0 0 7px; display:flex; align-items:center; gap:7px; }
+  .ro-row { border:1px solid var(--border); border-radius:10px; padding:9px 11px; margin-bottom:7px; background:var(--bg); }
+  /* Tint into --bg, NOT transparent: a transparent mix takes its lightness from whatever is behind
+     it, so a stale row would sit on --surface while its plain siblings sit on --bg — different base,
+     different contrast against --text, for reasons unrelated to being stale. */
+  .ro-row.stale { border-color:var(--warn); background:color-mix(in srgb, var(--warn) 12%, var(--bg)); }
+  .ro-row.gone { opacity:.4; }
+  .ro-title { font-size:13.5px; line-height:1.45; overflow-wrap:anywhere; display:flex; gap:9px; align-items:baseline; }
+  .ro-title .s { flex:1; min-width:0; }
+  .ro-moved { flex:none; font-size:11px; color:var(--muted); white-space:nowrap; }
+  .ro-row.stale .ro-moved { color:var(--warn); font-weight:600; }
+  .ro-nag { font-size:11.5px; color:var(--warn); line-height:1.45; margin-top:5px; }
+  .ro-acts { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .ro-acts input[type=date], .ro-acts input[type=time] {
+     border:1px solid var(--border); background:var(--card); color:var(--text); border-radius:8px;
+     padding:4px 7px; font-size:12.5px; outline:none; min-width:0; }
+  .ro-acts input:focus { border-color:var(--accent); }
+  .ro-btn { border:1px solid var(--border); background:transparent; color:var(--text); border-radius:8px;
+            padding:4px 10px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+  .ro-btn:hover { border-color:var(--accent); color:var(--accent); }
+  .ro-btn.go { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .ro-btn.drop:hover { border-color:var(--warn); color:var(--warn); }
+  .ro-msg { font-size:12px; color:var(--muted); margin-top:6px; min-height:15px; }
+  /* The nudge strip in the Tasks card once the day is over */
+  .ro-nudge { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin-bottom:12px; padding:9px 11px;
+              border:1px solid var(--accent); border-radius:10px;
+              background:color-mix(in srgb, var(--accent) 12%, var(--bg)); font-size:13px; }
+  .ro-nudge .s { flex:1; min-width:0; }
   /* round themed close ✕ in the modal corner */
   .sb-x { position:absolute; top:12px; right:12px; width:34px; height:34px; padding:0; border-radius:50%;
           border:2px solid var(--accent); background:transparent; color:var(--accent); font-size:15px; line-height:1;
@@ -761,6 +792,7 @@
         <div id="gear-menu" class="gear-menu" style="display:none">
           <div class="gear-foot" style="border-top:none;margin-top:0;padding-top:0">
             <button id="open-settings" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="user"></span>Appearance &amp; profile</button>
+            <button id="rollover-link" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="clock"></span>Close out the day</button>
             <button id="weekly-link" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="calcheck"></span>Weekly review <span id="weekly-due" class="weekly-due"></span></button>
             <button id="cc-debt-link" class="gbtn" style="width:100%;margin-bottom:8px"><span data-ic="card"></span>Credit Card Debt</button>
             <button id="check-update" class="gbtn" style="width:100%;margin-bottom:4px"><span data-ic="refresh"></span>Check for update</button>
@@ -841,6 +873,7 @@
         <div class="card" id="tasks-card">
           <h2><span class="dot" data-ic="checks"></span>Tasks &amp; Reminders
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
+          <div id="ro-nudge" class="ro-nudge" style="display:none"></div>
           <div id="reminders-strip" class="reminders-strip"></div>
           <div id="watch-strip" class="reminders-strip"></div>
           <div id="tasks"><div class="empty">—</div></div>
@@ -1103,6 +1136,20 @@
 </div>
 
 <!-- Weekly review — once-a-week rollup across the whole dashboard (opened from the ☰ menu) -->
+<!-- Close out the day: the rollover ritual. Everything that didn't happen, pushed with a real
+     time rather than silently re-listed tomorrow. -->
+<div id="ro-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" id="ro-bg"></div>
+  <div class="panel" style="max-width:620px">
+    <h2>🌙 Close out the day</h2>
+    <div id="ro-body"><div class="empty">—</div></div>
+    <div class="pat-actions" style="margin-top:16px;flex-wrap:wrap;gap:8px">
+      <button id="ro-all" class="gbtn" style="border-color:var(--accent);color:var(--accent)">Push everything to tomorrow</button>
+      <button id="ro-close" class="gbtn">Done for today</button>
+    </div>
+  </div>
+</div>
+
 <div id="weekly-modal" class="modal" style="display:none">
   <div class="modal-backdrop" id="weekly-bg"></div>
   <div class="panel" style="max-width:560px">
@@ -1142,7 +1189,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.46.2",
+  version: "1.47.0",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -1161,6 +1208,12 @@ const CONFIG = {
   // they get a smarter model than the chat default. Simple captures never call the API at all.
   // Set to null to just use whatever the chat picker is on.
   captureModel: "claude-sonnet-4-6",
+
+  // The rollover ritual: when the day gets closed out. Late enough that the day is really over,
+  // early enough that there's still time to act on what you push. Set rollover:false to turn off
+  // the nightly Discord nudge (the ⚙️ → "Close out the day" entry stays either way).
+  rollover: true,
+  rolloverHour: 20, rolloverMinute: 30,
 
   // Your PERSONAL Google address — pins every Google link to the right account.
   account: "quentin.forgues@gmail.com",
@@ -3137,6 +3190,7 @@ function renderTasksList(){
   box.querySelectorAll(".flow-unpark").forEach(el=>{ el.onclick=(ev)=>{ ev.stopPropagation(); unparkTask(el.dataset.task, el.dataset.mode); }; });
   const tg=document.getElementById("tasks-toggle"); if(tg) tg.onclick=()=>{ tasksExpanded=!tasksExpanded; renderTasksList(); };
   if(taskFailed.length) wireReconnect("reconnect-tasks");
+  renderRolloverNudge();   // "N still open today — close out the day?" once the evening's here
 }
 /* Un-park: the thing came back, or he's starting it regardless. Also cancels a pending chase ping
    so a cleared wait doesn't DM him about chasing something that already landed. */
@@ -4586,6 +4640,7 @@ async function executeTool(name,a){
           return {
             waiting: waiting.map(({t,e})=>({task:t.title, on:e.waiting, days:daysSince(e.waitingSince), chaseAt:e.chase?new Date(e.chase).toLocaleString():null})),
             blocked: blocked.map(({t,e})=>({task:t.title, after:e.after})),
+            slipping: taskItems.filter(t=>pushCount(t)>=ROLL_NAG_AT).map(t=>({task:t.title, pushedTimes:pushCount(t)})),
           };
         }
         const t=find(a.task);
@@ -4773,6 +4828,7 @@ async function loadReminders(){
   try{ const r=await fetch(REMINDERS_URL,{headers:{...dashAuthHeader()}}); if(r.ok){ const j=await r.json(); list=(j&&j.reminders)||[]; } }catch(e){ return; }
   reminderCache=list;      // drives the bell's local due-check (see checkDueReminders)
   checkDueReminders();
+  ensureRolloverReminder();   // keep tonight's end-of-day DM queued (dedupes; ~1 KV write/day)
   if(!box) return;
   if(!list.length){ box.innerHTML=""; return; }
   list.sort((a,b)=>a.at-b.at);
@@ -4900,6 +4956,186 @@ async function releaseDependents(task){
   }
   if(freed.length) capFlash("🔓 Unblocked: "+freed.slice(0,3).join(", ")+(freed.length>3?` +${freed.length-3} more`:""));
   return freed;
+}
+
+/* ---- The rollover ritual (v1.47.0) -----------------------------------------------------------
+   Q already does this by hand: late in the evening he writes a "Tomorrow:" block and copies what he
+   knows he can't finish into it. The list stays honest because he re-decides every item every day.
+
+   Two things make it worth building rather than leaving as retyping:
+   - It asks WHEN, not just "tomorrow". A task silently re-dated to tomorrow is the same task that
+     didn't happen today; a task with a time attached is one he's actually committed to.
+   - It COUNTS the pushes. Something moved four days running isn't a scheduling problem — it's too
+     big, or not really wanted. Nothing surfaces that unless someone keeps score.
+   The count lives on the flow entry (`pushes`), so it survives across devices like everything else. */
+function todayYmd(){ return ymdLocal(new Date()); }
+function ymdPlus(days){ const d=new Date(); d.setDate(d.getDate()+days); return ymdLocal(d); }
+/* Pure: what the ritual is about. Anything already parked (waiting on someone, blocked behind
+   another task) is deliberately excluded — it didn't "not happen", it isn't his move yet. */
+function rolloverSplit(items, flowItems, today){
+  const overdue=[], todays=[];
+  for(const t of (items||[])){
+    const e=(flowItems||{})[t.taskId];
+    if(e && (e.waiting || e.after)) continue;
+    if(!t.dueDate) continue;                    // undated isn't "didn't happen today", it's someday
+    if(t.dueDate < today) overdue.push(t);
+    else if(t.dueDate === today) todays.push(t);
+  }
+  const by=(a,b)=>(a.dueDate<b.dueDate?-1:a.dueDate>b.dueDate?1:0);
+  return {overdue:overdue.sort(by), today:todays};
+}
+const ROLL_NAG_AT=3;   // pushes before we stop quietly moving it and say something
+function pushCount(t){ const e=(flowCache.items||{})[t.taskId]; return (e&&Number(e.pushes))||0; }
+function rolloverNag(n){
+  if(n<ROLL_NAG_AT) return "";
+  return `Moved ${n} days running. That usually means it's too big, or you don't actually want it — break it into the first 10-minute step, give it a real time, or drop it.`;
+}
+/* Push one task to a date, optionally with a time. The time becomes a REAL reminder, because
+   "tomorrow" without an hour is how a task ends up here again tomorrow. */
+async function rolloverPush(taskId, ymd, timeStr){
+  const t=findTask(taskId); if(!t||!ymd) return {ok:false, error:"no task"};
+  const r=await patchTask(t, {due:new Date(ymd+"T00:00:00Z").toISOString()});
+  if(!r.ok) return {ok:false, error:"Google wouldn't take it ("+r.status+")"};
+  const e=flowEntry(t);
+  e.pushes=(Number(e.pushes)||0)+1; e.lastPush=Date.now();
+  await saveFlowEntry(t.taskId);
+  t.dueDate=ymd;                                  // keep the in-memory list truthful, no reload
+  let pinged=false;
+  if(timeStr){
+    const at=resolveAt(ymd+"T"+timeStr);
+    if(at && at>Date.now()){ const p=await scheduleReminder(at, t.title, "rollover-task"); pinged=!!p.ok; if(pinged) loadReminders(); }
+  }
+  return {ok:true, pushes:e.pushes, pinged};
+}
+async function rolloverDrop(taskId){
+  const t=findTask(taskId); if(!t) return false;
+  const acct=acctByEmail(t.acct); if(!acct) return false;
+  let r; try{ r=await fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(t.listId)}/tasks/${encodeURIComponent(t.taskId)}`,{method:"DELETE",headers:{Authorization:"Bearer "+acct.token}}); }catch(e){ return false; }
+  if(!(r.ok||r.status===204)) return false;
+  taskItems=taskItems.filter(x=>x.taskId!==taskId);
+  return true;
+}
+async function rolloverComplete(taskId){
+  const t=findTask(taskId); if(!t) return false;
+  const r=await patchTask(t,{status:"completed"});
+  if(!r.ok) return false;
+  taskItems=taskItems.filter(x=>x.taskId!==taskId);
+  await releaseDependents(t);
+  return true;
+}
+function roRowHTML(t){
+  const n=pushCount(t), nag=rolloverNag(n);
+  const overdueBy = t.dueDate<todayYmd() ? ` · was due ${esc(fmtDue(t.dueDate))}` : "";
+  return `<div class="ro-row${n>=ROLL_NAG_AT?" stale":""}" data-task="${escAttr(t.taskId)}">
+    <div class="ro-title"><span class="s">${esc(t.title)}</span>
+      <span class="ro-moved">${n?`moved ${n}×`:""}${overdueBy}</span></div>
+    ${nag?`<div class="ro-nag">${esc(nag)}</div>`:""}
+    <div class="ro-acts">
+      <input type="date" class="ro-date" value="${escAttr(ymdPlus(1))}" aria-label="New due date">
+      <input type="time" class="ro-time" value="" aria-label="Remind me at (optional)">
+      <button type="button" class="ro-btn go ro-push">Push</button>
+      <button type="button" class="ro-btn ro-done">✓ Done</button>
+      <button type="button" class="ro-btn drop ro-del">Drop</button>
+    </div>
+    <div class="ro-msg"></div></div>`;
+}
+function renderRolloverBody(){
+  const body=document.getElementById("ro-body"); if(!body) return;
+  const {overdue, today}=rolloverSplit(taskItems, flowCache.items, todayYmd());
+  if(!overdue.length && !today.length){
+    body.innerHTML=`<div class="empty">Nothing left hanging — today's list is clear. 🎉</div>`;
+    const all=document.getElementById("ro-all"); if(all) all.style.display="none";
+    return;
+  }
+  const all=document.getElementById("ro-all"); if(all) all.style.display="";
+  const sec=(label, rows)=> rows.length
+    ? `<div class="ro-sec"><h3>${ic("clock")} ${esc(label)} <span class="fin-state">${rows.length}</span></h3>${rows.map(roRowHTML).join("")}</div>` : "";
+  body.innerHTML = sec("Overdue", overdue) + sec("Due today, still open", today);
+  body.querySelectorAll(".ro-row").forEach(wireRoRow);
+  renderIcons(body);
+}
+function wireRoRow(row){
+  const id=row.dataset.task;
+  const msg=(s)=>{ const m=row.querySelector(".ro-msg"); if(m) m.textContent=s||""; };
+  const retire=(label)=>{ row.classList.add("gone"); row.querySelectorAll("button,input").forEach(b=>b.disabled=true); msg(label); };
+  row.querySelector(".ro-push").onclick=async()=>{
+    const ymd=row.querySelector(".ro-date").value, time=row.querySelector(".ro-time").value;
+    if(!ymd){ msg("Pick a date first."); return; }
+    msg("Pushing…");
+    const r=await rolloverPush(id, ymd, time);
+    if(!r.ok){ msg(r.error||"Couldn't push it."); return; }
+    retire(`→ ${fmtDue(ymd)}${r.pinged?` · you'll get a ping at ${time}`:""}${r.pushes>=ROLL_NAG_AT?` · that's ${r.pushes} moves`:""}`);
+  };
+  row.querySelector(".ro-done").onclick=async()=>{ msg("Completing…"); retire(await rolloverComplete(id)?"✓ Done":""); if(!row.classList.contains("gone")) msg("Couldn't complete it."); };
+  row.querySelector(".ro-del").onclick=async()=>{
+    if(!confirm("Delete this task permanently?")) return;
+    msg("Dropping…"); if(await rolloverDrop(id)) retire("Dropped"); else msg("Couldn't delete it.");
+  };
+}
+function openRollover(){
+  const m=document.getElementById("ro-modal"); if(!m) return;
+  renderRolloverBody();
+  m.style.display="flex";
+}
+function closeRollover(){
+  const m=document.getElementById("ro-modal"); if(m) m.style.display="none";
+  try{ localStorage.setItem("midash_rollover_done", todayYmd()); }catch(e){}
+  loadTasks();                       // pull the real state back after the ritual
+  renderRolloverNudge();
+}
+async function rolloverPushAll(){
+  const {overdue, today}=rolloverSplit(taskItems, flowCache.items, todayYmd());
+  const list=overdue.concat(today);
+  if(!list.length) return;
+  const btn=document.getElementById("ro-all"); if(btn){ btn.disabled=true; btn.textContent="Pushing…"; }
+  let n=0;
+  for(const t of list){ const r=await rolloverPush(t.taskId, ymdPlus(1), ""); if(r.ok) n++; }
+  if(btn){ btn.disabled=false; btn.textContent="Push everything to tomorrow"; }
+  renderRolloverBody();
+  capFlash(`🌙 Pushed ${n} to tomorrow — none of them got a time, so expect them back here`, 6000);
+}
+/* Is the day over? Uses Q's configured end-of-day, not midnight — the ritual is only useful while
+   he's still awake to do it. */
+function rolloverDue(){
+  const now=new Date();
+  const end=new Date(); end.setHours(CONFIG.rolloverHour||20, CONFIG.rolloverMinute||30, 0, 0);
+  if(now<end) return false;
+  let done=null; try{ done=localStorage.getItem("midash_rollover_done"); }catch(e){}
+  if(done===todayYmd()) return false;
+  const {overdue, today}=rolloverSplit(taskItems, flowCache.items, todayYmd());
+  return (overdue.length+today.length)>0;
+}
+function renderRolloverNudge(){
+  const box=document.getElementById("ro-nudge"); if(!box) return;
+  if(!rolloverDue()){ box.innerHTML=""; box.style.display="none"; return; }
+  const {overdue, today}=rolloverSplit(taskItems, flowCache.items, todayYmd());
+  const n=overdue.length+today.length;
+  box.style.display="";
+  box.innerHTML=`<span class="s">🌙 ${n} thing${n>1?"s":""} still open today — close out the day?</span>
+    <button type="button" class="ro-btn go" id="ro-open">Review them</button>
+    <button type="button" class="ro-btn" id="ro-skip">Not tonight</button>`;
+  document.getElementById("ro-open").onclick=openRollover;
+  document.getElementById("ro-skip").onclick=()=>{ try{ localStorage.setItem("midash_rollover_done", todayYmd()); }catch(e){} renderRolloverNudge(); };
+}
+/* The evening DM. Deliberately a NORMAL reminder rather than new cron logic: the reminder queue
+   already resolves Q's local time in the browser and the Worker already delivers on schedule, so
+   this needs no timezone handling server-side. Scheduled once per day — the dedupe below is what
+   keeps it off the KV write budget, so don't loosen it. */
+function ensureRolloverReminder(){
+  if(!REMINDERS_URL || CONFIG.rollover===false) return;
+  const target=new Date(); target.setHours(CONFIG.rolloverHour||20, CONFIG.rolloverMinute||30, 0, 0);
+  if(target.getTime() < Date.now()+60000) target.setDate(target.getDate()+1);   // today's has passed → tomorrow's
+  const day=ymdLocal(target);
+  if(reminderCache.some(r=>r && r.kind==="rollover" && ymdLocal(new Date(r.at))===day)) return;
+  scheduleReminder(target.getTime(), "🌙 End of day — anything that didn't happen? Open miDash to push it with a real time.", "rollover")
+    .then(r=>{ if(r.ok) loadReminders(); });
+}
+function initRollover(){
+  const bg=document.getElementById("ro-bg"); if(bg) bg.onclick=closeRollover;
+  const cl=document.getElementById("ro-close"); if(cl) cl.onclick=closeRollover;
+  const all=document.getElementById("ro-all"); if(all) all.onclick=rolloverPushAll;
+  const link=document.getElementById("rollover-link");
+  if(link) link.onclick=(e)=>{ e.preventDefault(); e.stopPropagation(); const gm=document.getElementById("gear-menu"); if(gm) gm.style.display="none"; openRollover(); };
 }
 
 /* ---- Email watch: settling "has X got back to me?" from real data (v1.46.0) ------------------
@@ -5763,7 +5999,7 @@ function boot(){
     ["initPWA",initPWA],["initKeyModal",initKeyModal],
     ["initTaskModal",initTaskModal],["initContactsManager",initContactsManager],["initProjects",initProjects],
     ["initTracker",initTracker],["initSwitchboard",initSwitchboard],["initDebt",initDebt],
-    ["initWeekly",initWeekly],["initCollapsible",initCollapsible],["initBell",initBell],
+    ["initWeekly",initWeekly],["initRollover",initRollover],["initCollapsible",initCollapsible],["initBell",initBell],
     ["googleBoot",googleBoot],
   ];
   for(const [name,fn] of steps){ try{ fn(); }catch(e){ console.error("[boot] "+name+" failed:", e); } }

@@ -347,6 +347,25 @@ function fmtAgo(ms){
   return Math.round(h/24)+" days";
 }
 
+// --- Rollover ritual (index.html, v1.47.0) — KEEP IN SYNC ---
+function rolloverSplit(items, flowItems, today){
+  const overdue=[], todays=[];
+  for(const t of (items||[])){
+    const e=(flowItems||{})[t.taskId];
+    if(e && (e.waiting || e.after)) continue;
+    if(!t.dueDate) continue;
+    if(t.dueDate < today) overdue.push(t);
+    else if(t.dueDate === today) todays.push(t);
+  }
+  const by=(a,b)=>(a.dueDate<b.dueDate?-1:a.dueDate>b.dueDate?1:0);
+  return {overdue:overdue.sort(by), today:todays};
+}
+const ROLL_NAG_AT=3;
+function rolloverNag(n){
+  if(n<ROLL_NAG_AT) return "";
+  return `Moved ${n} days running. That usually means it's too big, or you don't actually want it — break it into the first 10-minute step, give it a real time, or drop it.`;
+}
+
 /* ================================ TEST HARNESS ================================ */
 let pass=0, fail=0;
 const out=document.getElementById("out");
@@ -746,6 +765,36 @@ section("fmtAgo — a dead Pi bot reads as hours/days, not '4331 min' (v1.46.2)"
   ok(fmtAgo(47*hr)==="47 hr", "under 48h still reads in hours");
   ok(fmtAgo(72*hr)==="3 days", "past two days switches to days");
   ok(fmtAgo(-5000)==="0 min", "a clock-skewed future timestamp can't print negative");
+}
+
+section("Rollover ritual — what the day actually left hanging (v1.47.0)");
+{
+  const TODAY="2026-08-11";
+  const items=[
+    {taskId:"a", title:"Drop off tapes",      dueDate:"2026-08-09"},   // overdue
+    {taskId:"b", title:"Update tracker42",    dueDate:"2026-08-11"},   // due today
+    {taskId:"c", title:"Pay CCs",             dueDate:"2026-08-11"},   // due today but BLOCKED
+    {taskId:"d", title:"Link CCs via Plaid",  dueDate:"2026-08-10"},   // overdue but WAITING
+    {taskId:"e", title:"End in Indy?",        dueDate:null},           // undated → someday
+    {taskId:"f", title:"Meet Rebecca",        dueDate:"2026-08-14"},   // future
+    {taskId:"g", title:"Jacket",              dueDate:"2026-08-07"},   // older overdue
+  ];
+  const flow={ c:{after:"Link CCs via Plaid"}, d:{waiting:"Plaid"} };
+  const r=rolloverSplit(items, flow, TODAY);
+
+  ok(r.overdue.map(t=>t.taskId).join(",")==="g,a", "overdue only, oldest first");
+  ok(r.today.map(t=>t.taskId).join(",")==="b", "due-today excludes the blocked one");
+  ok(!r.overdue.some(t=>t.taskId==="d"), "a WAITING task isn't 'didn't happen' — it isn't his move");
+  ok(!r.today.some(t=>t.taskId==="c"), "a BLOCKED task isn't dragged into the ritual either");
+  ok(!r.overdue.concat(r.today).some(t=>t.taskId==="e"), "undated is someday, not a rollover item");
+  ok(!r.overdue.concat(r.today).some(t=>t.taskId==="f"), "future tasks are left alone");
+  ok(rolloverSplit([], {}, TODAY).overdue.length===0, "empty list is safe");
+  ok(rolloverSplit(items, null, TODAY).today.length===2, "no flow data → nothing is filtered out");
+
+  // The push counter is the whole point — quiet below the threshold, blunt at it.
+  ok(rolloverNag(0)==="" && rolloverNag(2)==="", "1–2 pushes stay silent (life happens)");
+  ok(rolloverNag(3).indexOf("Moved 3 days running")===0, "3 pushes starts the callout");
+  ok(/10-minute step/.test(rolloverNag(4)), "the callout suggests a way out, not just a scolding");
 }
 
 /* ================================ SUMMARY ================================ */
