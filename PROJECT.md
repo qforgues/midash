@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.46.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.46.1` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -619,6 +619,10 @@ cd ~/miDash && wrangler deploy
   accounts, which is what actually settles a watch. Q's canonical sentence now works end to end:
   *"call Bob by 10a if he doesn't email me before then"* → ping at 10a, inbox checked, task only if
   Bob stayed quiet. 18 new assertions (152 total).
+- v1.46.1: removed the in-card "＋ add a task…" form (`#task-add`, `initTasksAdd`, `.task-add` CSS,
+  boot step). It was a third way to do what the capture bar already does better — the bar parses a
+  due date, carries context into the task notes, and routes anything nuanced to the agent; the bare
+  form did none of that and quietly produced context-free tasks.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

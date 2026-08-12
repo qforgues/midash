@@ -135,10 +135,6 @@
   .tcheck { width:19px; height:19px; flex:none; border:1.5px solid color-mix(in srgb, var(--p,var(--accent)) 55%, var(--border)); border-radius:50%;
             cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:12px; color:var(--accent); transition:all .12s; }
   .tcheck:hover { border-color:var(--accent); background:var(--accent-soft); }
-  .task-add { display:flex; gap:7px; margin:2px 0 12px; }
-  .task-add input { flex:1; min-width:0; border:1px solid var(--border); background:var(--bg); color:var(--text); border-radius:9px; padding:7px 11px; font-size:13.5px; outline:none; }
-  .task-add input:focus { border-color:var(--accent); }
-  .task-add button { border:none; background:var(--accent-soft); color:var(--accent); border-radius:9px; padding:0 13px; font-size:13px; font-weight:600; cursor:pointer; }
   .item .t { color:var(--accent); font-variant-numeric:tabular-nums; font-weight:600; font-size:13px; }
   .item .s { display:block; }
   .item .from { color:var(--muted); font-size:12.5px; }
@@ -839,7 +835,6 @@
             <span class="refresh" id="tasks-refresh"><span class="ricon">↻</span> refresh</span></h2>
           <div id="reminders-strip" class="reminders-strip"></div>
           <div id="watch-strip" class="reminders-strip"></div>
-          <form id="task-add" class="task-add"><input id="task-add-input" placeholder="＋ add a task…" autocomplete="off"><button type="submit">Add</button></form>
           <div id="tasks"><div class="empty">—</div></div>
           <div id="tasks-pager" class="pager" style="display:none"></div>
         </div>
@@ -1139,7 +1134,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.46.0",
+  version: "1.46.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3146,19 +3141,9 @@ async function unparkTask(taskId, mode){
   await saveFlowEntry(taskId);
   renderTasksList();
 }
-function initTasksAdd(){
-  const f=document.getElementById("task-add"); if(!f) return;
-  f.addEventListener("submit",async e=>{
-    e.preventDefault();
-    const inp=document.getElementById("task-add-input"), title=inp.value.trim(); if(!title) return;
-    const acct=defaultAcct(); if(!acct){ alert("Connect Google first."); return; }
-    inp.disabled=true;
-    const r=await createTask(acct, title);
-    inp.disabled=false;
-    if(r.ok){ inp.value=""; loadTasks(); inp.focus(); }
-    else alert("Couldn't add the task ("+r.status+"). Reconnect Google to grant Tasks write access (✕ the account chip, then Connect Google).");
-  });
-}
+/* (v1.46.1) The in-card "＋ add a task…" form is gone. It was a third way to do what the capture
+   bar already does better — the capture bar parses a due date, carries context into the notes, and
+   routes anything nuanced to the agent, none of which the bare form did. */
 
 /* ---- Task editor modal (all task data: title, due date, notes; complete/delete) ---- */
 let editingTask=null;
@@ -5720,7 +5705,7 @@ function boot(){
     ["render",render],["tick",tick],["tickTimer",()=>setInterval(tick,10000)],
     ["initModelPicker",initModelPicker],["initGearMenu",initGearMenu],["initSettings",initSettings],
     ["initChat",initChat],["initNotes",initNotes],["initCapture",initCapture],["initCaptureMic",initCaptureMic],["initFocus",initFocus],
-    ["initPWA",initPWA],["initKeyModal",initKeyModal],["initTasksAdd",initTasksAdd],
+    ["initPWA",initPWA],["initKeyModal",initKeyModal],
     ["initTaskModal",initTaskModal],["initContactsManager",initContactsManager],["initProjects",initProjects],
     ["initTracker",initTracker],["initSwitchboard",initSwitchboard],["initDebt",initDebt],
     ["initWeekly",initWeekly],["initCollapsible",initCollapsible],["initBell",initBell],
