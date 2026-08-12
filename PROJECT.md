@@ -5,7 +5,7 @@
 
 **Current version:** `1.48.0` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
+**Last updated:** 2026-08-11 (workflow build-out v1.45–1.48: flow layer, capture routing, watches, rollover, places)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -90,10 +90,12 @@ moved to the Pi so both stay up when the Mac is closed.
   no task ids; the browser re-keys those on its next load. **PUT merges per-entry LWW** and returns
   the merged set, like `/projects`, so the browser never merges. v1.45.0)
 - **Watches (conditionals):** `GET/POST/DELETE /watch`  (KV `watches` blob. POST adds
-  `{at,who,thenTitle,thenNotes,since,reminderId}`; `POST {resolve:id,result}` settles one; GET lists
-  pending. The Worker queues them and fires the Discord ping on time via the normal reminder path,
-  but **cannot evaluate one** — the condition is a Gmail question and Google creds live only in the
-  browser, so `runDueWatches()` settles them when the dashboard is open. v1.46.0)
+  `{at,kind,check,who|ref,target,thenTitle,thenNotes,since,reminderId}`; `POST {resolve:id,result}`
+  settles one; GET lists pending. The Worker always queues them and fires the Discord ping on time
+  via the normal reminder path. **`email_from` it cannot evaluate** — that's a Gmail question and
+  Google creds live only in the browser, so `runDueWatches()` settles it when the dashboard is open.
+  **`invoice_paid` / `ticket_status` it settles itself** on the cron (`settleServerWatches`), since
+  those keys are server-side. v1.46.0, kinds added v1.48.0)
 - **Discord push health:** `GET /discord-check`  (validates `DISCORD_BOT_TOKEN` via `/users/@me` +
   `DISCORD_USER_ID` by opening a DM channel — no message sent; `?send=1` delivers a real test DM.
   The Switchboard **Discord card** shows inbound heartbeat + outbound push in one, with a "🔔 Send
