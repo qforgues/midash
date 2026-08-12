@@ -62,17 +62,26 @@ your Anthropic API key.
 ### What the agent can do
 
 The chat is a tool-using agent. It can:
-- read your calendar (next few days)
-- search your Gmail
-- reply to an email (in-thread), trash, archive, mark as read
+- read your calendar (next few days), create and delete events
+- search your Gmail; reply in-thread, trash, archive, mark as read, send new mail
+- read, create, complete and **reschedule** your Google Tasks
+- read and clean up your Google Contacts
+- read your Notes scratchpad
+- schedule **reminders** (a Discord DM at a set moment — miDash's own queue, not Google's)
+- park a task as **waiting on** someone, or **blocked behind** another task, and tell you
+  what's stuck, what to chase, and what keeps slipping
+- set a **conditional**: "call Bob by 10a if he hasn't emailed by then" — it checks your inbox
+  at that moment and only creates the task if he stayed quiet
+- see your business finances and Portal42 tickets
 
 The Anthropic key lives only on the backend. The Gmail/Calendar actions run **in your
 browser** using your own Google login, so the backend never needs Google access.
 Replies and trash always pop an on-screen confirm before they happen.
 
-> Scopes used: `calendar.readonly`, `gmail.modify`, `gmail.send`. If you connected
-> Google before adding the agent, click **Connect Google** again to grant the new
-> permissions (you'll see a fresh consent screen).
+> Scopes used: `openid email`, `calendar.events`, `gmail.modify`, `gmail.send`,
+> `contacts` (read + delete), `tasks` (read + write). The People API and Tasks API must be
+> enabled in your Google Cloud project. If you connected Google before adding a capability,
+> click **Connect Google** again to grant the new permissions (you'll see a fresh consent screen).
 
 Two ready-made backends are included:
 

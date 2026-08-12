@@ -5,7 +5,7 @@ This file is just the rules that are easy to get wrong.
 
 ## What this repo is
 A single-user personal dashboard. **Frontend = one file, `index.html`** (all HTML/CSS/JS/CONFIG,
-~4200 lines, no build step, no framework, no npm). **Backend = one Cloudflare Worker, `worker.js`**
+~6000 lines, no build step, no framework, no npm). **Backend = one Cloudflare Worker, `worker.js`**
 (Anthropic proxy + KV storage, the "brain"). Hosted free on GitHub Pages + Cloudflare. Some services
 (Discord bot, 42payments) run on the Raspberry Pi `claudeclaw`. **Protect the serverless simplicity —
 do not introduce a build step, framework, or "v2 backend" unless a real pain forces it.**
@@ -39,10 +39,16 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   `repairChat`, `pushUserMessage` — index.html ↔ their copies in `tests.html`
 - `notesHash` — index.html ↔ worker.js (must produce identical hashes)
 - `parseReminder`, `resolveAt`, `defaultReminderAt` — index.html ↔ their copies in `tests.html`
-- `blockerOpen`, `taskBuckets` (index.html) ↔ copies in `tests.html`; `mergeFlow`, `pruneFlow`
-  (worker.js) ↔ copies in `tests.html`
-- Project tool schemas — one `PROJECT_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
-- Reminder tool schemas — one `REMINDER_TOOLS` const in worker.js, spread into `TOOLS` + `AGENT_TOOLS`.
+- `splitDetail`, `isNotifyOnly`, `hasCondition`, `captureNotes`, `captureIsComplex`,
+  `resolvePersonEmail`, `fmtAgo` — index.html ↔ copies in `tests.html`
+- `blockerOpen`, `taskBuckets`, `rolloverSplit`, `rolloverNag` (index.html) ↔ copies in `tests.html`;
+  `mergeFlow`, `pruneFlow` (worker.js) ↔ copies in `tests.html`
+- Tool schemas are single-sourced as consts in worker.js, each spread into BOTH `TOOLS` (chat) and
+  `AGENT_TOOLS` (Discord) so they can't drift: `PROJECT_TOOLS`, `REMINDER_TOOLS`, `FLOW_TOOLS`,
+  `WATCH_TOOLS`. `GET /tools` returns the canonical list.
+- **169 assertions in `tests.html`.** When you fix a bug, add the case that reproduces it, then
+  verify the test actually catches it by reverting the fix — several "passing" tests this repo has
+  added were vacuous until mutation-checked.
 
 ## Architecture facts that bite
 - **Google auth is client-side** (GIS token flow). Gmail/Calendar/Tasks/Contacts tools execute in the
@@ -51,8 +57,11 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   `runAgentTool` in worker.js, a read-mostly subset, no Google).
 - **Worker is passphrase-gated** (`DASH_KEY`, constant-time). Any new Worker call from the page must go
   through `streamModel(...)` or include `...dashAuthHeader()`.
-- **Data lives in KV blobs** (notes, ccplan, projects array, contacts_meta) — no DB. Projects PUT
-  merges server-side (tombstone-aware); notes PUT is hash-guarded (409 on concurrent change).
+- **Data lives in KV blobs** — no DB: `notes`, `ccplan`, `projects` (array), `contacts_meta`,
+  `reminders` (queue), `flow` (waiting/blocked/pushes), `watches` (conditionals). Projects and flow
+  PUTs merge server-side (projects tombstone-aware, flow per-entry LWW); notes PUT is hash-guarded
+  (409 on concurrent change). **The free KV tier is ~1000 writes/day** — anything on a timer must
+  dedupe or coalesce before writing, and every periodic writer here already does.
 - **Render safety:** external strings (Gmail/ticket/contact/agent-set) → `esc()` (body) / `escAttr()`
   (attribute); external URLs → `safeUrl()` (http(s) only). Never raw-interpolate into `innerHTML`.
 - **Icons, not emoji (v1.44.6):** UI chrome uses a minimalist inline-SVG set — `ICON_PATHS` +
@@ -60,9 +69,10 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   boot; call `renderIcons(subtree)` after rendering dynamic content with `data-ic`). Do NOT add emoji
   to chrome; add a path to `ICON_PATHS` and use it. `.ic` is stroke=currentColor, sized to text. (A
   long tail of emoji still lives in transient flashes / deep features — replace opportunistically.)
-- **Menus (v1.44.6):** ⚙️ gear = Appearance, Weekly review, CC Debt, Check-update, Install (icon
-  pills). ☰ burger = link sections + **Dashboard passphrase** (moved here). Contacts is no longer a
-  menu item — it lives with the **Stay connected** card (`reach-manage`).
+- **Menus (v1.44.6, +v1.47.0):** ⚙️ gear = Appearance, **Close out the day**, Weekly review, CC Debt,
+  Check-update, Install (icon pills). ☰ burger = link sections + **Dashboard passphrase** (moved
+  here). Contacts is no longer a menu item — it lives with the **Stay connected** card
+  (`reach-manage`).
 - **Header layout (v1.42.0 consolidation):** the Switchboard is a header **pill** (`#sb-pill` →
   `#sb-menu` dropdown, wired via the `pairs` array in `initGearMenu`); its LED mirrors the worst
   connection state (set in `renderSwitchboard`). **⚙️ gear menu** = dashboard tools (Weekly review,
@@ -74,12 +84,24 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   (WebAudio chime + title flash + OS notification when hidden). Idempotent per id via localStorage
   (`midash_rem_alerted`). It's the at-desk layer — **Discord DM stays the guaranteed channel**; don't
   make the bell load-bearing.
-- **Capture bar "⏰ Remind me to…"** (`captureRemind`) always tries to make a real reminder: pings at
-  the parsed time (date-only → 9am; no time at all → `defaultReminderAt()`, a same-day ~3h nudge that
-  avoids 9pm–7am), adds a Google Task too, and only writes to Notes if BOTH the ping and the task
-  fail — never task+note together. `parseReminder` strips leading "remind me to…"/"remember to…" and
-  capitalizes the name. Tasks render ALL at once (no pager) and complete in place (`wireTaskRow`
-  removes just the row — no reload/scroll-jump).
+- **Capture bar "⏰" (`captureRemind`) — what it decides.** Q talks to it in normal language, so most
+  of the work is reading intent, not scheduling:
+  - **Notify-only** (`isNotifyOnly`): "let me know if…", "ping me when…", "remind me THAT…", or any
+    CONDITIONAL (`hasCondition`: if/unless/in case) → **reminder, no task**. A conditional action may
+    never need doing, and a task he can't act on is one he ticks off by hand. "check **if** the
+    package arrived" is excluded — there "if" is a verb complement, not a condition.
+  - **Otherwise** → reminder AND task. Notes is the fallback only when BOTH fail, never alongside.
+  - `parseReminder` strips the whole instruction wrapper (`LEADIN`: "set/add/create a reminder|task
+    to", "note to self:", "I need to", "can you please…", stacked up to 3) so the title is the bare
+    action. It picks the date phrase appearing **earliest in the text**, not the first rule that
+    matches — "…10am tomorrow — he never replied about **today**" must schedule tomorrow.
+  - Times: `10a`/`3p`/`9:30a` parse (the bare letter must be glued to the number or follow at/by/@,
+    so "buy 5 apples" isn't 5am). Date-only → 9am; nothing at all → `defaultReminderAt()`.
+  - `splitDetail` keeps the short action on the task line and puts the ORIGINAL text in the task's
+    `notes` — a 10am ping saying only "Call Bill Lennox" is useless by the time it fires.
+  - A parsed time that has already passed says so; it must never silently produce nothing.
+  Tasks render ALL at once (no pager) and complete in place (`wireTaskRow` removes just the row — no
+  reload/scroll-jump). There is no in-card "add a task" form; the capture bar is the one way in.
 - **Flow layer (v1.45.0) — the day list has THREE states,** not one: a task is Q's to do, **waiting
   on** someone else, or **blocked behind** another task. Google Tasks only models the first, so the
   other two live in the `/flow` KV blob (keyed by Google task id; `pending:<title>` when written

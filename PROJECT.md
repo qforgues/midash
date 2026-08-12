@@ -119,12 +119,18 @@ The "operating system for Quentin" vision is now largely realized. What runs whe
 DHCP IP was `.211`). It also runs a *separate* Python bot (`pi-bot.service` = claw42) — unrelated to Dash.
 The Mac's old 42payments + tunnel LaunchAgents are disabled (`*.plist.disabled`).
 
-**Cards on the dashboard (top→bottom):** 🎛️ Switchboard (connection lights; the **Google** light now
-hosts the account pills, one per row) · Command bar (⏰ Remind → Google Task w/ parsed due date, ✉️ Draft,
-💡 Idea) · Unread inbox (🚫 unsubscribe icon next to refresh — the old "Show:" filter row was removed
-v1.27.3) + Next 3 events · **Portal42 Tickets ‖ Tasks** (50/50 split) · 🚀 Projects · **Stay-connected ‖
-Notes** (50/50 split). **Every card header has a collapse chevron** (state persists). *(Credit Card Debt
-moved OUT of the flow → ☰ Tools menu modal, v1.27.3.)*
+**Cards on the dashboard (top→bottom):** Capture bar (⏰ Remind · ✉️ Draft · ✅ Task, + 🎙️ dictate) ·
+Unread inbox (🚫 unsubscribe icon next to refresh) + Next 3 events · **Portal42 Tickets ‖ Tasks &
+Reminders** (50/50 split) · 🚀 Projects · **Stay-connected ‖ Notes** (50/50 split). **Every card
+header has a collapse chevron** (state persists).
+
+The **Tasks & Reminders** card stacks, top→bottom: the rollover nudge (`#ro-nudge`, evenings only) ·
+pending reminders (`#reminders-strip`) · pending conditionals (`#watch-strip`) · the active task
+list · **Next up** (blocked) · **Waiting on**. There is no in-card "add a task" form (removed
+v1.46.1) — the capture bar is the single way in.
+
+*(The Switchboard is a header pill, not a card, since v1.42.0. Credit Card Debt and Weekly review
+live in the ⚙️ gear menu.)*
 
 **☰ Tools menu:** 🗓️ **Weekly review** (rollup modal, "• due" after 7d) · 💳 **Credit Card Debt**
 (balances + card editor + deterministic payoff schedule + agent handoff).
@@ -208,12 +214,16 @@ due date via list_tasks → update_task), `read_notes`, `add_note` (Discord path
 property/area/people), `set_reminder`/`list_reminders`/`cancel_reminder` (miDash-owned Discord-DM
 push — a reminder is a NOTIFICATION, distinct from a Google Task to-do; see `/reminders`),
 `set_waiting`/`clear_waiting`/`block_task`/`list_waiting` (the flow layer — KV-backed, so these
-are the FIRST task-shaped tools that also work over Discord),
+are the FIRST task-shaped tools that also work over Discord; `list_waiting` also returns
+**`slipping`**, tasks pushed 3+ times in the rollover),
+`set_watch`/`list_watches`/`cancel_watch` (conditionals — the task is created only if the condition
+holds; queued by the Worker, **settled by the browser**), `check_email_from` (has this person
+emailed? — browser-only, the Worker's copy refuses honestly rather than guessing),
 `finance_*` (summary/list/profit_loss/create_invoice/log_expense/add_client/mark_invoice_paid).
 
-> **Tool schemas are single-sourced (v1.36.0):** the project tools live in one `PROJECT_TOOLS`
-> const in `worker.js`; the reminder tools in one `REMINDER_TOOLS` const — both spread into `TOOLS`
-> (chat) and `AGENT_TOOLS` (Discord) so they can't drift. `GET /tools` returns the canonical list.
+> **Tool schemas are single-sourced (v1.36.0):** `PROJECT_TOOLS`, `REMINDER_TOOLS`, `FLOW_TOOLS` and
+> `WATCH_TOOLS` are each defined once in `worker.js` and spread into BOTH `TOOLS` (chat) and
+> `AGENT_TOOLS` (Discord) so they can't drift. `GET /tools` returns the canonical list.
 > Reminder tools execute in the browser (`executeTool` → `POST /reminders`, tz-aware via `resolveAt`)
 > AND in the Worker (`runAgentTool`, for the Discord agent, via `resolveAtServer` — relative/ISO-offset
 > times only, since the Worker has no browser tz).
@@ -224,14 +234,18 @@ are the FIRST task-shaped tools that also work over Discord),
 > can't brick; `pushUserMessage()` never creates two consecutive user turns. Google `gfetch`/`gpost`
 > silently refresh the token and retry once on a 401 (`refreshTokenFor`, deduped per email).
 
-**Idea → reality flow (v1.13.0):** ideas incubate in **Notes** (capture box "💡 Save this
-idea" + `read_notes`); **Tasks** are the actionable layer (Google Tasks, now read+write).
-Capture box "⏰ Remind me to…" creates a **real Google Task** (Notes-line fallback if write
-isn't granted); the Tasks card has a **＋ quick-add** and **tap-to-complete** checkbox; the
-agent bridges them (`read_notes` → `create_task`; `list_tasks` → `complete_task`), so
+**Capture → the right object (v1.13.0 → reworked v1.45–1.47):** the capture bar is the single way
+things get in — the old "💡 Save this idea" mode (v1.44.11) and the Tasks card's "＋ quick-add"
+(v1.46.1) are both gone, because each produced a bare title with no due date and no context.
+What ⏰ now decides, in order: a **conditional or pure notification** → reminder only, never a task;
+anything with real nuance (condition, sequencing, waiting language, multi-clause) → **routed to the
+agent**, which composes task/reminder/watch/waiting/blocked; everything else → the instant free
+regex path, which makes a reminder AND a task, falling back to Notes only if BOTH fail.
+The agent bridges the layers (`read_notes` → `create_task`; `list_tasks` → `complete_task`), so
 "turn my notes into tasks" / "mark X done" work in chat. `create_task`/`complete_task` act
 without a confirm (low-stakes); `defaultAcct()` + `@default` list = primary account's
-default Tasks list.
+default Tasks list. Tasks still **tap-to-complete** in place, and completing one releases anything
+blocked behind it.
 All are **multi-account aware** (sweep every connected account, tag results with
 `account`). Reply/trash/delete/**create_event**/**send_email** pop an on-screen `confirm()`
 first. `create_event` defaults to the **primary** calendar; `send_email` sends a NEW message
@@ -500,6 +514,27 @@ cd ~/miDash && wrangler deploy
 
 ## Backlog / next up
 
+- [ ] **PLACES — the one workflow primitive still unbuilt** (designed 2026-08-11, everything else
+      from that design shipped in v1.45–1.47). Q's list has errands that cluster by *where*, not
+      *when*: jacket + tapes are one local run; the pre-rolls are a USPS stop; "meet Evan" has no
+      date at all and only becomes real **next time he's in Michigan**. Shape: a `place` field on
+      the flow entry, a grouped "Errands" section that plans a run as one thing, and a
+      place-triggered someday bucket that surfaces when a calendar event (or Q) says he's going
+      there. Without it, a dateless place-bound task either nags on the day list or is forgotten.
+- [ ] **Conditions beyond email.** `set_watch` only knows "has this person emailed" — the one
+      oracle that's wired. "If the invoice cleared", "if Dart replies on the ticket" fall back to a
+      plain reminder with the condition in the text. FreshBooks (`finance_*`) and Tracker42 are both
+      already tool-accessible, so adding them as condition types is a small extension of
+      `runDueWatches`, not new architecture.
+- [ ] **Watches need the dashboard open to settle.** The Discord ping always fires on time (Worker
+      cron), but the *check* is a Gmail question and Google creds live only in the browser. If the
+      tab stays shut past the moment, the watch settles whenever it's next opened. Accepted
+      trade-off — the alternative is a backend Google refresh-token flow, which Strategic direction
+      explicitly rules out.
+- [ ] **End-to-end verification never run** for the v1.46–1.47 paths: the capture→agent round trip,
+      the Gmail condition check, a watch actually firing, and the rollover modal wired to real
+      tasks. All are unit-tested and rendered headless, but they need Q's passphrase + Google
+      session to exercise for real. Verify these before building on top of them.
 - [ ] **Bank Sync (BLOCKED on Dart):** the Dart Bank SFTP importer (42payments `/bank`) is built
       but blocked on **Adam Baker adding the Pi's egress IP `66.9.164.11` to Dart's allowlist**
       (the questionnaire listed the wrong IP). Waiting to hear back (as of 2026-07-02). Once
