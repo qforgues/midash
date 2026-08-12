@@ -1138,7 +1138,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.45.0",
+  version: "1.45.1",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -2999,9 +2999,15 @@ function renderDraftPreview(c, draft){
    Powers the idea→task flow: capture/agent create tasks, tap to complete.
    ============================================================ */
 function defaultAcct(){ return accounts[0]||null; }
-async function createTask(acct, title, dueISO){
-  const body={title}; if(dueISO) body.due=dueISO;
+async function createTask(acct, title, dueISO, notes){
+  const body={title}; if(dueISO) body.due=dueISO; if(notes) body.notes=String(notes).slice(0,8000);
   return fetch("https://www.googleapis.com/tasks/v1/lists/@default/tasks",{method:"POST",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify(body)});
+}
+/* Keep whatever Q actually typed on the task, unless the title already IS that text. The title is
+   the cleaned-up action ("Call Bill Lennox"); the notes hold the original, date phrase and all. */
+function captureNotes(orig, taskTitle){
+  const a=String(orig||"").trim(), b=String(taskTitle||"").trim();
+  return a && a.toLowerCase()!==b.toLowerCase() ? a : "";
 }
 async function completeTaskApi(acct, listId, taskId){
   return fetch(`https://www.googleapis.com/tasks/v1/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(taskId)}`,{method:"PATCH",headers:{Authorization:"Bearer "+acct.token,"Content-Type":"application/json"},body:JSON.stringify({status:"completed"})});
@@ -4403,9 +4409,9 @@ async function executeTool(name,a){
         }
         if(timeStr && title.indexOf("(")<0) title=title+" ("+timeStr+")";   // Google Tasks stores DATE only — keep the time in the title
         const dueISO=ymd?new Date(ymd+"T00:00:00").toISOString():null;
-        const r=await createTask(acct, title, dueISO);
+        const r=await createTask(acct, title, dueISO, a.notes!=null?String(a.notes):"");
         loadTasks(); if(!r.ok) return {error:"create task failed "+r.status+" — reconnect Google for Tasks write access"};
-        const c=await r.json(); return {created:true, taskId:c.id, account:acct.email, due:ymd, title};
+        const c=await r.json(); return {created:true, taskId:c.id, account:acct.email, due:ymd, title, notes:c.notes||""};
       }
       case "complete_task": {
         const acct=a.account?acctByEmail(a.account):accounts[0]; if(!acct) return {error:"unknown account "+a.account};
@@ -5141,11 +5147,11 @@ function capStamp(){ return new Date().toLocaleDateString([],{month:"short",day:
 async function captureTask(text){
   const acct=defaultAcct();
   const p=parseReminder(text);
-  const title=p.title||text;
-  const taskTitle = p.timeStr ? title+" ("+p.timeStr+")" : title;   // Google Tasks store DATE only
+  const {action}=splitDetail(p.title||text);
+  const taskTitle = p.timeStr ? action+" ("+p.timeStr+")" : action;   // Google Tasks store DATE only
   const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
   let ok=false;
-  if(acct){ try{ const r=await createTask(acct, taskTitle, dueISO); ok=!!r.ok; }catch(e){} }
+  if(acct){ try{ const r=await createTask(acct, taskTitle, dueISO, captureNotes(text, taskTitle)); ok=!!r.ok; }catch(e){} }
   if(ok){ loadTasks(); capFlash("✅ Task added"+(p.ymd?" — "+fmtDue(p.ymd):"")); return; }
   const ta=document.getElementById("notes-area");
   if(ta){ ta.value=`- [ ] ${taskTitle}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
@@ -5176,30 +5182,43 @@ function parseReminder(text){
   else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
   let due=null;
   const mn=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
-  if((m=work.match(/\b(today|tonight)\b/i))){ due=new Date(now); strip.push(m[0]); }
-  else if((m=work.match(/\b(tomorrow|tmrw|tmr)\b/i))){ due=new Date(now); due.setDate(due.getDate()+1); strip.push(m[0]); }
-  else if((m=work.match(/\bin\s+(\d+)\s+(days?|weeks?)\b/i))){ due=new Date(now); due.setDate(due.getDate()+parseInt(m[1],10)*(/week/i.test(m[2])?7:1)); strip.push(m[0]); }
-  else if((m=work.match(/\bnext\s+week\b/i))){ due=new Date(now); due.setDate(due.getDate()+7); strip.push(m[0]); }
-  else if((m=work.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i))){
-    const w=m[2].toLowerCase();
-    const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
-    due=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; due.setDate(due.getDate()+delta); strip.push(m[0]);
-  }
-  else if((m=work.match(new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i")))){
-    const mo=mn.indexOf(m[1].toLowerCase().slice(0,3)), day=parseInt(m[2],10);
-    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i")))){
-    const day=parseInt(m[1],10), mo=mn.indexOf(m[2].toLowerCase().slice(0,3));
-    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i))){
-    const day=parseInt(m[1],10); due=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-due)>86400000) due.setMonth(due.getMonth()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))){
-    const mo=parseInt(m[1],10)-1, day=parseInt(m[2],10); let yr=m[3]?(m[3].length<=2?2000+parseInt(m[3],10):parseInt(m[3],10)):now.getFullYear();
-    due=new Date(yr,mo,day,0,0,0); if(!m[3]&&(now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
+  /* Date phrases, in tie-break order. We pick the one that appears EARLIEST IN THE TEXT, not the
+     first rule that happens to match — "call Bill at 10am tomorrow — he never replied about today"
+     must schedule TOMORROW. The trailing "today" is part of the explanation, not the instruction,
+     and an ordered if/else chain silently let it win (v1.45.1: it scheduled 10am *today*, already
+     past, so no ping was created at all and the capture fell through to Notes). */
+  const dateRules=[
+    [/\b(today|tonight)\b/i,             ()=>new Date(now)],
+    [/\b(tomorrow|tmrw|tmr)\b/i,         ()=>{ const d=new Date(now); d.setDate(d.getDate()+1); return d; }],
+    [/\bin\s+(\d+)\s+(days?|weeks?)\b/i, x=>{ const d=new Date(now); d.setDate(d.getDate()+parseInt(x[1],10)*(/week/i.test(x[2])?7:1)); return d; }],
+    [/\bnext\s+week\b/i,                 ()=>{ const d=new Date(now); d.setDate(d.getDate()+7); return d; }],
+    [/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i, x=>{
+      const w=x[2].toLowerCase();
+      const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
+      const d=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; d.setDate(d.getDate()+delta); return d;
+    }],
+    [new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i"), x=>{
+      const mo=mn.indexOf(x[1].toLowerCase().slice(0,3)), day=parseInt(x[2],10);
+      const d=new Date(now.getFullYear(),mo,day,0,0,0); if((now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+    [new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i"), x=>{
+      const day=parseInt(x[1],10), mo=mn.indexOf(x[2].toLowerCase().slice(0,3));
+      const d=new Date(now.getFullYear(),mo,day,0,0,0); if((now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+    [/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i, x=>{
+      const day=parseInt(x[1],10); const d=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-d)>86400000) d.setMonth(d.getMonth()+1); return d;
+    }],
+    [/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/, x=>{
+      const mo=parseInt(x[1],10)-1, day=parseInt(x[2],10); const yr=x[3]?(x[3].length<=2?2000+parseInt(x[3],10):parseInt(x[3],10)):now.getFullYear();
+      const d=new Date(yr,mo,day,0,0,0); if(!x[3]&&(now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+  ];
+  let best=null;
+  dateRules.forEach(([re,build])=>{
+    const mm2=work.match(re);
+    if(mm2 && (!best || mm2.index<best.m.index)) best={m:mm2, build};   // strict < → ties keep rule order
+  });
+  if(best){ due=best.build(best.m); strip.push(best.m[0]); }
   if(!due && hh!=null) due=new Date(now);
   const hadDateWord = due && !(strip.length===1 && (timeStr!=null) && !/today|tonight|tomorrow|tmrw|tmr|next|in\s+\d|\/|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(orig));
   if(due){
@@ -5214,7 +5233,28 @@ function parseReminder(text){
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
   if(title) title=title.charAt(0).toUpperCase()+title.slice(1);   // read as a sentence
-  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
+  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null, orig };
+}
+/* Split "Call Bill Lennox — he never replied to my email" into the ACTION (what goes on the task
+   line, so the list stays scannable) and the DETAIL (the why). The detail was previously thrown
+   away entirely: nothing ever reached a Google Task's notes field, so the context Q typed at
+   capture time was gone by the time the reminder fired. Requires whitespace around the separator,
+   so hyphenated words ("follow-up") are never split. */
+function splitDetail(s){
+  const t=String(s||"").trim();
+  const m=t.match(/^(.{3,}?)\s+(?:—|–|--|-|·|;|•)\s+(.+)$/);
+  if(m && m[1].trim().split(/\s+/).length>=2) return {action:m[1].trim(), detail:m[2].trim()};
+  return {action:t, detail:""};
+}
+/* A pure NOTIFICATION — "let me know if Bill replies", "ping me when the build finishes" — is NOT
+   a to-do. Creating a Google Task for it leaves a chore on the list that Q can never actually DO;
+   he just has to tick it off by hand later. These get the Discord ping and nothing else. */
+const NOTIFY_RE=/\b(let me know|lmk|tell me|ping me|notify me|alert me|heads?[ -]?up|remind me that)\b/i;
+function isNotifyOnly(text){
+  const s=String(text||"");
+  if(NOTIFY_RE.test(s)) return true;
+  // A conditional with a consequent ("if X then …", "when X, …") is a watch, not an errand.
+  return /^\s*(if|when|whenever)\b/i.test(s) && /(\bthen\b|,)/i.test(s);
 }
 /* "Remind me to…" → a REAL Google Task with a parsed due date. Say "…by Friday 3pm" and it
    sets the task's due date (time kept in the title, since Google Tasks stores date only).
@@ -5234,35 +5274,49 @@ function defaultReminderAt(){
 async function captureRemind(text){
   const acct=defaultAcct();
   const p=parseReminder(text);
-  const title=p.title||text;
-  const taskTitle = p.timeStr ? title+" ("+p.timeStr+")" : title;   // Google Tasks store DATE only
+  const {action, detail}=splitDetail(p.title||text);
+  const taskTitle = p.timeStr ? action+" ("+p.timeStr+")" : action;   // Google Tasks store DATE only
   const dueISO = p.ymd ? new Date(p.ymd+"T00:00:00").toISOString() : null;
+  // The ping carries the WHY, not just the what — at 10am tomorrow "Call Bill Lennox" alone doesn't
+  // tell him Bill never replied. The Google Task gets the full original text in its notes field.
+  const pingText = detail ? action+" — "+detail : action;
+  const notifyOnly = isNotifyOnly(text);
   // THE REMINDER = a Discord ping. Use the parsed time if given (parseReminder defaults date-only to
   // 9am); if there's NO day/time at all, default to a same-day nudge so "remind me to…" always
   // becomes a real reminder, not a note. Independent of Google Tasks, so it fires even if Tasks is down.
-  let atMs=null, defaulted=false;
+  let atMs=null, defaulted=false, pastAt=null;
   if(p.due && p.due.getTime()>Date.now()) atMs=p.due.getTime();
-  else if(!p.due){ atMs=defaultReminderAt(); defaulted=true; }
+  else if(p.due) pastAt=p.due;                                  // he named a time that's already gone
+  else { atMs=defaultReminderAt(); defaulted=true; }
   let pinged=false;
   if(atMs && REMINDERS_URL){
-    try{ const r=await scheduleReminder(atMs, title); pinged=!!r.ok; }catch(e){}
+    try{ const r=await scheduleReminder(atMs, pingText); pinged=!!r.ok; }catch(e){}
     if(pinged) loadReminders();
   }
-  // ALSO drop it on the Google Tasks list as a to-do (independent of the ping).
+  // ALSO drop it on the Google Tasks list as a to-do — unless it's purely a notification, which
+  // isn't something he can "do" and would just sit on the list waiting to be ticked off by hand.
   let tasked=false;
-  if(acct){ try{ const r=await createTask(acct, taskTitle, dueISO); tasked=!!r.ok; }catch(e){} if(tasked) loadTasks(); }
+  if(acct && !notifyOnly){
+    try{ const r=await createTask(acct, taskTitle, dueISO, captureNotes(text, taskTitle)); tasked=!!r.ok; }catch(e){}
+    if(tasked) loadTasks();
+  }
   if(pinged || tasked){
     let when="";
-    if(p.due) when=" — "+fmtDue(p.ymd)+" "+(p.timeStr||"9am");
+    if(pinged && p.due) when=" — "+fmtDue(p.ymd)+" "+(p.timeStr||"9am");
     else if(defaulted && pinged) when=" — "+fmtReminderWhen(new Date(atMs));
     const bits=[]; if(pinged) bits.push("⏰ reminder set"); if(tasked) bits.push("✅ task added");
+    if(notifyOnly && pinged) bits.push("notification only");
+    // A time that's already passed must never fail silently — that's how "call Bill at 10am
+    // tomorrow — …about today" ended up as a Notes line with no ping at all (v1.45.1).
+    if(pastAt) bits.push("⚠️ "+fmtDue(p.ymd)+" "+(p.timeStr||"")+" has already passed — no ping set");
     capFlash(bits.join(" · ")+when);
     return;
   }
   // Nothing landed (backend unreachable AND Google Tasks didn't take) → Notes so it isn't lost.
   const ta=document.getElementById("notes-area");
   if(ta){ ta.value=`- [ ] ${taskTitle}${p.ymd?" (due "+p.ymd+")":""}  · added ${capStamp()}`+"\n"+ta.value; ta.dispatchEvent(new Event("input")); }
-  capFlash("📝 Saved to Notes — couldn't reach the reminder backend or Google Tasks; it's not lost");
+  capFlash(pastAt ? "📝 “"+(p.timeStr||fmtDue(p.ymd))+"” has already passed — saved to Notes instead"
+                  : "📝 Saved to Notes — couldn't reach the reminder backend or Google Tasks; it's not lost");
 }
 /* Draft email → hand it to the chat agent (it resolves the contact, can pull
    context from Notes/mail, and drafts). We prefill + open the panel but leave the

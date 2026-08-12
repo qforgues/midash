@@ -62,6 +62,14 @@ second one 10 min before it ends). Pass 'at' as the exact time (ISO like 2026-07
 phrase like "friday 3pm"/"in 20 minutes", or epoch-ms) and 'text' as the nudge written TO Q. A
 thing that's both a to-do AND wants a nudge → do both (create_task + set_reminder). list_reminders
 and cancel_reminder manage pending ones. These act immediately — no confirm.
+BUT: a pure NOTIFICATION is a reminder and NOTHING ELSE. "Let me know if Bill replies", "ping me
+when the build finishes", "tell me at 4 if the invoice cleared" — there is no action for Q to
+perform, so set_reminder alone. Creating a task for it leaves a chore on his list he can never
+actually DO and has to tick off by hand. Ask yourself: is there a verb HE carries out? Yes → task
+(plus a reminder if it's time-sensitive). No, he just needs to be told something → reminder only.
+Carry the CONTEXT into whatever you create. The reminder 'text' and the task 'notes' are read later
+with none of today's conversation in his head, so "Call Bill Lennox" is not enough — "Call Bill
+Lennox — he never replied to your email about Tuesday's meeting" is. Never drop the why.
 
 How Q's day list actually works — three states, not one. A task is either HIS to do, WAITING on
 someone else, or BLOCKED behind another task. Google Tasks only knows the first, so miDash owns the
@@ -232,8 +240,8 @@ const TOOLS = [
     description: "List Q's open Google Tasks across ALL connected accounts. Each item has title, account, listId, taskId, due. Use listId+taskId to complete a task.",
     input_schema: { type: "object", properties: {}, required: [] } },
   { name: "create_task",
-    description: "Add a NEW Google Task (a to-do). This is how you turn an idea or a note into an actionable task. Optional 'due' accepts either an exact YYYY-MM-DD OR a natural phrase like 'tomorrow', 'next tue', 'friday', 'july 10', 'in 3 days', even 'friday 3pm' — the dashboard resolves it to Q's LOCAL date, so just pass whatever day/time he said. ALWAYS set 'due' whenever the reminder or note implies a day or deadline. Goes to Q's default task list on his primary account unless 'account' is set. Acts immediately — no confirmation needed.",
-    input_schema: { type: "object", properties: { title: { type: "string" }, due: { type: "string" }, account: { type: "string" } }, required: ["title"] } },
+    description: "Add a NEW Google Task (a to-do). This is how you turn an idea or a note into an actionable task. Keep 'title' the short ACTION ('Call Bill Lennox') and put the context in 'notes' ('never replied to my email about Tuesday; his number is in Contacts') — Q reads the task later with none of today's context in his head, so the why belongs on the task. Optional 'due' accepts either an exact YYYY-MM-DD OR a natural phrase like 'tomorrow', 'next tue', 'friday', 'july 10', 'in 3 days', even 'friday 3pm' — the dashboard resolves it to Q's LOCAL date, so just pass whatever day/time he said. ALWAYS set 'due' whenever the reminder or note implies a day or deadline. Goes to Q's default task list on his primary account unless 'account' is set. Acts immediately — no confirmation needed.",
+    input_schema: { type: "object", properties: { title: { type: "string" }, notes: { type: "string", description: "context/details for the task body — the why, links, phone numbers, what was already tried" }, due: { type: "string" }, account: { type: "string" } }, required: ["title"] } },
   { name: "complete_task",
     description: "Mark a Google Task done. Needs account, listId and taskId (from list_tasks). Acts immediately — no confirmation needed.",
     input_schema: { type: "object", properties: { account: { type: "string" }, listId: { type: "string" }, taskId: { type: "string" }, title: { type: "string", description: "for context" } }, required: ["listId", "taskId"] } },

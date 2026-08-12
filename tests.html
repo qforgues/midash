@@ -165,30 +165,40 @@ function parseReminder(text){
   else if((m=work.match(/\b(?:at|by|@)\s+(\d{1,2})\b/i))){ hh=parseInt(m[1],10); if(hh>=1&&hh<=7) hh+=12; timeStr=(hh%12||12)+(hh<12?"am":"pm"); strip.push(m[0]); }
   let due=null;
   const mn=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
-  if((m=work.match(/\b(today|tonight)\b/i))){ due=new Date(now); strip.push(m[0]); }
-  else if((m=work.match(/\b(tomorrow|tmrw|tmr)\b/i))){ due=new Date(now); due.setDate(due.getDate()+1); strip.push(m[0]); }
-  else if((m=work.match(/\bin\s+(\d+)\s+(days?|weeks?)\b/i))){ due=new Date(now); due.setDate(due.getDate()+parseInt(m[1],10)*(/week/i.test(m[2])?7:1)); strip.push(m[0]); }
-  else if((m=work.match(/\bnext\s+week\b/i))){ due=new Date(now); due.setDate(due.getDate()+7); strip.push(m[0]); }
-  else if((m=work.match(/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i))){
-    const w=m[2].toLowerCase();
-    const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
-    due=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; due.setDate(due.getDate()+delta); strip.push(m[0]);
-  }
-  else if((m=work.match(new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i")))){
-    const mo=mn.indexOf(m[1].toLowerCase().slice(0,3)), day=parseInt(m[2],10);
-    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i")))){
-    const day=parseInt(m[1],10), mo=mn.indexOf(m[2].toLowerCase().slice(0,3));
-    due=new Date(now.getFullYear(),mo,day,0,0,0); if((now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i))){
-    const day=parseInt(m[1],10); due=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-due)>86400000) due.setMonth(due.getMonth()+1); strip.push(m[0]);
-  }
-  else if((m=work.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/))){
-    const mo=parseInt(m[1],10)-1, day=parseInt(m[2],10); let yr=m[3]?(m[3].length<=2?2000+parseInt(m[3],10):parseInt(m[3],10)):now.getFullYear();
-    due=new Date(yr,mo,day,0,0,0); if(!m[3]&&(now-due)>86400000) due.setFullYear(due.getFullYear()+1); strip.push(m[0]);
-  }
+  // Earliest date phrase IN THE TEXT wins, not the first rule that matches (v1.45.1). Ties keep
+  // rule order via the strict `<`. KEEP IN SYNC with index.html.
+  const dateRules=[
+    [/\b(today|tonight)\b/i,             ()=>new Date(now)],
+    [/\b(tomorrow|tmrw|tmr)\b/i,         ()=>{ const d=new Date(now); d.setDate(d.getDate()+1); return d; }],
+    [/\bin\s+(\d+)\s+(days?|weeks?)\b/i, x=>{ const d=new Date(now); d.setDate(d.getDate()+parseInt(x[1],10)*(/week/i.test(x[2])?7:1)); return d; }],
+    [/\bnext\s+week\b/i,                 ()=>{ const d=new Date(now); d.setDate(d.getDate()+7); return d; }],
+    [/\b(next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tues?|weds?|thur?s?|fri|sat)\b/i, x=>{
+      const w=x[2].toLowerCase();
+      const idx = w.startsWith("sun")?0:w.startsWith("mon")?1:w.startsWith("tue")?2:w.startsWith("wed")?3:w.startsWith("thu")?4:w.startsWith("fri")?5:6;
+      const d=new Date(now); let delta=(idx-now.getDay()+7)%7; if(delta===0) delta=7; d.setDate(d.getDate()+delta); return d;
+    }],
+    [new RegExp("\\b("+mn.join("|")+")[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b","i"), x=>{
+      const mo=mn.indexOf(x[1].toLowerCase().slice(0,3)), day=parseInt(x[2],10);
+      const d=new Date(now.getFullYear(),mo,day,0,0,0); if((now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+    [new RegExp("\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?("+mn.join("|")+")[a-z]*\\.?\\b","i"), x=>{
+      const day=parseInt(x[1],10), mo=mn.indexOf(x[2].toLowerCase().slice(0,3));
+      const d=new Date(now.getFullYear(),mo,day,0,0,0); if((now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+    [/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b/i, x=>{
+      const day=parseInt(x[1],10); const d=new Date(now.getFullYear(),now.getMonth(),day,0,0,0); if((now-d)>86400000) d.setMonth(d.getMonth()+1); return d;
+    }],
+    [/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/, x=>{
+      const mo=parseInt(x[1],10)-1, day=parseInt(x[2],10); const yr=x[3]?(x[3].length<=2?2000+parseInt(x[3],10):parseInt(x[3],10)):now.getFullYear();
+      const d=new Date(yr,mo,day,0,0,0); if(!x[3]&&(now-d)>86400000) d.setFullYear(d.getFullYear()+1); return d;
+    }],
+  ];
+  let best=null;
+  dateRules.forEach(([re,build])=>{
+    const mm2=work.match(re);
+    if(mm2 && (!best || mm2.index<best.m.index)) best={m:mm2, build};
+  });
+  if(best){ due=best.build(best.m); strip.push(best.m[0]); }
   if(!due && hh!=null) due=new Date(now);
   const hadDateWord = due && !(strip.length===1 && (timeStr!=null) && !/today|tonight|tomorrow|tmrw|tmr|next|in\s+\d|\/|sun|mon|tue|wed|thu|fri|sat|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i.test(orig));
   if(due){
@@ -201,7 +211,24 @@ function parseReminder(text){
   while(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i.test(title)) title=title.replace(/\s*\b(by|on|at|due|for|the|of|to|around|before|remind me|please)\s*$/i,"");
   title=title.replace(/[\s,;:-]+$/,"").trim();
   if(title) title=title.charAt(0).toUpperCase()+title.slice(1);
-  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null };
+  return { due, title:title||orig, timeStr, ymd: due?ymdLocal(due):null, orig };
+}
+// --- splitDetail / isNotifyOnly / captureNotes (index.html) — KEEP IN SYNC ---
+function splitDetail(s){
+  const t=String(s||"").trim();
+  const m=t.match(/^(.{3,}?)\s+(?:—|–|--|-|·|;|•)\s+(.+)$/);
+  if(m && m[1].trim().split(/\s+/).length>=2) return {action:m[1].trim(), detail:m[2].trim()};
+  return {action:t, detail:""};
+}
+const NOTIFY_RE=/\b(let me know|lmk|tell me|ping me|notify me|alert me|heads?[ -]?up|remind me that)\b/i;
+function isNotifyOnly(text){
+  const s=String(text||"");
+  if(NOTIFY_RE.test(s)) return true;
+  return /^\s*(if|when|whenever)\b/i.test(s) && /(\bthen\b|,)/i.test(s);
+}
+function captureNotes(orig, taskTitle){
+  const a=String(orig||"").trim(), b=String(taskTitle||"").trim();
+  return a && a.toLowerCase()!==b.toLowerCase() ? a : "";
 }
 function resolveAt(v){
   if(v==null) return null;
@@ -559,6 +586,42 @@ section("defaultReminderAt — Q's day starts at 10am");
   ok(hourOf(defaultReminderAtFrom(at(7,0)))===10, "7am → 10am (the old rule gave 10am only by accident)");
   ok(hourOf(defaultReminderAtFrom(at(13,0)))===16, "1pm → the normal ~3h nudge (4pm)");
   ok(defaultReminderAtFrom(at(13,7))%(15*60000)===0, "always lands on a 15-minute boundary");
+}
+
+section("Capture regressions from Q's 2026-08-11 session (v1.45.1)");
+{
+  // BUG 1: a date word in the trailing EXPLANATION hijacked the schedule. "tomorrow" comes first
+  // in the sentence; "today" only appears in the reason. It scheduled 10am *today* — already past,
+  // so no ping was created at all and the whole capture fell through to a Notes line.
+  const bill="Call Bill Lennox at 10am tomorrow — he never replied to my email about today";
+  const p=parseReminder(bill);
+  const tmrw=new Date(); tmrw.setDate(tmrw.getDate()+1);
+  ok(p.ymd===ymdLocal(tmrw), "'…10am tomorrow — …about today' schedules TOMORROW, not today");
+  ok(p.timeStr==="10am", "picks up the 10am");
+  ok(p.due>new Date(), "the resolved time is in the future (so a ping actually gets created)");
+  ok(/today/i.test(p.title), "the trailing 'today' stays in the text as context, not stripped as a date");
+
+  // BUG 2: the context Q typed never reached the task or the ping.
+  const sd=splitDetail(p.title);
+  ok(sd.action==="Call Bill Lennox", "action for the task line is just the action");
+  ok(/never replied/i.test(sd.detail), "the why is kept as the detail");
+  ok(captureNotes(bill,"Call Bill Lennox (10am)")===bill, "the original text becomes the task's notes");
+  ok(captureNotes("Buy milk","Buy milk")==="", "no redundant notes when the title already says it all");
+  ok(splitDetail("Email the follow-up doc").detail==="", "hyphenated words are never split ('follow-up')");
+  ok(splitDetail("Pay CCs").action==="Pay CCs", "no separator → all action, no detail");
+
+  // BUG 3: a pure notification also created a Google Task he could never "do".
+  ok(isNotifyOnly("If bill replies by email before 10 then let me know"), "'if X then let me know' → reminder only");
+  ok(isNotifyOnly("ping me when the build finishes"), "'ping me when…' → reminder only");
+  ok(isNotifyOnly("remind me that the game is on at 8"), "'remind me THAT…' is a fact, not a to-do");
+  ok(!isNotifyOnly("Call Bill Lennox at 10am tomorrow"), "a real action still creates the task");
+  ok(!isNotifyOnly("remind me to pay the credit cards"), "'remind me TO…' is an action → task + ping");
+  ok(!isNotifyOnly("when you get a chance call the dentist"), "a bare 'when…' clause is not a notification");
+
+  // The other date phrasings must be unaffected by the earliest-match rewrite.
+  ok(parseReminder("pick up groceries friday").ymd===parseReminder("groceries on friday").ymd, "weekday parsing unchanged");
+  ok(parseReminder("call the dentist in 3 days").ymd!==null, "'in 3 days' still parses");
+  ok(parseReminder("invoice due july 10").ymd.slice(5)==="07-10", "'july 10' still parses");
 }
 
 /* ================================ SUMMARY ================================ */

@@ -3,9 +3,9 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.45.0` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.45.1` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
-**Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; the day list gets three states)
+**Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
 > **Versioning scheme (Q's, NOT semver):** middle segment = "major" bump → rolls a fresh
 > background **design** + colors; last segment = "minor" bump → rolls fresh **colors** only.
@@ -171,7 +171,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`) with a **KEEP IN SYNC** note — 94 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 113 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -536,6 +536,18 @@ cd ~/miDash && wrangler deploy
   what it freed (`releaseDependents`). A wait can carry a **chase** time that rides the existing
   reminder queue. `DAY_START_HOUR = 10`. 22 new assertions (94 total), including a mutation-checked
   guard that a Tasks API failure can't silently unblock the board.
+- v1.45.1: **Three capture bugs, found by using it for real.** (1) `parseReminder` picked the first
+  DATE RULE that matched instead of the date word appearing earliest in the TEXT — "call Bill at
+  10am tomorrow — he never replied about **today**" scheduled 10am *today*, already past, so no ping
+  was created and the capture fell through to a Notes line. Now the earliest match in the string
+  wins (ties keep rule order). (2) A pure NOTIFICATION ("if Bill replies then let me know") also
+  created a Google Task — a chore he can never *do*. `isNotifyOnly()` now gives those a ping only,
+  and both system prompts teach the distinction. (3) The context Q typed was thrown away: nothing
+  ever reached a Google Task's `notes` field (`createTask` had no notes param, and neither did the
+  agent's `create_task` schema). Now `splitDetail()` keeps the action on the task line, the original
+  text goes in the task notes, and the Discord ping carries the why. Also: a time that has already
+  passed says so instead of silently producing nothing. 19 new assertions (113 total), each
+  mutation-checked against the old behaviour.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.
