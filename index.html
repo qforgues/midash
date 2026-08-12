@@ -426,6 +426,14 @@
   .sb-detail { font-size:13.5px; color:var(--text); line-height:1.5; background:var(--bg); border:1px solid var(--border);
                border-radius:9px; padding:11px 13px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; }
   .sb-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+  /* Remedy block (v1.46.2): shown when the fix is a command on another machine, not a button here. */
+  .sb-remedy { margin-top:13px; border:1px solid var(--warn); border-radius:10px; padding:12px 13px;
+               background:color-mix(in srgb, var(--warn) 8%, transparent); }
+  .sb-remedy-head { font-size:13px; line-height:1.5; margin-bottom:9px; }
+  .sb-cmd { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; line-height:1.65;
+            background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+            margin:0; white-space:pre; overflow-x:auto; user-select:all; }
+  .sb-remedy-note { font-size:12px; color:var(--muted); line-height:1.5; margin-top:9px; }
   /* round themed close ✕ in the modal corner */
   .sb-x { position:absolute; top:12px; right:12px; width:34px; height:34px; padding:0; border-radius:50%;
           border:2px solid var(--accent); background:transparent; color:var(--accent); font-size:15px; line-height:1;
@@ -1134,7 +1142,7 @@ const CONFIG = {
   // Bump this whenever you publish a change you want to recognize on the live site.
   // Shown in the footer next to the live GitHub commit, so you always know which
   // build you're looking at.
-  version: "1.46.1",
+  version: "1.46.2",
   repo: "midash",          // your GitHub Pages repo name (for the live build stamp)
 
   // ---- Chat model picker ----
@@ -3895,13 +3903,37 @@ function openSbDetail(id){
   if(title) title.textContent="🎛️ "+c.label;
   const word={on:"🟢 Green — healthy",warn:"🟡 Amber — needs attention",off:"🔴 Red — down",idle:"⚪ Grey — not set up",check:"… checking"}[s.state]||s.state||"…";
   const detail = id==="google" ? `<div id="sb-accounts" class="sb-detail"></div>` : `<div class="sb-detail">${esc(s.detail||"No further detail.")}</div>`;
+  // A remedy is for a failure the browser CANNOT fix (a service on the Pi). Hand over the exact
+  // commands rather than offering a button that doesn't reach the broken thing.
+  const rem = s.remedy ? `<div class="sb-remedy">
+      <div class="sb-remedy-head">${esc(s.remedy.title)}</div>
+      <pre class="sb-cmd" id="sb-cmd">${esc(s.remedy.cmd)}</pre>
+      <div class="sb-actions" style="margin-top:8px">
+        <button class="gbtn" id="sb-copy" style="border-color:var(--accent);color:var(--accent)">📋 Copy commands</button>
+      </div>
+      ${s.remedy.note?`<div class="sb-remedy-note">${esc(s.remedy.note)}</div>`:""}
+    </div>` : "";
   body.innerHTML=`<div class="sb-state">${word}${s.summary?` · ${esc(s.summary)}`:""}</div>
     ${detail}
+    ${rem}
     <div class="sb-actions">
       <button class="gbtn" id="sb-recheck">↻ Re-check</button>
-      ${(c.fix && id!=="google")?`<button class="gbtn" id="sb-fix" style="border-color:var(--accent);color:var(--accent)">${esc(c.fix.label)}</button>`:""}
+      ${(c.fix && id!=="google")?`<button class="gbtn" id="sb-fix"${s.remedy?"":' style="border-color:var(--accent);color:var(--accent)"'}>${esc(c.fix.label)}</button>`:""}
     </div>`;
   m.style.display="flex";
+  const cp=document.getElementById("sb-copy");
+  if(cp) cp.onclick=async()=>{
+    const txt=(s.remedy&&s.remedy.cmd)||"";
+    let ok=false;
+    try{ await navigator.clipboard.writeText(txt); ok=true; }
+    catch(e){   // clipboard API can be blocked (permissions, non-secure context) — select it instead
+      try{ const pre=document.getElementById("sb-cmd"), r=document.createRange();
+        r.selectNodeContents(pre); const sel=getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        ok=document.execCommand("copy"); }catch(e2){}
+    }
+    cp.textContent = ok ? "✓ Copied" : "Select the text above to copy";
+    setTimeout(()=>{ cp.textContent="📋 Copy commands"; }, 2200);
+  };
   // For Google the account bar IS the connect/manage UI — host it in the box (connect button when
   // disconnected, pills when connected) so there's a single connect affordance, no duplicate button.
   if(id==="google"){ const holder=document.getElementById("sb-accounts"), ab=document.getElementById("acct-bar"); if(holder&&ab) holder.appendChild(ab); }
@@ -3981,12 +4013,12 @@ async function sbCheckDiscord(){
     if(r.status===401) return {state:"warn",summary:"locked",detail:"Dashboard passphrase needed."};
     let d=null; try{ d=await r.json(); }catch(e){}
     const s=d&&d.status;
-    if(!s||!s.at) inb={state:"off",summary:"in:never",line:"Inbound (Pi bot): never checked in — start ~/midash-discord/setup.command."};
+    if(!s||!s.at) inb={state:"off",summary:"in:never",line:"Inbound (Pi bot): never checked in.",remedy:piBotRemedy("It has never checked in.")};
     else{
       const age=Date.now()-Number(s.at);
       // Heartbeat writes are coalesced server-side (~1 per 5 min) for the KV write quota; allow 12 min.
       inb = age<12*60000 ? {state:"on",summary:"in:online",line:`Inbound (Pi bot): online${s.tag?" as "+s.tag:""}, heartbeat ${Math.max(0,Math.round(age/60000))} min ago.`}
-                         : {state:"off",summary:"in:offline",line:`Inbound (Pi bot): last seen ${Math.round(age/60000)} min ago — not running (~/midash-discord/setup.command).`};
+                         : {state:"off",summary:"in:offline",line:`Inbound (Pi bot): last seen ${fmtAgo(age)} ago.`,remedy:piBotRemedy(`Last heartbeat was ${fmtAgo(age)} ago.`)};
     }
   }catch(e){ return {state:"off",summary:"unreachable",detail:"Couldn't reach the Worker."}; }
   // (B) outbound — Worker reminder push (bot token + user id)
@@ -4001,8 +4033,31 @@ async function sbCheckDiscord(){
   }catch(e){ out={state:"warn",summary:"out:?",line:"Outbound (reminders): couldn't run the Discord check."}; }
   const rank={on:3,warn:2,off:1,idle:0,check:0};
   const worst = rank[out.state] < rank[inb.state] ? out.state : inb.state;
-  return {state:worst, summary:`${inb.summary} · ${out.summary}`,
-    detail:`${inb.line}\n${out.line}\n\n“🔔 Send test DM” below delivers a real message — the only 100% proof the push works.`};
+  // When only the Pi half is down, say so plainly. The old footer pointed at "Send test DM" as
+  // proof things work — but that tests OUTBOUND, which doesn't touch the Pi at all, so it passes
+  // while the light stays red and you're left thinking the check is broken. (Hit for real 2026-08-11.)
+  const foot = inb.remedy
+    ? (out.state==="on"
+        ? "Outbound is fine — that's why “Send test DM” still works. It goes Worker → Discord and never touches the Pi. What's down is the half that RECEIVES your DMs."
+        : "Both halves need attention.")
+    : "“🔔 Send test DM” below delivers a real message — the only 100% proof the push works.";
+  return {state:worst, summary:`${inb.summary} · ${out.summary}`, remedy:inb.remedy||null,
+    detail:`${inb.line}\n${out.line}\n\n${foot}`};
+}
+function fmtAgo(ms){
+  const m=Math.max(0,Math.round(ms/60000));
+  if(m<60) return m+" min";
+  const h=Math.round(m/60); if(h<48) return h+" hr";
+  return Math.round(h/24)+" days";
+}
+/* The Pi bot is a systemd service on claudeclaw; nothing in the browser can restart it. So the
+   card's job is to hand over the exact commands instead of a button that can't help. */
+function piBotRemedy(why){
+  return {
+    title:"The Dash bot on the Pi isn’t running — "+why+" It’s what receives your Discord DMs, so DMing it does nothing until it’s back.",
+    cmd:"ssh claudeclaw\nsudo systemctl restart midash-discord\nsystemctl status midash-discord --no-pager\njournalctl -u midash-discord -n 50 --no-pager",
+    note:"The light goes green within ~5 min of the next heartbeat. If ssh can’t resolve claudeclaw.local, your Mac isn’t on the Pi’s network — check you’re not on a guest SSID.",
+  };
 }
 async function sbDiscordTest(){
   const base = CONFIG.chatEndpoint ? CONFIG.chatEndpoint.replace(/\/+$/,"") : ""; if(!base){ capFlash("No backend configured"); return; }

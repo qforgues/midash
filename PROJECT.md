@@ -3,7 +3,7 @@
 > Read this first to resume work. It's the single source of truth for where the
 > project stands, how it's wired, and what's next. Keep it updated as we go.
 
-**Current version:** `1.46.1` (see `CONFIG.version` in `index.html`)
+**Current version:** `1.46.2` (see `CONFIG.version` in `index.html`)
 **Owner:** Q — quentin.forgues@gmail.com
 **Last updated:** 2026-08-11 (flow layer — waiting-on / blocked-by; then three capture fixes from real use)
 
@@ -176,7 +176,7 @@ Tasks are NOT available over Discord (they need the in-browser Google token).
 | `manifest.webmanifest` | PWA manifest (name, icons, standalone). Relative paths so it works under `/midash/`. |
 | `sw.js`         | Service worker: network-first HTML (no stale-version lock), cache-first icons, cross-origin passthrough. |
 | `tests.html`    | **Zero-build regression tests** (open in a browser; NOT linked from the UI). Copies of the pure functions (`mergeProjects`, `normalizeProject`, `stamp`, `verNewer`, `esc/escAttr`, `safeUrl`, `notesHash`, `repairChat`, `pushUserMessage`, `computePayoff`, `parseReminder`, `resolveAt`, `taskBuckets`/`blockerOpen`, `mergeFlow`/`pruneFlow`,
-`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 152 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
+`defaultReminderAt`, `splitDetail`/`isNotifyOnly`/`captureNotes`) with a **KEEP IN SYNC** note — 158 assertions. ⚠️ The copies must be updated in lockstep with the originals (a review once flagged drift). |
 | `icon-192.png` `icon-512.png` `apple-touch-icon.png` | App icons. Regenerate with `node scripts/genicon.js .` (dependency-free Node PNG encoder). |
 | `scripts/genicon.js` | Generates the app-icon PNGs (brand-green 2×2 dashboard-tile mark). |
 | `server.js`     | Raspberry Pi / Node backend (Discord). **Stale** — not updated with the new tools/notes. |
@@ -623,6 +623,15 @@ cd ~/miDash && wrangler deploy
   boot step). It was a third way to do what the capture bar already does better — the bar parses a
   due date, carries context into the task notes, and routes anything nuanced to the agent; the bare
   form did none of that and quietly produced context-free tasks.
+- v1.46.2: **Switchboard remedy state.** The Discord card shows the WORST of inbound (Pi bot
+  heartbeat) and outbound (Worker→Discord push), but its only action was "🔔 Send test DM" — which
+  exercises OUTBOUND. So the common failure (Pi bot down) showed a red light, a passing test DM, and
+  a "Re-check" that changed nothing. Hit for real 2026-08-11. A check can now return a
+  `remedy {title, cmd, note}`, rendered as a bordered block with the exact `ssh claudeclaw` +
+  `systemctl restart midash-discord` commands and a 📋 Copy button (clipboard API, with a
+  select-range fallback). The footer text also stops pointing at the test DM as proof when it's the
+  inbound half that's down. `fmtAgo` so a dead bot reads "3 hr", not "184 min". Verified in headless
+  Chrome at 320/500/900px: no page overflow, the command block scrolls inside its own box.
 - **Now:** waiting on Dart Bank IP allowlist for Bank Sync; spend cap set. Reminders (Discord DM +
   in-dash bell), consolidation, curated theme, boot fix, capture/tasks rework, update_task, the
   icon pass, and the flow layer are all live + on `main`.

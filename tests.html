@@ -339,6 +339,14 @@ function resolvePersonEmail(who){
   return hit ? {name:hit.name||s, email:hit.email} : null;
 }
 
+// --- fmtAgo (index.html, v1.46.2) — KEEP IN SYNC. Switchboard "last seen …" readability. ---
+function fmtAgo(ms){
+  const m=Math.max(0,Math.round(ms/60000));
+  if(m<60) return m+" min";
+  const h=Math.round(m/60); if(h<48) return h+" hr";
+  return Math.round(h/24)+" days";
+}
+
 /* ================================ TEST HARNESS ================================ */
 let pass=0, fail=0;
 const out=document.getElementById("out");
@@ -727,6 +735,17 @@ section("Resolving a person to an email address (v1.46.0)");
   ok(resolvePersonEmail("Nobody Here")===null, "an unknown name resolves to null (so the watch says so)");
   ok(resolvePersonEmail("")===null, "empty input is null, not a wild match");
   contactsList=[];
+}
+
+section("fmtAgo — a dead Pi bot reads as hours/days, not '4331 min' (v1.46.2)");
+{
+  const min=60000, hr=3600000;
+  ok(fmtAgo(3*min)==="3 min", "minutes under an hour");
+  ok(fmtAgo(59*min)==="59 min", "59 min stays minutes");
+  ok(fmtAgo(3*hr)==="3 hr", "hours past the hour mark");
+  ok(fmtAgo(47*hr)==="47 hr", "under 48h still reads in hours");
+  ok(fmtAgo(72*hr)==="3 days", "past two days switches to days");
+  ok(fmtAgo(-5000)==="0 min", "a clock-skewed future timestamp can't print negative");
 }
 
 /* ================================ SUMMARY ================================ */

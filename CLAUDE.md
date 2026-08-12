@@ -103,6 +103,12 @@ These pure functions exist in more than one place and MUST be edited in lockstep
   Everything else keeps the free instant regex path. **Any agent failure falls back to the regex
   path** — a capture must never be lost. `CONFIG.captureModel` (Sonnet) is used only for that lane.
   Don't "fix" nuance by adding more regex — that ladder has no top; widen the routing instead.
+- **Switchboard remedies (v1.46.2):** a `check()` can return `remedy {title, cmd, note}` for a
+  failure the browser CANNOT fix (a systemd service on the Pi) — `openSbDetail` renders it as a
+  command block with a Copy button instead of offering a button that can't reach the broken thing.
+  The **Discord card is two halves** (inbound Pi-bot heartbeat · outbound Worker→Discord push) and
+  shows the worst; a passing "Send test DM" proves only the outbound half, so never read it as
+  "Discord is fine".
 - **Reminders are miDash-owned push** (`/reminders` KV blob + a 1-min Cron Trigger `scheduled()` →
   `fireDueReminders`). The **Worker** sends the Discord DM itself via the REST API (secrets
   `DISCORD_BOT_TOKEN` + `DISCORD_USER_ID`) — it does NOT go through the Pi bot (that's inbound only).
